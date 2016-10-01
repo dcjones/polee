@@ -1,17 +1,23 @@
 
 
-immutable Exon <: Intervals.AbstractInterval{Int64}
+immutable Exon
     first::Int64
     last::Int64
+end
+
+
+function Base.isless(a::Exon, b::Exon)
+    return a.first < b.first
 end
 
 
 type TranscriptMetadata
     name::StringField
     exons::Vector{Exon}
+    seq::DNASequence
 
     function TranscriptMetadata(name)
-        return new(name, Exon[])
+        return new(name, Exon[], DNASequence())
     end
 end
 
@@ -39,7 +45,7 @@ type Transcripts
 
         i = 0
         while !isnull(tryread!(reader, entry))
-            if (i += 1) % 10000 == 0
+            if (i += 1) % 1000 == 0
                 update!(prog, position(reader.state.stream.source))
             end
             if entry.metadata.kind == "exon"
@@ -58,10 +64,16 @@ type Transcripts
                 push!(transcripts_by_name[parent_name], Exon(entry.first, entry.last))
             end
         end
+
         finish!(prog)
         println("Read ", length(transcripts_by_name), " transcripts")
         is = collect(values(transcripts_by_name))
         transcripts = IntervalCollection(is, true)
+
+        # make sure all exons arrays are sorted
+        for t in transcripts
+            sort!(t.metadata.exons)
+        end
 
         return new(transcripts, transcripts_by_name)
     end

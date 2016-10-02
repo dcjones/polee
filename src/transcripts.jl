@@ -28,7 +28,7 @@ typealias Transcript Interval{TranscriptMetadata}
 function Base.push!(t::Transcript, e::Exon)
     push!(t.metadata.exons, e)
     t.first = min(t.first, e.first)
-    t.last = min(t.first, e.last)
+    t.last = max(t.last, e.last)
     return e
 end
 
@@ -80,8 +80,18 @@ type Transcripts
 end
 
 
-function genomic_to_transcriptomic(geneset::Transcripts, position::Int)
-
+function genomic_to_transcriptomic(t::Transcript, position::Integer)
+    exons = t.metadata.exons
+    i = searchsortedlast(exons, Exon(position, position))
+    if i == 0 || exons[i].last < position
+        return 0
+    else
+        tpos = 1
+        for j in 1:i-1
+            tpos += exons[j].last - exons[j].first + 1
+        end
+        return tpos + position - t.metadata.exons[i].first
+    end
 end
 
 # TODO: same but with alignments

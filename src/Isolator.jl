@@ -25,8 +25,9 @@ function read_transcript_sequences!(ts, filename)
 
         if haskey(ts.transcripts.trees, entry.name)
             for t in ts.transcripts.trees[entry.name]
+                seq = t.metadata.seq
                 for exon in t.metadata.exons
-                    append!(t.seq, entry.seq[exon.first:exon.last])
+                    append!(seq, entry.seq[exon.first:exon.last])
                 end
             end
         end

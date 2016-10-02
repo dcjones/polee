@@ -7,14 +7,14 @@ immutable Alignment
     refidx::Int32
     leftpos::Int32
     rightpos::Int32
+    flag::UInt16
     # TODO: other alignment info
-    #  - alignment number
 end
 
 
 immutable AlignmentPairMetadata
-    # index range into the alignments array
-    span::UnitRange{Int32}
+    mate1_idx::UInt32
+    mate2_idx::UInt32
 end
 typealias AlignmentPair Interval{AlignmentPairMetadata}
 
@@ -61,7 +61,8 @@ function Reads(filename::String)
 
         id = get!(readnames, seqname(entry), length(readnames) + 1)
         push!(alignments, Alignment(id, hitnum, entry.refid + 1,
-                                    leftposition(entry), rightposition(entry)))
+                                    leftposition(entry), rightposition(entry),
+                                    flag(entry)))
     end
     finish!(prog)
 
@@ -82,25 +83,35 @@ function Reads(filename::String)
 
         j = i
         while j + 1 <= length(alignments) &&
-                alignments[i].id == alignments[j+1].id
+                alignments[i].id == alignments[j+1].id &&
+                alignments[i].hitnum == alignments[j+1].hitnum
             j += 1
         end
 
-        seqname = reader.refseqnames[alignments[i].refidx]
-        minpos, maxpos = 0, 0
-        for k in i:j
-            if minpos == 0 || minpos > alignments[k].leftpos
-                minpos = alignments[k].leftpos
-            end
+        if j > i + 1
+            error("Alignment with more than two mates found.")
+        end
 
-            if maxpos == 0 || maxpos < alignments[k].rightpos
-                maxpos = alignments[k].rightpos
-            end
+        seqname = reader.refseqnames[alignments[i].refidx]
+        minpos = min(alignments[i].leftpos, alignments[j].leftpos)
+        maxpos = max(alignments[i].rightpos, alignments[j].rightpos)
+
+        m1 = m2 = 0
+        if i == j
+            m1 = m2 = i
+        elseif alignments[i].flag & SAM_FLAG_READ1 != 0 &&
+               alignments[j].flag & SAM_FLAG_READ2 != 0
+            m1, m2 = i, j
+        elseif alignments[i].flag & SAM_FLAG_READ2 != 0 &&
+               alignments[j].flag & SAM_FLAG_READ1 != 0
+            m1, m2 = j, i
+        else
+            error("Alignment pair has incorrect flags set.")
         end
 
         alnpr = AlignmentPair(
             seqname, minpos, maxpos, STRAND_BOTH,
-            AlignmentPairMetadata(Int32(i):Int32(j)))
+            AlignmentPairMetadata(m1, m2))
         push!(alignment_pairs, alnpr)
 
         i = j + 1

@@ -24,6 +24,28 @@ function push_alignment_context!(
         return false
     end
 
+    # adjust position in the presense of soft-clipping
+    if cigar_len(aln) > 1
+        leading_clip, trailing_clip = 0, 0
+        for (i, (op, len)) in enumerate(CigarIter(reads, aln))
+            if i == 1 && op == OP_SOFT_CLIP
+                leading_clip = len
+            else
+                if op == OP_SOFT_CLIP
+                    trailing_clip = len
+                else
+                    trailing_clip = 0
+                end
+            end
+        end
+
+        if strand == STRAND_POS
+            pos -= leading_clip
+        else
+            pos += trailing_clip
+        end
+    end
+
     leftctx, rightctx =
         ifelse(strand == STRAND_POS, (upctx, downctx), (downctx, upctx))
 
@@ -35,11 +57,11 @@ function push_alignment_context!(
 
     ctxseq = tseq[pos-leftctx:pos+rightctx]
     ctxseq_ = tseq[pos_-leftctx:pos_+rightctx]
+
     if t.strand == STRAND_NEG
         reverse_complement!(ctxseq)
         reverse_complement!(ctxseq_)
     end
-
     # TODO: fix up sequences with non-ACTGs
     # really we could just do this when we do the 1-hot encoding
 
@@ -76,8 +98,6 @@ function BiasModel(reads::Reads, transcripts::Transcripts,
     ss_foreground = DNASequence[]
     ss_background = DNASequence[]
 
-    @show length(examples)
-
     # find compatible representative transcripts
     for (t, ap) in intersect(transcripts.transcripts, examples)
         if get(seen_aln_pairs, ap, false)
@@ -105,7 +125,10 @@ function BiasModel(reads::Reads, transcripts::Transcripts,
     @show length(ss_background)
     @show length(fs_background)
 
-    # Only about 12% of alignments make it through to the end. That seems like a
-    # really high loss rate. Why?
+    #@show ss_foreground
+    for seq in ss_foreground
+        @show seq
+    end
+    # TODO: what the fuck. I'm seeing a bunch of gap characters.
 end
 

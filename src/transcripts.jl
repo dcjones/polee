@@ -58,7 +58,7 @@ type Transcripts
                 if !haskey(transcripts_by_name, parent_name)
                     parent_name = copy(parent_name)
                     transcripts_by_name[parent_name] =
-                        Transcript(entry.seqname, entry.first, entry.last,
+                    Transcript(copy(entry.seqname), entry.first, entry.last,
                                    entry.strand, TranscriptMetadata(parent_name))
                 end
                 push!(transcripts_by_name[parent_name], Exon(entry.first, entry.last))

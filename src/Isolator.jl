@@ -7,6 +7,7 @@ using Bio.Seq
 using Bio.StringFields
 using ProgressMeter
 using StatsBase
+using Distributions
 
 include("hattrie.jl")
 include("transcripts.jl")
@@ -21,13 +22,17 @@ function read_transcript_sequences!(ts, filename)
 
     i = 0
     while !isnull(tryread!(reader, entry))
-        update!(prog, position(reader.state.stream.source))
+        if length(entry.seq) > 100000
+            update!(prog, position(reader.state.stream.source))
+        end
 
         if haskey(ts.transcripts.trees, entry.name)
             for t in ts.transcripts.trees[entry.name]
                 seq = t.metadata.seq
                 for exon in t.metadata.exons
-                    append!(seq, entry.seq[exon.first:exon.last])
+                    if exon.last <= length(entry.seq)
+                        append!(seq, entry.seq[exon.first:exon.last])
+                    end
                 end
             end
         end
@@ -37,12 +42,16 @@ end
 
 
 function main()
-    reads_filename = "1.bam"
-    transcripts_filename = "1.gff3"
-    genome_filename = "/home/dcjones/data/homo_sapiens/seqs/1.fa"
+    #reads_filename = "1.bam"
+    #transcripts_filename = "1.gff3"
+    #genome_filename = "/home/dcjones/data/homo_sapiens/seqs/1.fa"
 
-    rs = Reads("1.bam")
-    ts = Transcripts("1.gff3")
+    reads_filename = "SRR948596.bam"
+    transcripts_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.85.gff3"
+    genome_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+
+    rs = Reads(reads_filename)
+    ts = Transcripts(transcripts_filename)
     read_transcript_sequences!(ts, genome_filename)
 
     bm = BiasModel(rs, ts)

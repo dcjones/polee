@@ -35,14 +35,15 @@ function push_alignment_context!(
     end
 
     # adjust position in the presense of soft-clipping
+    # TODO: doesn't leftposition already account for soft-clipping?
     if cigar_len(aln) > 1
         leading_clip, trailing_clip = 0, 0
-        for (i, (op, len)) in enumerate(CigarIter(reads, aln))
-            if i == 1 && op == OP_SOFT_CLIP
-                leading_clip = len
+        for (i, c) in enumerate(CigarIter(reads, aln))
+            if i == 1 && c.op == OP_SOFT_CLIP
+                leading_clip = length(c)
             else
-                if op == OP_SOFT_CLIP
-                    trailing_clip = len
+                if c.op == OP_SOFT_CLIP
+                    trailing_clip = length(c)
                 else
                     trailing_clip = 0
                 end
@@ -118,23 +119,28 @@ function BiasModel(reads::Reads, transcripts::Transcripts,
             continue
         end
 
-        mate1_used, mate1_second_strand = push_alignment_context!(
-            fs_foreground, fs_background, ss_foreground, ss_background,
-            upctx, downctx, reads, reads.alignments[ap.metadata.mate1_idx], t)
+        used = false
 
-        # single-end
-        if ap.metadata.mate1_idx == ap.metadata.mate2_idx
-            continue
+        if ap.metadata.mate1_idx > 0
+            mate1_used, mate1_second_strand = push_alignment_context!(
+                fs_foreground, fs_background, ss_foreground, ss_background,
+                upctx, downctx, reads, reads.alignments[ap.metadata.mate1_idx], t)
+            used |= mate1_used
         end
 
-        mate2_used, mate2_second_strand = push_alignment_context!(
-            fs_foreground, fs_background, ss_foreground, ss_background,
-            upctx, downctx, reads, reads.alignments[ap.metadata.mate2_idx], t)
+        if ap.metadata.mate2_idx > 0
+            mate2_used, mate2_second_strand = push_alignment_context!(
+                fs_foreground, fs_background, ss_foreground, ss_background,
+                upctx, downctx, reads, reads.alignments[ap.metadata.mate2_idx], t)
+            used |= mate1_used
+        end
 
-        seen_aln_pairs[ap] = mate1_used | mate2_used
+        seen_aln_pairs[ap] = used
     end
 
+    println("training first-strand bias model")
     fs_model = train_model(fs_foreground, fs_background, upctx + 1 + downctx)
+    println("training second-strand bias model")
     ss_model = train_model(ss_foreground, ss_background, upctx + 1 + downctx)
 
     return BiasModel(upctx, downctx,
@@ -147,7 +153,7 @@ end
 function train_model(foreground, background, k)
     TF = TensorFlow
 
-    sess = TF.Session()
+    sess = TF.Session(TF.Graph())
     n0, n1 = length(background), length(foreground)
     n = n0 + n1
 
@@ -177,9 +183,6 @@ function train_model(foreground, background, k)
                                    cross_entropy)
 
     run(sess, train_step, Dict(x=>examples, y_=>labels))
-
-    @show run(sess, W)
-    @show run(sess, b)
 
     # TODO:
     #   - how do I get a weight out of this given a sequence context

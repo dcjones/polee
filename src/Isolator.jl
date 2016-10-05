@@ -54,12 +54,54 @@ function main()
     rs = Reads(reads_filename)
     ts = Transcripts(transcripts_filename)
     read_transcript_sequences!(ts, genome_filename)
-    bm = BiasModel(rs, ts)
+    #bm = BiasModel(rs, ts)
     #write_statistics(open("bias.csv", "w"), bm)
 
-    # now (in parallel) iterate over all read transcript intersections and
-    # compute conditional probabilities
+    println("intersecting...")
 
+    # sparse matrix indexes and values
+    I = UInt32[]
+    J = UInt32[]
+    V = Float32[]
+    intersection_count = 0
+
+    # Multi-threaded version seems to suck
+    #buflen = 100000
+    #intersect_buffer = Array(Tuple{Transcript, AlignmentPair}, buflen)
+    #bufcnt = 0
+
+    #function process_buffer(rs, intersect_buffer)
+        #Threads.@threads for item in intersect_buffer
+            #t, alnpr = item
+            #fragmentlength(t, rs, alnpr)
+        #end
+
+    #end
+
+    #tic()
+    #for (t, alnpr) in intersect(ts.transcripts, rs.alignment_pairs)
+        #intersection_count += 1
+        #intersect_buffer[bufcnt += 1] = (t, alnpr)
+        #if bufcnt == buflen
+            #process_buffer(rs, intersect_buffer)
+            #bufcnt = 0
+        #end
+    #end
+
+    #if bufcnt > 0
+        #process_buffer(rs, intersect_buffer)
+        #bufcnt = 0
+    #end
+    #toc()
+
+    tic()
+    for (t, alnpr) in intersect(ts.transcripts, rs.alignment_pairs)
+        intersection_count += 1
+        fragmentlength(t, rs, alnpr)
+    end
+    toc()
+
+    @show intersection_count
 end
 
 

@@ -1,6 +1,12 @@
 
 
 type BiasModel
+    upctx::Int
+    downctx::Int
+    fs_foreground::Vector{DNASequence}
+    fs_background::Vector{DNASequence}
+    ss_foreground::Vector{DNASequence}
+    ss_background::Vector{DNASequence}
 end
 
 
@@ -63,13 +69,13 @@ function push_alignment_context!(
         reverse_complement!(ctxseq)
         reverse_complement!(ctxseq_)
     end
-    # TODO: fix up sequences with non-ACTGs
-    # really we could just do this when we do the 1-hot encoding
 
     if strand == t.strand
         push!(ss_foreground, ctxseq)
         push!(ss_background, ctxseq_)
     else
+        reverse_complement!(ctxseq)
+        reverse_complement!(ctxseq_)
         push!(fs_foreground, ctxseq)
         push!(fs_background, ctxseq_)
     end
@@ -79,8 +85,8 @@ end
 
 
 function BiasModel(reads::Reads, transcripts::Transcripts,
-                   upctx::Integer=5, downctx::Integer=5,
-                   n::Integer=100000, matched_examples::Bool=true)
+                   upctx::Integer=15, downctx::Integer=25,
+                   n::Integer=100000)
     # sample read pair ends
     n = min(n, length(reads.alignment_pairs))
     # TODO: how can I sample avoiding reads for which there are many many
@@ -115,20 +121,6 @@ function BiasModel(reads::Reads, transcripts::Transcripts,
 
         # single-end
         if ap.metadata.mate1_idx == ap.metadata.mate2_idx
-            if matched_examples && mate1_used
-                if mate1_second_strand
-                    pop!(ss_foreground)
-                    pop!(ss_background)
-                else
-                    pop!(fs_foreground)
-                    pop!(fs_background)
-                end
-            end
-
-            continue
-        end
-
-        if matched_examples && !mate1_used
             continue
         end
 
@@ -136,73 +128,43 @@ function BiasModel(reads::Reads, transcripts::Transcripts,
             fs_foreground, fs_background, ss_foreground, ss_background,
             upctx, downctx, reads, reads.alignments[ap.metadata.mate2_idx], t)
 
-        if matched_examples && !mate2_used
-            if mate1_second_strand
-                pop!(ss_foreground)
-                pop!(ss_background)
-            else
-                pop!(fs_foreground)
-                pop!(fs_background)
-            end
-        end
-
         seen_aln_pairs[ap] = mate1_used | mate2_used
     end
 
-    @show length(ss_foreground)
-    @show length(fs_foreground)
-    @show length(ss_background)
-    @show length(fs_background)
+    return BiasModel(upctx, downctx,
+                     fs_foreground, fs_background,
+                     ss_foreground, ss_background)
+end
 
-    #for seq in fs_foreground
-        #@show seq
-    #end
 
-    ss_freqs = Dict{DNANucleotide, Float64}()
-    for seq in ss_foreground
-        c = seq[upctx+1]
-        if haskey(ss_freqs, c)
-            ss_freqs[c] += 1
-        else
-            ss_freqs[c] = 1
-        end
-    end
+function write_statistics(out::IO, bm::BiasModel)
+    println(out, "strand,state,position,nucleotide,frequency")
+    example_collections = [
+        ("first-strand", "foreground", bm.fs_foreground),
+        ("first-strand", "background", bm.fs_background),
+        ("second-strand", "foreground", bm.ss_foreground),
+        ("second-strand", "background", bm.ss_background)]
+    freqs = Dict{DNANucleotide, Float64}(
+        DNA_A => 0.0, DNA_C => 0.0, DNA_G => 0.0, DNA_T => 0.0)
 
-    for k in keys(ss_freqs)
-        ss_freqs[k] /= length(ss_foreground)
-    end
+    n = bm.upctx + 1 + bm.downctx
+    for (strand, state, examples) in example_collections
+        for pos in 1:n
+            for k in keys(freqs)
+                freqs[k] = 0.0
+            end
 
-    fs_freqs = Dict{DNANucleotide, Float64}()
-    for seq in fs_foreground
-        c = seq[upctx+1]
-        if haskey(fs_freqs, c)
-            fs_freqs[c] += 1
-        else
-            fs_freqs[c] = 1
-        end
-    end
+            for seq in examples
+                if seq[pos] != DNA_N
+                    freqs[seq[pos]] += 1
+                end
+            end
 
-    for k in keys(fs_freqs)
-        fs_freqs[k] /= length(fs_foreground)
-    end
-
-    dinuc_freqs = Dict{Tuple{DNANucleotide, DNANucleotide}, Float64}()
-    for (a, b) in zip(ss_foreground, fs_foreground)
-        k = (a[upctx+1], b[upctx+1])
-        if haskey(dinuc_freqs, k)
-            dinuc_freqs[k] += 1
-        else
-            dinuc_freqs[k] = 1
-        end
-    end
-
-    for k in keys(dinuc_freqs)
-        dinuc_freqs[k] /= length(ss_foreground)
-    end
-
-    for ((u,v),f) in dinuc_freqs
-        if haskey(ss_freqs, u) && haskey(fs_freqs, v)
-            @show (u, v, round(f, 3), round(ss_freqs[u] * fs_freqs[v], 3))
+            z = sum(values(freqs))
+            for (k, v) in freqs
+                @printf(out, "%s,%s,%d,%c,%0.4f\n",
+                        strand, state, pos - bm.upctx - 1, Char(k), v/z)
+            end
         end
     end
 end

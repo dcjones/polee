@@ -53,8 +53,9 @@ function main()
     rs = Reads(reads_filename)
     ts = Transcripts(transcripts_filename)
     read_transcript_sequences!(ts, genome_filename)
-
     bm = BiasModel(rs, ts)
+
+    write_statistics(open("bias.csv", "w"), bm)
 end
 
 

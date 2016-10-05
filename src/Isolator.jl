@@ -5,9 +5,10 @@ using Bio.Align
 using Bio.Intervals
 using Bio.Seq
 using Bio.StringFields
+using Distributions
 using ProgressMeter
 using StatsBase
-using Distributions
+import TensorFlow
 
 include("hattrie.jl")
 include("transcripts.jl")
@@ -42,20 +43,23 @@ end
 
 
 function main()
-    #reads_filename = "1.bam"
-    #transcripts_filename = "1.gff3"
-    #genome_filename = "/home/dcjones/data/homo_sapiens/seqs/1.fa"
+    reads_filename = "1.bam"
+    transcripts_filename = "1.gff3"
+    genome_filename = "/home/dcjones/data/homo_sapiens/seqs/1.fa"
 
-    reads_filename = "SRR948596.bam"
-    transcripts_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.85.gff3"
-    genome_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+    #reads_filename = "SRR948596.bam"
+    #transcripts_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.85.gff3"
+    #genome_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
 
     rs = Reads(reads_filename)
     ts = Transcripts(transcripts_filename)
     read_transcript_sequences!(ts, genome_filename)
     bm = BiasModel(rs, ts)
+    #write_statistics(open("bias.csv", "w"), bm)
 
-    write_statistics(open("bias.csv", "w"), bm)
+    # now (in parallel) iterate over all read transcript intersections and
+    # compute conditional probabilities
+
 end
 
 

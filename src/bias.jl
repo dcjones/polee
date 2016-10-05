@@ -7,6 +7,9 @@ type BiasModel
     fs_background::Vector{DNASequence}
     ss_foreground::Vector{DNASequence}
     ss_background::Vector{DNASequence}
+
+    fs_model::TensorFlow.Session
+    ss_model::TensorFlow.Session
 end
 
 
@@ -131,10 +134,76 @@ function BiasModel(reads::Reads, transcripts::Transcripts,
         seen_aln_pairs[ap] = mate1_used | mate2_used
     end
 
+    fs_model = train_model(fs_foreground, fs_background, upctx + 1 + downctx)
+    ss_model = train_model(ss_foreground, ss_background, upctx + 1 + downctx)
+
     return BiasModel(upctx, downctx,
                      fs_foreground, fs_background,
-                     ss_foreground, ss_background)
+                     ss_foreground, ss_background,
+                     fs_model, ss_model)
 end
+
+
+function train_model(foreground, background, k)
+    TF = TensorFlow
+
+    sess = TF.Session()
+    n0, n1 = length(background), length(foreground)
+    n = n0 + n1
+
+    ntencode = Dict{DNANucleotide, Int}(
+        DNA_A => 1, DNA_C => 2, DNA_G => 3, DNA_T => 4)
+
+    examples = zeros(Float32, (n, 4*k))
+    labels = zeros(Float32, (n, 2))
+    for (i, example) in enumerate(vcat(foreground, background))
+        for (j, nt) in enumerate(example)
+            examples[i, 4*(j-1) + ntencode[nt]] = 1
+        end
+        labels[i, ifelse(i <= n0, 1, 2)] = 1
+    end
+
+    x = TensorFlow.placeholder(Float32, shape=[n, 4*k])
+    y_ = TensorFlow.placeholder(Float32, shape=[n, 2])
+    W = TF.Variable(zeros(Float32, 4*k, 2))
+    b = TF.Variable(zeros(Float32, 2))
+    y = TF.nn.softmax(x*W+b)
+    run(sess, TF.initialize_all_variables())
+
+    cross_entropy = TF.reduce_mean(
+        -TF.reduce_sum(y_ .* log(y), reduction_indices=[2]))
+
+    train_step = TF.train.minimize(TF.train.GradientDescentOptimizer(.00001),
+                                   cross_entropy)
+
+    run(sess, train_step, Dict(x=>examples, y_=>labels))
+
+    @show run(sess, W)
+    @show run(sess, b)
+
+    # TODO:
+    #   - how do I get a weight out of this given a sequence context
+    #     It's easy to do xW+b, do I just take the ratio of the two values then?
+    #
+    #   - how should I actually evaluate the model? Ultimately I want to improve
+    #     accuracy on various benchmarks, but I can't do that at this point.
+    #
+    # I actually think I can score this the same way seqbias does: penalized
+    # likelihood. Once I get that in place, I can start messing around with
+    # models. I shouldn't go too far though. We need to build up the
+    # quantification pipeline to do the ultimate evaluation.
+    #
+    # So let's get some basic stuff working, then focus on evaluating
+    # conditional probabilities and dumping them to a sparse matrix.
+    return sess
+end
+
+
+function bias(bm::BiasModel, t::Transcript)
+    # TODO: compute all-subsequence bias across transcript
+end
+
+
 
 
 function write_statistics(out::IO, bm::BiasModel)

@@ -64,6 +64,7 @@ function main()
     J = UInt32[]
     V = Float32[]
     intersection_count = 0
+    intersection_candidate_count = 0
 
     # Multi-threaded version seems to suck
     #buflen = 100000
@@ -96,12 +97,16 @@ function main()
 
     tic()
     for (t, alnpr) in intersect(ts.transcripts, rs.alignment_pairs)
-        intersection_count += 1
-        fragmentlength(t, rs, alnpr)
+        intersection_candidate_count += 1
+        fraglen = fragmentlength(t, rs, alnpr)
+        if !isnull(fraglen)
+            intersection_count += 1
+        end
     end
     toc()
 
     @show intersection_count
+    @show intersection_candidate_count
 end
 
 

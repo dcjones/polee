@@ -342,13 +342,84 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     end
 
     # alignment is compatible, but single-ended
-    if !isnull(a2)
-        return Nullable{0}
+    if isnull(a2)
+        return Nullable{Int}()
     end
 
-    # TODO: now process a2
+    e2_sup_e1 = false # marks with e2 > e1
+    c2 = StoredIterator{CigarIter, Tuple{Int,Int32}, CigarInterval}(
+                CigarIter(rs, get(a2)))
+    e2 = StoredIterator{ExonIntronIter, Tuple{Int, Bool}, ExonIntron}(
+                ExonIntronIter(t))
 
-    return Nullable{Int}()
+    while !isnull(e2) && !isnull(c2)
+        c = get(c2)
+        e = get(e2)
+
+        # case 1: e entirely precedes c
+        if e.last < c.first
+            if !e.isexon && e2_sup_e1
+                intronlen += length(e)
+            end
+
+            if e == get(e1)
+                e2_sup_e1 = true
+            end
+
+            next!(e2)
+
+        # case 2: c is contained within e
+        elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
+            if e.isexon
+                if !is_exon_compatible(c.op)
+                    return Nullable{Int}()
+                end
+            else
+                if !is_intron_compatible(c.op)
+                    return Nullable{Int}()
+                end
+            end
+            next!(c2)
+
+        # case 3: soft clipping partially overlapping an exon or intron
+        elseif c.op == OP_MATCH
+            next!(c2)
+
+        # case 4: match op overhangs into an intron a little
+        elseif c.last > e.last && c.op == OP_MATCH
+            if e.isexon && c.last - e.last <= max_allowable_encroachment
+                c2.value = Nullable(CigarInterval(c.first, e.last, c.op))
+            elseif !e.isexon && e.last >= c.first &&
+                   e.last - c.first < max_allowable_encroachment
+                c2.value = Nullable(e.last + 1, c.last, c.op)
+            else
+                return Nullable{Int}()
+            end
+
+        # case 5: c precedes and partially overlaps e
+        else
+            return Nullable{Int}()
+        end
+    end
+
+    # skip any trailing soft clipping
+    if !isnull(c2) && get(c2).op == OP_SOFT_CLIP
+        next!(c2)
+    end
+
+    if !isnull(c2)
+        return Nullable{Int}()
+    end
+
+    a1_, a2_ = get(a1), get(a2)
+    fraglen = max(a1_.rightpos, a2_.rightpos) -
+              min(a1_.leftpos, a2_.leftpos) + 1 - intronlen
+
+    if fraglen > 0
+        return Nullable{Int}(fraglen)
+    else
+        return Nullable{Int}()
+    end
 end
 
 

@@ -6,6 +6,11 @@ immutable Exon
 end
 
 
+function Base.length(e::Exon)
+    return e.last - e.first + 1
+end
+
+
 function Base.isless(a::Exon, b::Exon)
     return a.first < b.first
 end
@@ -26,6 +31,15 @@ end
 typealias Transcript Interval{TranscriptMetadata}
 
 
+function exonic_length(t::Transcript)
+    el = 0
+    for exon in t.metadata.exons
+        el += length(exon)
+    end
+    return el
+end
+
+
 function Base.push!(t::Transcript, e::Exon)
     push!(t.metadata.exons, e)
     t.first = min(t.first, e.first)
@@ -37,7 +51,6 @@ end
 type Transcripts
     transcripts::IntervalCollection{TranscriptMetadata}
     transcripts_by_name::Dict{StringField, Transcript}
-
 end
 
 

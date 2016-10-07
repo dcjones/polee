@@ -88,68 +88,6 @@ function push_alignment_context!(
 end
 
 
-function BiasModel(reads::Reads, transcripts::Transcripts,
-                   upctx::Integer=15, downctx::Integer=25,
-                   n::Integer=100000)
-    # sample read pair ends
-    n = min(n, length(reads.alignment_pairs))
-    # TODO: how can I sample avoiding reads for which there are many many
-    # copies? Is this a huge issue in practice?
-    # Idea: sample with replacement. Reject alignments at seen positions.
-    # that way we can control how many examples we get
-    exidxs = Set(sample(1:length(reads.alignment_pairs), n, replace=false))
-    examples = IntervalCollection{AlignmentPairMetadata}()
-    for (i, alnpr) in enumerate(reads.alignment_pairs)
-        if i in exidxs
-            push!(examples, alnpr)
-        end
-    end
-
-    # we collect separate sequence contexts for ends corresponding to first- and
-    # second-strand cDNA synthesis.
-    seen_aln_pairs = ObjectIdDict()
-    fs_foreground = DNASequence[]
-    fs_background = DNASequence[]
-    ss_foreground = DNASequence[]
-    ss_background = DNASequence[]
-
-    # find compatible representative transcripts
-    for (t, ap) in intersect(transcripts.transcripts, examples)
-        if get(seen_aln_pairs, ap, false)
-            continue
-        end
-
-        used = false
-
-        if ap.metadata.mate1_idx > 0
-            mate1_used, mate1_second_strand = push_alignment_context!(
-                fs_foreground, fs_background, ss_foreground, ss_background,
-                upctx, downctx, reads, reads.alignments[ap.metadata.mate1_idx], t)
-            used |= mate1_used
-        end
-
-        if ap.metadata.mate2_idx > 0
-            mate2_used, mate2_second_strand = push_alignment_context!(
-                fs_foreground, fs_background, ss_foreground, ss_background,
-                upctx, downctx, reads, reads.alignments[ap.metadata.mate2_idx], t)
-            used |= mate1_used
-        end
-
-        seen_aln_pairs[ap] = used
-    end
-
-    println("training first-strand bias model")
-    fs_model = train_model(fs_foreground, fs_background, upctx + 1 + downctx)
-    println("training second-strand bias model")
-    ss_model = train_model(ss_foreground, ss_background, upctx + 1 + downctx)
-
-    return BiasModel(upctx, downctx,
-                     fs_foreground, fs_background,
-                     ss_foreground, ss_background,
-                     fs_model, ss_model)
-end
-
-
 function train_model(foreground, background, k)
     TF = TensorFlow
 
@@ -158,7 +96,8 @@ function train_model(foreground, background, k)
     n = n0 + n1
 
     ntencode = Dict{DNANucleotide, Int}(
-        DNA_A => 1, DNA_C => 2, DNA_G => 3, DNA_T => 4)
+        DNA_A => 1, DNA_C => 2, DNA_G => 3, DNA_T => 4,
+        DNA_N => 1) # encode N as A, which is dumb, but it doesn't matter
 
     examples = zeros(Float32, (n, 4*k))
     labels = zeros(Float32, (n, 2))
@@ -205,8 +144,6 @@ end
 function bias(bm::BiasModel, t::Transcript)
     # TODO: compute all-subsequence bias across transcript
 end
-
-
 
 
 function write_statistics(out::IO, bm::BiasModel)

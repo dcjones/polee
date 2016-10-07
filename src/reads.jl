@@ -186,6 +186,7 @@ function Base.start(ci::CigarIter)
     return 1, ci.aln.leftpos
 end
 
+
 function Base.next(ci::CigarIter, state::Tuple{Int, Int32})
     i, pos = state
     if i == 1 && length(ci.aln.cigaridx) <= 0
@@ -201,6 +202,7 @@ function Base.next(ci::CigarIter, state::Tuple{Int, Int32})
     end
 end
 
+
 function Base.done(ci::CigarIter, state::Tuple{Int, Int32})
     i, pos = state
     return i > cigar_len(ci.aln)
@@ -208,43 +210,17 @@ end
 
 
 """
-Provide a slightly different iterator interface.
+Provide a convenient way to work with iterators.
 """
-type StoredIterator{T,S,V}
-    it::T
-    state::S
-    value::Nullable{V}
-
-    function StoredIterator(it)
-        state = start(it)
-        if !done(it, state)
-            value, state = next(it, state)
-            return new(it, state, Nullable{V}(value))
+macro next!(T, x, it, state)
+    quote
+        if done($it, $state)
+            $x = Nullable{$T}()
         else
-            return new(it, state, Nullable{V}())
+            x_, state = next($it, $state)
+            $x = Nullable{$T}(x_)
         end
     end
-end
-
-
-function Base.get(si::StoredIterator)
-    return get(si.value)
-end
-
-
-function Base.isnull(si::StoredIterator)
-    return isnull(si.value)
-end
-
-
-function next!{T,S,V}(si::StoredIterator{T,S,V})
-    if done(si.it, si.state)
-        si.value = Nullable{V}()
-    else
-        value, si.state = next(si.it, si.state)
-        si.value = Nullable{V}(value)
-    end
-    return si.value
 end
 
 
@@ -291,15 +267,21 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         a1 = Nullable(rs.alignments[alnpr.metadata.mate2_idx])
     end
 
-    c1 = StoredIterator{CigarIter, Tuple{Int,Int32}, CigarInterval}(
-                CigarIter(rs, get(a1)))
-    e1 = StoredIterator{ExonIntronIter, Tuple{Int, Bool}, ExonIntron}(
-                ExonIntronIter(t))
+    c1_iter = CigarIter(rs, get(a1))
+    c1_state = start(c1_iter)
+    c1 = Nullable{CigarInterval}()
+    @next!(CigarInterval, c1, c1_iter, c1_state)
+
+    e1_iter = ExonIntronIter(t)
+    e1_state = start(e1_iter)
+    e1 = Nullable{ExonIntron}()
+    @next!(ExonIntron, e1, e1_iter, e1_state)
+
     intronlen = 0
 
     # skip any leading soft clipping
     if !isnull(c1) && get(c1).op == OP_SOFT_CLIP
-        next!(c1)
+        @next!(CigarInterval, c1, c1_iter, c1_state)
     end
 
     while !isnull(e1) && !isnull(c1)
@@ -308,7 +290,7 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 
         # case 1: e entirely precedes
         if e.last < c.first
-            next!(e1)
+            @next!(ExonIntron, e1, e1_iter, e1_state)
 
         # case 2: c is contained within e
         elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
@@ -321,21 +303,21 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                     return Nullable{Int}()
                 end
                 intronlen += length(e)
-                next!(e1)
+                @next!(ExonIntron, e1, e1_iter, e1_state)
             end
-            next!(c1)
+            @next!(CigarInterval, c1, c1_iter, c1_state)
 
         # case 3: soft clipping partiallly overlapping an exon or intron
         elseif c.op == OP_SOFT_CLIP
-            next!(c1)
+            @next!(CigarInterval, c1, c1_iter, c1_state)
 
         # case 4: match op overhangs into an intron a little
         elseif c.last > e.last && c.op == OP_MATCH
             if e.isexon && c.last - e.last <= max_allowable_encroachment
-                c1.value = Nullable(CigarInterval(c.first, e.last, c.op))
+                c1 = Nullable(CigarInterval(c.first, e.last, c.op))
             elseif !e.isexon && e.last >= c.first &&
                    e.last - c.first < max_allowable_encroachment
-                c1.value = Nullable(CigarInterval(e.last + 1, c.last, c.op))
+                c1 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
             else
                 return Nullable{Int}()
             end
@@ -356,10 +338,16 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     end
 
     e2_sup_e1 = false # marks with e2 > e1
-    c2 = StoredIterator{CigarIter, Tuple{Int,Int32}, CigarInterval}(
-                CigarIter(rs, get(a2)))
-    e2 = StoredIterator{ExonIntronIter, Tuple{Int, Bool}, ExonIntron}(
-                ExonIntronIter(t))
+
+    c2_iter = CigarIter(rs, get(a1))
+    c2_state = start(c2_iter)
+    c2 = Nullable{CigarInterval}()
+    @next!(CigarInterval, c2, c2_iter, c2_state)
+
+    e2_iter = ExonIntronIter(t)
+    e2_state = start(e2_iter)
+    e2 = Nullable{ExonIntron}()
+    @next!(ExonIntron, e2, e2_iter, e2_state)
 
     while !isnull(e2) && !isnull(c2)
         c = get(c2)
@@ -371,11 +359,11 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                 intronlen += length(e)
             end
 
-            if e == get(e1)
+            if !isnull(e1) && e == get(e1)
                 e2_sup_e1 = true
             end
 
-            next!(e2)
+            @next!(ExonIntron, e2, e2_iter, e2_state)
 
         # case 2: c is contained within e
         elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
@@ -387,20 +375,21 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                 if !is_intron_compatible(c.op)
                     return Nullable{Int}()
                 end
+                # TODO: why not increment e2 here?
             end
-            next!(c2)
+            @next!(CigarInterval, c2, c2_iter, c2_state)
 
         # case 3: soft clipping partially overlapping an exon or intron
         elseif c.op == OP_MATCH
-            next!(c2)
+            @next!(CigarInterval, c2, c2_iter, c2_state)
 
         # case 4: match op overhangs into an intron a little
         elseif c.last > e.last && c.op == OP_MATCH
             if e.isexon && c.last - e.last <= max_allowable_encroachment
-                c2.value = Nullable(CigarInterval(c.first, e.last, c.op))
+                c2 = Nullable(CigarInterval(c.first, e.last, c.op))
             elseif !e.isexon && e.last >= c.first &&
                    e.last - c.first < max_allowable_encroachment
-                c2.value = Nullable(e.last + 1, c.last, c.op)
+                   c2 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
             else
                 return Nullable{Int}()
             end
@@ -413,7 +402,7 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 
     # skip any trailing soft clipping
     if !isnull(c2) && get(c2).op == OP_SOFT_CLIP
-        next!(c2)
+        @next!(CigarInterval, c2, c2_iter, c2_state)
     end
 
     if !isnull(c2)

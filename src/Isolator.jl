@@ -45,13 +45,13 @@ end
 
 
 function main()
-    reads_filename = "1.bam"
-    transcripts_filename = "1.gff3"
-    genome_filename = "/home/dcjones/data/homo_sapiens/seqs/1.fa"
+    #reads_filename = "1.bam"
+    #transcripts_filename = "1.gff3"
+    #genome_filename = "/home/dcjones/data/homo_sapiens/seqs/1.fa"
 
-    #reads_filename = "SRR948596.bam"
-    #transcripts_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.85.gff3"
-    #genome_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+    reads_filename = "SRR948596.bam"
+    transcripts_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.85.gff3"
+    genome_filename = "/home/dcjones/data/homo_sapiens/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
 
     rs = Reads(reads_filename)
     ts = Transcripts(transcripts_filename)

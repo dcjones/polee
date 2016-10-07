@@ -3,6 +3,7 @@
 type FragModel
     fraglen_pmf::Vector{Float64}
     fraglen_cdf::Vector{Float64}
+    strand_specificity::Float64
     bm::BiasModel
 end
 
@@ -52,11 +53,17 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=100000,
     # TODO: positional bias
     # TODO: strand bias
 
+    # alignment pair fragment lengths
     alnpr_fraglen = ObjectIdDict()
+
+    # sequence bias training examples
     fs_foreground = DNASequence[]
     fs_background = DNASequence[]
     ss_foreground = DNASequence[]
     ss_background = DNASequence[]
+
+    strand_match_count = 0
+    strand_mismatch_count = 0
 
     for (t, alnpr) in intersect(ts.transcripts, examples)
         # collect sequences for sequence bias
@@ -72,6 +79,12 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=100000,
                 fs_foreground, fs_background, ss_foreground, ss_background,
                 bias_upctx, bias_downctx, rs,
                 rs.alignments[alnpr.metadata.mate2_idx], t)
+        end
+
+        if alnpr.strand == t.strand
+            strand_match_count += 1
+        elseif alnpr.strand != STRAND_BOTH
+            strand_mismatch_count += 1
         end
 
         # collect fragment lengths
@@ -101,6 +114,12 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=100000,
                    fs_model, ss_model)
     write_statistics(open("bias.csv", "w"), bm)
 
+    strand_specificity = strand_match_count /
+        (strand_match_count + strand_mismatch_count)
+    negentropy = strand_specificity * log2(strand_specificity) +
+        (1.0 - strand_specificity) * log2(1.0 - strand_specificity)
+    println("Strand specificity: ", round(100.0 * (1 + negentropy), 1), "%")
+
     # compute fragment length frequencies
     fraglen_pmf = fill(1.0, MAX_FRAG_LEN) # init with pseudocount
     for fl in values(alnpr_fraglen)
@@ -120,7 +139,7 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=100000,
         fraglen_cdf[i] += fraglen_cdf[i-1]
     end
 
-    return FragModel(fraglen_pmf, fraglen_cdf, bm)
+    return FragModel(fraglen_pmf, fraglen_cdf, strand_specificity, bm)
 end
 
 

@@ -121,6 +121,7 @@ function Reads(filename::String)
         maxpos = max(alignments[i].rightpos, alignments[j].rightpos)
 
         m1 = m2 = 0
+        strand = STRAND_BOTH
         if i == j
             if alignments[i].flag & SAM_FLAG_READ2
                 m2 = i
@@ -137,8 +138,16 @@ function Reads(filename::String)
             error("Alignment pair has incorrect flags set.")
         end
 
+        if m1 > 0
+            strand = alignments[m1].flag & SAM_FLAG_REVERSE != 0 ?
+                STRAND_NEG : STRAND_POS
+         elseif m2 > 2
+            strand = alignments[m2].flag & SAM_FLAG_REVERSE != 0 ?
+                STRAND_POS : STRAND_NEG
+         end
+
         alnpr = AlignmentPair(
-            seqname, minpos, maxpos, STRAND_BOTH,
+            seqname, minpos, maxpos, strand,
             AlignmentPairMetadata(m1, m2))
         push!(alignment_pairs, alnpr)
 

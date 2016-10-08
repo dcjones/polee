@@ -48,51 +48,53 @@ function Base.push!(t::Transcript, e::Exon)
 end
 
 
-type Transcripts
-    transcripts::IntervalCollection{TranscriptMetadata}
-    transcripts_by_name::Dict{StringField, Transcript}
-end
+typealias Transcripts IntervalCollection{TranscriptMetadata}
 
 
 function Transcripts(filename::String)
+    prog_step = 1000
     prog = Progress(filesize(filename), 0.25, "Reading GFF3 file ", 60)
     reader = open(GFF3Reader, filename)
     entry = eltype(reader)()
-    transcripts_by_name = Dict{StringField, Transcript}()
+
+    transcript_id_by_name = HatTrie()
+    transcript_by_id = Transcript[]
 
     i = 0
     while !isnull(tryread!(reader, entry))
-        if (i += 1) % 1000 == 0
+        if (i += 1) % prog_step == 0
             update!(prog, position(reader.state.stream.source))
         end
-        if entry.metadata.kind == "exon"
-            if !haskey(entry.metadata.attributes, "Parent")
-                error("Exon has no parent")
-            end
-
-            parent_name = entry.metadata.attributes["Parent"]
-            if !haskey(transcripts_by_name, parent_name)
-                parent_name = copy(parent_name)
-                id = length(transcripts_by_name) + 1
-                transcripts_by_name[parent_name] =
-                    Transcript(copy(entry.seqname), entry.first, entry.last,
-                                   entry.strand, TranscriptMetadata(parent_name, id))
-            end
-            push!(transcripts_by_name[parent_name], Exon(entry.first, entry.last))
+        if entry.metadata.kind != "exon"
+            continue
         end
+
+        if !haskey(entry.metadata.attributes, "Parent")
+            error("Exon has no parent")
+        end
+
+        parent_name = entry.metadata.attributes["Parent"]
+        id = get!(transcript_id_by_name, parent_name,
+                  length(transcript_id_by_name) + 1)
+        if id > length(transcript_by_id)
+            parent_name = copy(parent_name)
+            push!(transcript_by_id,
+                Transcript(copy(entry.seqname), entry.first, entry.last,
+                               entry.strand, TranscriptMetadata(parent_name, id)))
+        end
+        push!(transcript_by_id[id], Exon(entry.first, entry.last))
     end
 
     finish!(prog)
-    println("Read ", length(transcripts_by_name), " transcripts")
-    is = collect(values(transcripts_by_name))
-    transcripts = IntervalCollection(is, true)
+    println("Read ", length(transcript_by_id), " transcripts")
+    transcripts = IntervalCollection(transcript_by_id, true)
 
     # make sure all exons arrays are sorted
     for t in transcripts
         sort!(t.metadata.exons)
     end
 
-    return Transcripts(transcripts, transcripts_by_name)
+    return transcripts
 end
 
 

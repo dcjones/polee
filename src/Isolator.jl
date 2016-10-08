@@ -1,14 +1,15 @@
 
 module Isolator
 
+import TensorFlow
 using Bio.Align
 using Bio.Intervals
 using Bio.Seq
 using Bio.StringFields
 using Distributions
+using HDF5
 using ProgressMeter
 using StatsBase
-import TensorFlow
 
 include("constants.jl")
 include("hattrie.jl")
@@ -16,6 +17,7 @@ include("transcripts.jl")
 include("reads.jl")
 include("bias.jl")
 include("fragmodel.jl")
+#include("outputformat_pb.jl")
 
 
 function read_transcript_sequences!(ts, filename)
@@ -29,8 +31,8 @@ function read_transcript_sequences!(ts, filename)
             update!(prog, position(reader.state.stream.source))
         end
 
-        if haskey(ts.transcripts.trees, entry.name)
-            for t in ts.transcripts.trees[entry.name]
+        if haskey(ts.trees, entry.name)
+            for t in ts.trees[entry.name]
                 seq = t.metadata.seq
                 for exon in t.metadata.exons
                     if exon.last <= length(entry.seq)
@@ -68,7 +70,7 @@ function main()
     intersection_candidate_count = 0
 
     tic()
-    for (t, alnpr) in intersect(ts.transcripts, rs.alignment_pairs)
+    for (t, alnpr) in intersect(ts, rs.alignment_pairs)
         intersection_candidate_count += 1
         fragpr = condfragprob(fm, t, rs, alnpr)
         if fragpr > 0.0
@@ -82,8 +84,50 @@ function main()
     end
     toc()
 
-    @show length(V)
-    # TODO: serialize to HDF5
+    # TODO: combine function
+    M = sparse(I, J, V)
+
+    @show (M.m, M.n, length(M.nzval))
+
+    #tic()
+    #out = open("output.isolator_data", "w")
+    #rec = Record(nzvalues=Float32[], js=UInt32[])
+    #meta = ProtoBuf.meta(Record)
+    #for j in 1:M.n
+        #rec.nzvalues = unsafe_wrap(Vector{Float32},
+                                   #pointer(M.nzval, M.colptr[j]),
+                                   #M.colptr[j+1] - M.colptr[j])
+        #rec.js = unsafe_wrap(Vector{UInt32},
+                             #pointer(M.rowval, M.colptr[j]),
+                             #M.colptr[j+1] - M.colptr[j])
+        ## simplified version of writeproto(out, rec)
+        #for attrib in meta.ordered
+            #fld = attrib.fld
+            #writeproto(out, getfield(rec, fld), attrib)
+        #end
+    #end
+    #close(out)
+    #toc()
+
+    tic()
+    h5open("output.h5", "w") do out
+        out["m"] = M.m
+        out["n"] = M.n
+        out["colptr", "blosc", 3] = M.colptr
+        out["rowval", "blosc", 3] = M.rowval
+        out["nzval", "blosc", 3] = M.nzval
+    end
+    toc()
+
+    # What we really need is to be able to read one "record" at a time. In this
+    # case, one column. To avoid seeking around the file, shouldn't we be
+    # storing records representing one column. (I guess reads should be rows,
+    # technically, but it probably doesn't matter)
+
+    # sampling procedure (sample a read) looks like
+    #  1. read all of colptr
+    #  2. choose a random column
+    #  3. read data from nzval and rowval
 end
 
 

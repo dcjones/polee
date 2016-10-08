@@ -21,8 +21,6 @@ function sample_training_examples(rs::Reads, n::Int)
     for alnpr in rs.alignment_pairs
         push!(starts, alnpr.first)
     end
-    @show length(starts)
-    @show maximum(starts)
 
     starts_subset = IntSet()
     starts_subset_idxs = IntSet(sample(1:length(starts), n, replace=false))
@@ -65,7 +63,7 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=100000,
     strand_match_count = 0
     strand_mismatch_count = 0
 
-    for (t, alnpr) in intersect(ts.transcripts, examples)
+    for (t, alnpr) in intersect(ts, examples)
         # collect sequences for sequence bias
         if alnpr.metadata.mate1_idx > 0
             push_alignment_context!(

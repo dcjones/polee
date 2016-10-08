@@ -39,6 +39,7 @@ end
 
 
 function Reads(filename::String)
+    prog_step = 1000
     prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
     reader = open(BAMReader, filename)
     entry = eltype(reader)()
@@ -50,7 +51,7 @@ function Reads(filename::String)
 
     i = 0
     while !isnull(tryread!(reader, entry))
-        if (i += 1) % 1000 == 0
+        if (i += 1) % prog_step == 0
             update!(prog, position(reader.stream.io))
         end
 
@@ -98,11 +99,12 @@ function Reads(filename::String)
     # group alignments into alignment pair intervals
     sort!(alignments)
     i, j = 1, 1
-    prog = Progress(length(alignments), 0.25, "Indexing alignments ", 60)
+    prog = Progress(1 + div(length(alignments), prog_step), 0.25,
+                    "Indexing alignments ", 60)
     alignment_pairs = IntervalCollection{AlignmentPairMetadata}()
     while i <= length(alignments)
-        if i % 1000 == 0
-            update!(prog, i)
+        if i % prog_step == 0
+            next!(prog)
         end
 
         j = i
@@ -116,7 +118,7 @@ function Reads(filename::String)
             error("Alignment with more than two mates found.")
         end
 
-        seqname = reader.refseqnames[alignments[i].refidx]
+        seqname = seqnames[alignments[i].refidx]
         minpos = min(alignments[i].leftpos, alignments[j].leftpos)
         maxpos = max(alignments[i].rightpos, alignments[j].rightpos)
 

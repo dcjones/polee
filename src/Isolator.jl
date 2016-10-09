@@ -109,6 +109,7 @@ function main()
     #close(out)
     #toc()
 
+    # TODO: order of reads outght to be shuffled (with fixed seed) just in case
     tic()
     h5open("output.h5", "w") do out
         out["m"] = M.m

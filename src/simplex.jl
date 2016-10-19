@@ -69,31 +69,45 @@ function simplex!(xs, grad, ys)
 
     # other gradient term
     # Let's make sure we can get it right, then look for approximations
-    c1 = 10
-    c2 = 10
+
+    # This works!
+    #for i in 1:k-1
+        #for j in i:k-1
+            #a = -1 / (1 - xs_sum[j])
+            #b = 0.0
+            #for l in i:j-1
+                ## partial of x_l by y_i
+                #deriv_x_l_y_i = zs[i] * (1 - zs[i])
+                #deriv_x_l_y_i *= (1 - xs_sum[i])
+
+                #if l > i
+                    #deriv_x_l_y_i *=
+                        #-zs[l] * exp(zs_log_sum[l] - zs_log_sum[i+1])
+                #end
+                #b += deriv_x_l_y_i
+            #end
+
+            #grad[i] += a * b
+        #end
+    #end
 
     for i in 1:k-1
-        for j in i:max(c1, k-1)
-            a = -1 / (1 - xs_sum[j])
-            b = 0.0
-            for l in i:max(c2, j-1)
-                # partial of x_l by y_i
-                deriv_x_l_y_i = zs[i] * (1 - zs[i])
-                deriv_x_l_y_i *= (1 - xs_sum[i])
+        gradi = 0.0
+        println("------")
 
-                if l > i
-                    deriv_x_l_y_i *=
-                        exp(zs_log_sum[l] - zs_log_sum[i+1])
-                end
-
-                if l != i
-                    deriv_x_l_y_i *= -zs[l]
-                end
-                b += deriv_x_l_y_i
+        # We need to exploit the fact that each iteration produces almost the
+        # same thing here
+        for j in i+1:k-1
+            b = 1.0
+            for l in i+1:j-1
+                b += -zs[l] * exp(zs_log_sum[l] - zs_log_sum[i+1])
             end
-
-            grad[i] += a * b
+            b *= -1 / (1 - xs_sum[j])
+            @show b
+            gradi += b
         end
+        gradi *= zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+        grad[i] += gradi
     end
 
     return ladj
@@ -112,10 +126,10 @@ function check_simplex_gradient()
     #for scale in 1:10
     for scale in 1:1
         ys = scale * rand(rng, n)
-        @show ys
+        #@show ys
         ladj = simplex!(xs, grad, ys)
-        @show ladj
-        @show xs
+        #@show ladj
+        #@show xs
 
         for j in 1:n
             y = ys[j]

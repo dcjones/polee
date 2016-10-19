@@ -1,4 +1,5 @@
 
+using Distributions
 
 logistic(x) = 1 / (1 + exp(-x))
 
@@ -93,19 +94,28 @@ function simplex!(xs, grad, ys)
 
     for i in 1:k-1
         gradi = 0.0
-        println("------")
+        #println("------")
 
         # We need to exploit the fact that each iteration produces almost the
         # same thing here
-        for j in i+1:k-1
-            b = 1.0
-            for l in i+1:j-1
-                b += -zs[l] * exp(zs_log_sum[l] - zs_log_sum[i+1])
-            end
-            b *= -1 / (1 - xs_sum[j])
-            @show b
-            gradi += b
-        end
+
+        # We are missing something important: these iterations keep producing
+        # the same number. How is that possible? If it's a constant, that our
+        # dreams have come true.
+        #for j in i+1:k-1
+            #b = 1.0
+            #for l in i+1:j-1
+                #b += -zs[l] * exp(zs_log_sum[l] - zs_log_sum[i+1])
+            #end
+            #b *= -1 / (1 - xs_sum[j])
+            #@show -1 / (1 - xs_sum[j])
+            #@show b
+            #gradi += b
+        #end
+
+        # XXX: HOLY SHIT! HOW DOES THIS WORK!!!
+        gradi = (k - i - 1) * (-1 / (1 - xs_sum[i+1]))
+
         gradi *= zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
         grad[i] += gradi
     end
@@ -117,29 +127,27 @@ end
 
 function check_simplex_gradient()
     rng = srand(1234)
-    n = 20
+    n = 30
     xs = Array(Float64, n)
     grad = Array(Float64, n)
     grad_ = Array(Float64, n)
     numgrad = Array(Float64, n)
     ϵ = 1e-10
-    #for scale in 1:10
-    for scale in 1:1
-        ys = scale * rand(rng, n)
-        #@show ys
-        ladj = simplex!(xs, grad, ys)
-        #@show ladj
-        #@show xs
+    #ys = scale * rand(rng, n)
+    ys = rand(Normal(0, 1), n)
+    #@show ys
+    ladj = simplex!(xs, grad, ys)
+    #@show ladj
+    #@show xs
 
-        for j in 1:n
-            y = ys[j]
-            ys[j] += ϵ
-            ladj2 = simplex!(xs, grad_, ys)
-            numgrad[j] = (ladj2 - ladj) / ϵ
-            ys[j] = y
-            @printf("%0.4f\t%0.4f\t%0.4f\n", grad[j],
-                    numgrad[j], grad[j] - numgrad[j])
-        end
+    for j in 1:n
+        y = ys[j]
+        ys[j] += ϵ
+        ladj2 = simplex!(xs, grad_, ys)
+        numgrad[j] = (ladj2 - ladj) / ϵ
+        ys[j] = y
+        @printf("%0.4f\t%0.4f\t%0.4f\n", grad[j],
+                numgrad[j], grad[j] - numgrad[j])
     end
 end
 

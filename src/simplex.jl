@@ -69,11 +69,14 @@ function simplex!(xs, grad, ys)
 
     # other gradient term
     # Let's make sure we can get it right, then look for approximations
+    c1 = 10
+    c2 = 10
+
     for i in 1:k-1
-        for j in i:k-1
+        for j in i:max(c1, k-1)
             a = -1 / (1 - xs_sum[j])
             b = 0.0
-            for l in i:j-1
+            for l in i:max(c2, j-1)
                 # partial of x_l by y_i
                 deriv_x_l_y_i = zs[i] * (1 - zs[i])
                 deriv_x_l_y_i *= (1 - xs_sum[i])

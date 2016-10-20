@@ -81,26 +81,29 @@ end
 
 function check_simplex_gradient()
     rng = srand(1234)
-    n = 30
+    n = 36
     xs = Array(Float64, n)
-    grad = Array(Float64, n)
+    grad = zeros(Float64, n)
     grad_ = Array(Float64, n)
     numgrad = Array(Float64, n)
     ϵ = 1e-9
     #ys = scale * rand(rng, n)
     ys = rand(Normal(0, 1), n)
+    #ys = zeros(Float32, n)
     #@show ys
     ladj = simplex!(xs, grad, ys)
+    @show ladj
     #@show ladj
     #@show xs
 
+    @show ys
     for j in 1:n
         y = ys[j]
         ys[j] += ϵ
         ladj2 = simplex!(xs, grad_, ys)
         numgrad[j] = (ladj2 - ladj) / ϵ
         ys[j] = y
-        @printf("%0.4f\t%0.4f\t%0.4f\n", grad[j],
+        @printf("%0.4e\t%0.4e\t%0.4e\n", grad[j],
                 numgrad[j], grad[j] - numgrad[j])
     end
 end

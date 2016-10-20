@@ -1,5 +1,7 @@
 
 using HDF5
+using NLopt
+using Distributions
 
 const NUM_SAMPLES = 100
 const NUM_SUBSAMPLES = 10
@@ -17,6 +19,7 @@ type Model
 
     # intermediate gradient (before accounting for transform)
     raw_grad::Vector{Float32}
+    raw_grad_cumsum::Vector{Float32}
 
     # intermediate values used in simplex calculation
     xs_sum::Vector{Float32}
@@ -26,8 +29,8 @@ end
 
 function Model(m, n)
     return Model(Int(m), Int(n), Array(Float32, n), Array(Float32, m),
-                 Array(Float32, n), Array(Float32, n), Array(Float32, n),
-                 Array(Float32, n))
+                 Array(Float32, n), Array(Float64, n+1), Array(Float32, n),
+                 Array(Float32, n), Array(Float32, n))
 end
 
 
@@ -67,6 +70,8 @@ function simplex!(xs, grad, xs_sum, zs, zs_log_sum, ys)
     end
 
     for i in 1:k-1
+        #zs[i] = logistic(ys[i] + log(1/(k - i)))
+
         log_one_minus_z = log(1 - zs[i])
         ladj += log(zs[i]) + log_one_minus_z + log(1 - xsum)
 
@@ -88,7 +93,6 @@ function simplex!(xs, grad, xs_sum, zs, zs_log_sum, ys)
 
     return ladj
 end
-
 
 
 # assumes a flat prior on π
@@ -121,21 +125,41 @@ function log_post(model::Model, X, π, grad)
     zs = model.zs
     zs_log_sum = model.zs_log_sum
     xs_sum = model.xs_sum
-    for i in 1:model.n
-        for j in i:model.n
-            deriv_x_j_y_i = zs[i] * (1 - zs[i])
-            deriv_x_j_y_i *= (1 - xs_sum[i])
+    raw_grad_cumsum = model.raw_grad_cumsum
 
-            if j > i
-                deriv_x_j_y_i *=
-                    -zs[j] * exp(zs_log_sum[j] - zs_log_sum[i+1])
-            end
+    # Straghtforward version
+    #for i in 1:model.n
+        ##@show i
 
-            grad[i] += raw_grad[j] * deriv_x_j_y_i
-        end
+        ## I'm not a smart man...
+        ## It seems like these derivatives are mostly the same...
+        #for j in i:model.n
+            #deriv_x_j_y_i = zs[i] * (1 - zs[i])
+            #deriv_x_j_y_i *= (1 - xs_sum[i])
+
+            #if j > i
+                #deriv_x_j_y_i *=
+                    #-zs[j] * exp(zs_log_sum[j] - zs_log_sum[i+1])
+            #end
+
+            #grad[i] += raw_grad[j] * deriv_x_j_y_i
+
+            ##@show deriv_x_j_y_i
+        #end
+    #end
+
+    # Trick Version
+    raw_grad_cumsum[1] = 0.0
+    for i in 2:model.n+1
+        raw_grad_cumsum[i] += raw_grad[i-1] + raw_grad_cumsum[i-1]
     end
+    #@show raw_grad_cumsum
 
-    # TODO: figure out how to adjust raw_grad in linear time
+    for i in 1:model.n-1
+        c = zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+        grad[i] += c * (raw_grad[i] +
+                        -zs[i+1] * (raw_grad_cumsum[model.n+1] - raw_grad_cumsum[i+1]))
+    end
 
     return lp + ladj
 end
@@ -156,29 +180,49 @@ function main()
     @show (m, n)
 
     X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
-    π = zeros(Float32, n)
+    #π = zeros(Float32, n)
+    π = rand(Normal(0, 1), n)
     ϕ = zeros(Float32, n)
-    grad = Array(Float32, n)
+    grad = zeros(Float32, n)
 
     model = Model(m, n)
 
+
+    # do some basic optimization
+
+    # no luck with this
+    #optimize(π -> log_post(model, X, π, grad_),
+             #(π, grad) -> -log_post(model, X, π, grad),
+             #π, LBFGS(),
+             #OptimizationOptions(show_trace=true))
+
+    #opt = Opt(:LD_LBFGS, n-1)
+    #opt = Opt(:LD_MMA, n-1)
+    #maxeval!(opt, 1000)
+    #initial_step!(opt, 1e-8)
+    #min_objective!(opt, (π, grad) -> -log_post(model, X, π, grad))
+    #@show optimize(opt, π)
+
+
+
+
     lp0 = log_post(model, X, π, grad)
-
     @show lp0
+    #exit()
 
+    # check gradient
     ε = 1e-4
     grad_ = Array(Float32, n)
     for j in 1:n
         πj = π[j]
         π[j] += ε
         lp = log_post(model, X, π, grad_)
+        numgrad = (Float64(lp) - Float64(lp0)) / ε
         π[j] = πj
-        numgrad = (lp - lp0) / ε
-        @printf("%d\t%0.4e\t%0.4e\t%0.2f\n", j, grad[j], numgrad,
-                (grad[j] - numgrad) / ((grad[j] + numgrad) / 2))
+        @printf("%d\t%0.4e\t%0.4e\t%0.4f\t%0.4f\n", j, grad[j], numgrad,
+                (grad[j] - numgrad), (grad[j] - numgrad) / (grad[j] + numgrad))
     end
 
-    # check gradient
 
     #for sample_num in 1:NUM_SAMPLES
         ##ϕ += 0.5 * ϵ * grad_lp0

@@ -128,38 +128,35 @@ function log_post(model::Model, X, π, grad)
     raw_grad_cumsum = model.raw_grad_cumsum
 
     # Straghtforward version
-    #for i in 1:model.n
-        ##@show i
+    for i in 1:model.n
+        @show i
+        b = raw_grad[i]
+        for j in i+1:model.n
+            b += raw_grad[j] * -zs[j] * exp(zs_log_sum[j] - zs_log_sum[i+1])
+        end
+        @show b
+        grad[i] += b * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+    end
 
-        ## I'm not a smart man...
-        ## It seems like these derivatives are mostly the same...
-        #for j in i:model.n
-            #deriv_x_j_y_i = zs[i] * (1 - zs[i])
-            #deriv_x_j_y_i *= (1 - xs_sum[i])
 
-            #if j > i
-                #deriv_x_j_y_i *=
-                    #-zs[j] * exp(zs_log_sum[j] - zs_log_sum[i+1])
-            #end
-
-            #grad[i] += raw_grad[j] * deriv_x_j_y_i
-
-            ##@show deriv_x_j_y_i
-        #end
-    #end
 
     # Trick Version
-    raw_grad_cumsum[1] = 0.0
-    for i in 2:model.n+1
-        raw_grad_cumsum[i] += raw_grad[i-1] + raw_grad_cumsum[i-1]
-    end
-    #@show raw_grad_cumsum
+    # The trick version is very close when π is all zeros, but no so much when
+    # it's random. I think we fooled ourselves into thinking this works. It
+    # probably only works when π is all set to the same value.
 
-    for i in 1:model.n-1
-        c = zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
-        grad[i] += c * (raw_grad[i] +
-                        -zs[i+1] * (raw_grad_cumsum[model.n+1] - raw_grad_cumsum[i+1]))
-    end
+    # Yep, We fooled ourselves. I guess we're back to the drawing board.
+
+    #raw_grad_cumsum[1] = 0.0
+    #for i in 2:model.n+1
+        #raw_grad_cumsum[i] += raw_grad[i-1] + raw_grad_cumsum[i-1]
+    #end
+
+    #for i in 1:model.n-1
+        #c = zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+        #grad[i] += c * (raw_grad[i] +
+                        #-zs[i+1] * (raw_grad_cumsum[model.n+1] - raw_grad_cumsum[i+1]))
+    #end
 
     return lp + ladj
 end
@@ -208,7 +205,7 @@ function main()
 
     lp0 = log_post(model, X, π, grad)
     @show lp0
-    #exit()
+    exit()
 
     # check gradient
     ε = 1e-4

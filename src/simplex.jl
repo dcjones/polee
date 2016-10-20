@@ -68,6 +68,7 @@ function simplex!(xs, grad, ys)
     #end
 
 
+    # TODO: make sure this actually works for non constant values of y
     for i in 1:k-1
         grad[i] += 1 - 2*zs[i] +
             (k - i - 1) * (-1 / (1 - xs_sum[i+1])) *

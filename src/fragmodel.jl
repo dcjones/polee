@@ -44,7 +44,7 @@ function sample_training_examples(rs::Reads, n::Int)
 end
 
 
-function FragModel(rs::Reads, ts::Transcripts, n::Int=100000,
+function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
                    bias_upctx::Int=15, bias_downctx::Int=15)
     examples = sample_training_examples(rs, n)
 

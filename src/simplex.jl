@@ -15,13 +15,11 @@ function simplex!(xs, grad, ys)
 
     # TODO: store this externally
     zs = Array(eltype(xs), k)
-    zs_log_sum = Array(eltype(xs), k)
-    xs_sum = Array(eltype(xs), k)
-    #xs_sum_sum = Array(eltype(xs), k)
 
-    for i in 1:k-1
-        zs[i] = logistic(ys[i] + log(1/(k - i)))
-    end
+    # TODO: do we still need this?
+    zs_log_sum = Array(eltype(xs), k)
+
+    xs_sum = Array(eltype(xs), k)
 
     # log absolute determinate of the jacobian
     ladj = 0.0
@@ -30,7 +28,8 @@ function simplex!(xs, grad, ys)
     xs_sum[1] = 0.0
     zs_log_sum[1] = 0.0
     for i in 1:k-1
-        grad[i] = 1 - 2*zs[i]
+        zs[i] = logistic(ys[i] + log(1/(k - i)))
+
         ladj += log(zs[i]) + log(1 - zs[i]) + log(1 - xsum)
 
         xs[i] = (1 - xsum) * zs[i]
@@ -68,56 +67,11 @@ function simplex!(xs, grad, ys)
         #grad[i] = deriv_x_l_y_i
     #end
 
-    # other gradient term
-    # Let's make sure we can get it right, then look for approximations
-
-    # This works!
-    #for i in 1:k-1
-        #for j in i:k-1
-            #a = -1 / (1 - xs_sum[j])
-            #b = 0.0
-            #for l in i:j-1
-                ## partial of x_l by y_i
-                #deriv_x_l_y_i = zs[i] * (1 - zs[i])
-                #deriv_x_l_y_i *= (1 - xs_sum[i])
-
-                #if l > i
-                    #deriv_x_l_y_i *=
-                        #-zs[l] * exp(zs_log_sum[l] - zs_log_sum[i+1])
-                #end
-                #b += deriv_x_l_y_i
-            #end
-
-            #grad[i] += a * b
-        #end
-    #end
 
     for i in 1:k-1
-        gradi = 0.0
-        #println("------")
-
-        # We need to exploit the fact that each iteration produces almost the
-        # same thing here
-
-        # We are missing something important: these iterations keep producing
-        # the same number. How is that possible? If it's a constant, that our
-        # dreams have come true.
-        #for j in i+1:k-1
-            #b = 1.0
-            #for l in i+1:j-1
-                #b += -zs[l] * exp(zs_log_sum[l] - zs_log_sum[i+1])
-            #end
-            #b *= -1 / (1 - xs_sum[j])
-            #@show -1 / (1 - xs_sum[j])
-            #@show b
-            #gradi += b
-        #end
-
-        # XXX: HOLY SHIT! HOW DOES THIS WORK!!!
-        gradi = (k - i - 1) * (-1 / (1 - xs_sum[i+1]))
-
-        gradi *= zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
-        grad[i] += gradi
+        grad[i] += 1 - 2*zs[i] +
+            (k - i - 1) * (-1 / (1 - xs_sum[i+1])) *
+            zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
     end
 
     return ladj
@@ -132,7 +86,7 @@ function check_simplex_gradient()
     grad = Array(Float64, n)
     grad_ = Array(Float64, n)
     numgrad = Array(Float64, n)
-    ϵ = 1e-10
+    ϵ = 1e-9
     #ys = scale * rand(rng, n)
     ys = rand(Normal(0, 1), n)
     #@show ys

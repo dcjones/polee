@@ -143,24 +143,6 @@ function log_post(model::Model, X, π, grad)
         grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
     end
 
-    # Trick Version
-    # The trick version is very close when π is all zeros, but no so much when
-    # it's random. I think we fooled ourselves into thinking this works. It
-    # probably only works when π is all set to the same value.
-
-    # Yep, We fooled ourselves. I guess we're back to the drawing board.
-
-    #raw_grad_cumsum[1] = 0.0
-    #for i in 2:model.n+1
-        #raw_grad_cumsum[i] += raw_grad[i-1] + raw_grad_cumsum[i-1]
-    #end
-
-    #for i in 1:model.n-1
-        #c = zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
-        #grad[i] += c * (raw_grad[i] +
-                        #-zs[i+1] * (raw_grad_cumsum[model.n+1] - raw_grad_cumsum[i+1]))
-    #end
-
     return lp + ladj
 end
 
@@ -205,9 +187,10 @@ function main()
 
 
 
-    lp0 = log_post(model, X, π, grad)
+    @time lp0 = log_post(model, X, π, grad)
+    @time lp0 = log_post(model, X, π, grad)
     @show lp0
-    #exit()
+    ##exit()
 
     # check gradient
     ε = 1e-4

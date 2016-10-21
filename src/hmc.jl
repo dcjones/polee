@@ -1,6 +1,7 @@
 
 using HDF5
 using NLopt
+#using Optim
 using Distributions
 
 const NUM_SAMPLES = 100
@@ -143,6 +144,8 @@ function log_post(model::Model, X, π, grad)
         grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
     end
 
+    @show π
+    @show lp + ladj
     return lp + ladj
 end
 
@@ -178,19 +181,18 @@ function main()
              #π, LBFGS(),
              #OptimizationOptions(show_trace=true))
 
-    #opt = Opt(:LD_LBFGS, n-1)
-    #opt = Opt(:LD_MMA, n-1)
-    #maxeval!(opt, 1000)
-    #initial_step!(opt, 1e-8)
-    #min_objective!(opt, (π, grad) -> -log_post(model, X, π, grad))
-    #@show optimize(opt, π)
+    #opt = Opt(:LD_LBFGS, n)
+    opt = Opt(:LD_MMA, n)
+    maxeval!(opt, 10)
+    initial_step!(opt, 1e-8)
+    min_objective!(opt, (π, grad) -> -log_post(model, X, π, grad))
+    @show optimize(opt, π)
 
 
 
-    @time lp0 = log_post(model, X, π, grad)
     @time lp0 = log_post(model, X, π, grad)
     @show lp0
-    ##exit()
+    exit()
 
     # check gradient
     ε = 1e-4

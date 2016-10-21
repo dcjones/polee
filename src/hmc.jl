@@ -25,12 +25,15 @@ type Model
     xs_sum::Vector{Float32}
     zs::Vector{Float32}
     zs_log_sum::Vector{Float32}
+
+    # intermediate values in gradient computation
+    grad_work::Vector{Float32}
 end
 
 function Model(m, n)
     return Model(Int(m), Int(n), Array(Float32, n), Array(Float32, m),
                  Array(Float32, n), Array(Float64, n+1), Array(Float32, n),
-                 Array(Float32, n), Array(Float32, n))
+                 Array(Float32, n), Array(Float32, n), Array(Float32, n))
 end
 
 
@@ -126,19 +129,19 @@ function log_post(model::Model, X, π, grad)
     zs_log_sum = model.zs_log_sum
     xs_sum = model.xs_sum
     raw_grad_cumsum = model.raw_grad_cumsum
+    grad_work = model.grad_work
 
-    # Straghtforward version
-    for i in 1:model.n
-        @show i
-        b = raw_grad[i]
-        for j in i+1:model.n
-            b += raw_grad[j] * -zs[j] * exp(zs_log_sum[j] - zs_log_sum[i+1])
-        end
-        @show b
-        grad[i] += b * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+    grad_work0 = 0.0
+    for j in 1:model.n
+        grad_work0 = grad_work[j] =
+            grad_work0 + raw_grad[j] * -zs[j] * exp(zs_log_sum[j])
     end
 
-
+    # Straghtforward version
+    for i in 1:model.n-1
+        b = (grad_work[model.n] - grad_work[i]) * exp(-zs_log_sum[i+1])
+        grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+    end
 
     # Trick Version
     # The trick version is very close when π is all zeros, but no so much when
@@ -202,10 +205,9 @@ function main()
 
 
 
-
     lp0 = log_post(model, X, π, grad)
     @show lp0
-    exit()
+    #exit()
 
     # check gradient
     ε = 1e-4

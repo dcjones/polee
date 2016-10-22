@@ -3,42 +3,8 @@
 
 using SIMD
 
-#const c0 = 3.1157899f0
-#const c1 = -3.3241990f0
-#const c2 = 2.5988452f0
-#const c3 = -1.2315303f0
-#const c4 = 3.1821337f-1
-#const c5 = -3.4436006f-2
-
-#function fastlog(x::Float32)
-    #if x <= 0.0
-        #return Float32(-Inf)
-    #end
-
-    #onei = reinterpret(Int32, 1.0f0)
-    #xi = reinterpret(Int32, x)
-
-    #e = Float32((xi >> 23) - 127)
-    #@show e
-
-    #yi = (xi & Int32(0x007fffff)) | onei
-    #m = reinterpret(Float32, yi)
-
-    #p = c5
-    #p = m * p + c4
-    #p = m * p + c3
-    #p = m * p + c2
-    #p = m * p + c1
-    #p = m * p + c0
-
-    #p *= m - 1.0f0
-
-    #return (p + e) / 1.442695f0
-#end
-
 typealias FloatVec Vec{4, Float32}
 typealias IntVec Vec{4, Int32}
-typealias BoolVec Vec{4, Bool}
 
 typealias FloatTuple NTuple{4, VecElement{Float32}}
 typealias IntTuple NTuple{4, VecElement{Int32}}
@@ -59,12 +25,11 @@ function ir_set1(n, typ, val)
     return s
 end
 
-#const cv23 = llvm_vec_set1(4, "float", 23)
-
 # various float32 constants in a form that llvm ir understands
 const ir_neginf = "0xfff0000000000000"
 const ir_mask1  = "8388607" # 0x007fffff
 const ir_mask2  = "1065353216" # 0x3f800000
+const ir_mask3  = "2139095040" # 0x7f800000
 const ir_log_a  = "0xc0567e20e0000000" # -89.970756366f0
 
 const ir_log_c1 = "0x400c3c0440000000" # 3.529304993f0
@@ -84,8 +49,8 @@ function fastlog{N}(x::NTuple{N,VecElement{Float32}})
         %expi = lshr $(ir_iv_type) %i0, $(ir_set1(N, "i32", 23))
         %exp = sitofp $(ir_iv_type) %expi to $(ir_fv_type)
 
-        %gt0 = fcmp olt $(ir_fv_type) %0, $(ir_set1(N, "float", "0.0"))
-        %addcst = select $(ir_i1v_type) %gt0,
+        %lt0 = fcmp olt $(ir_fv_type) %0, $(ir_set1(N, "float", "0.0"))
+        %addcst = select $(ir_i1v_type) %lt0,
             $(ir_fv_type) $(ir_set1(N, "float", ir_neginf)),
             $(ir_fv_type) $(ir_set1(N, "float", ir_log_a))
 
@@ -144,7 +109,76 @@ function fastlog(x::FloatVec)
 end
 
 
-@inline function fastexp(x::FloatVec)
+const ir_exp_c1 = "0x4167154760000000" # 12102203.1615614f0
+const ir_exp_c2 = "0x41cfc00000000000" # 1065353216.0f0
+const ir_exp_c3 = "0x41dfe00000000000" # 2139095040.f0
+
+const ir_exp_c4 = "0x3fe0552ce0000000" # 0.510397365625862338668154f0
+const ir_exp_c5 = "0x3fd3e20820000000" # 0.310670891004095530771135f0
+const ir_exp_c6 = "0x3fc585b960000000" # 0.168143436463395944830000f0
+const ir_exp_c7 = "0xbf6799c2a0000000" # -2.88093587581985443087955f-3
+const ir_exp_c8 = "0x3f8bff8dc0000000" # 1.3671023382430374383648148f-2
+
+function fastexp{N}(x::NTuple{N,VecElement{Float32}})
+    ans = Base.llvmcall((
+        """
+        declare $(ir_fv_type) @llvm.fmuladd.f32($(ir_fv_type) %a, $(ir_fv_type) %b, $(ir_fv_type) %c)
+        """,
+        """
+        %v2 = call $(ir_fv_type) @llvm.fmuladd.f32(
+                $(ir_fv_type) %0,
+                $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c1)),
+                $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c2)))
+
+        %ltc3 = fcmp olt $(ir_fv_type) %v2, $(ir_set1(N, "float", ir_exp_c3))
+        %v3 = select $(ir_i1v_type) %ltc3,
+               $(ir_fv_type) %v2,
+               $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c3))
+
+        %gt0 = fcmp ogt $(ir_fv_type) %v3, $(ir_set1(N, "float", 0.0))
+        %v4 = select $(ir_i1v_type) %gt0,
+               $(ir_fv_type) %v3,
+               $(ir_fv_type) $(ir_set1(N, "float", 0.0))
+
+        %v4i = fptosi $(ir_fv_type) %v4 to $(ir_iv_type)
+        %xui = and $(ir_iv_type) %v4i, $(ir_set1(N, "i32", ir_mask3))
+        %xu = bitcast $(ir_iv_type) %xui to $(ir_fv_type)
+
+        %b1i = and $(ir_iv_type) %v4i, $(ir_set1(N, "i32", ir_mask1))
+        %b2i = or $(ir_iv_type) %b1i, $(ir_set1(N, "i32", ir_mask2))
+        %b = bitcast $(ir_iv_type) %b2i to $(ir_fv_type)
+
+        %y1 = call $(ir_fv_type) @llvm.fmuladd.f32(
+                $(ir_fv_type) %b,
+                $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c8)),
+                $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c7)))
+
+        %y2 = call $(ir_fv_type) @llvm.fmuladd.f32(
+                $(ir_fv_type) %b,
+                $(ir_fv_type) %y1,
+                $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c6)))
+
+        %y3 = call $(ir_fv_type) @llvm.fmuladd.f32(
+                $(ir_fv_type) %b,
+                $(ir_fv_type) %y2,
+                $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c5)))
+
+        %y4 = call $(ir_fv_type) @llvm.fmuladd.f32(
+                $(ir_fv_type) %b,
+                $(ir_fv_type) %y3,
+                $(ir_fv_type) $(ir_set1(N, "float", ir_exp_c4)))
+
+        %res = fmul $(ir_fv_type) %xu, %y4
+
+        ret $(ir_fv_type) %res
+        """),
+        FloatTuple, Tuple{FloatTuple}, x)
+
+    return ans
+end
+
+
+function fastexp(x::FloatVec)
   val2 = 12102203.1615614f0*x + 1065353216.0f0;
 
   exp_cst1 = FloatVec(2139095040.f0)
@@ -164,55 +198,12 @@ end
 end
 
 
-#function fastlog(x::FloatVec)
-    #vc0 = FloatVec(3.1157899f0)
-    #vc1 = FloatVec(-3.3241990f0)
-    #vc2 = FloatVec(2.5988452f0)
-    #vc3 = FloatVec(-1.2315303f0)
-    #vc4 = FloatVec(3.1821337f-1)
-    #vc5 = FloatVec(-3.4436006f-2)
-
-    #neginf = FloatVec(-Inf)
-    #vone = FloatVec(1.0f0)
-    #vzero = FloatVec(0.0f0)
-    #inv_mant_mask = IntVec(reinterpret(Int32, ~0x7f800000))
-    #exp_c = FloatVec(Float32(1.1920928955078125f-7))
-    #mant_mask = IntVec(0x7f800000)
-    #v7f = FloatVec(127.0f0)
-
-    ## extract exponent
-    #ei = reinterpret(IntVec, x) & mant_mask
-    #e = convert(FloatVec, ei) * exp_c - v7f
-
-    ## extract mantissa
-    #mi = reinterpret(IntVec, x) & inv_mant_mask
-    #m = reinterpret(FloatVec, mi | reinterpret(IntVec, vone))
-
-    #a = vc5
-    #a = m * a + vc4
-    #a = m * a + vc3
-    #a = m * a + vc2
-    #a = m * a + vc1
-    #a = m * a + vc0
-
-    #a = a * (m - vone) + e
-
-    ## from log2 to ln
-    #a /= FloatVec(1.442695f0)
-
-    #a = ifelse(a <= vzero, neginf, a)
-
-    #return a
-#end
-
-
 function f(xs::Vector{Float32})
     xsv = reinterpret(FloatTuple, xs)
     @inbounds for i in length(xsv)
         xsv[i] = fastlog(xsv[i])
     end
 end
-
 
 function g(xs)
     @inbounds for i in 1:n
@@ -222,25 +213,27 @@ end
 
 #n = 40000000
 const n = 400000
-const xs = 10000.0 * rand(Float32, n)
+const xs = rand(Float32, n)
 #@show typeof(xs)
 
-#const x = vload(FloatVec, xs, 1)
-#@show fastlog(x)
-#@show fastlog_llvm(x.elts)
-#@show @code_native fastlog_llvm(x.elts)
+const x = vload(FloatVec, xs, 1)
+@show fastexp(x)
+@show fastexp(x.elts)
+
+@show @code_native fastexp(x.elts)
 
 #@show @code_llvm f(xs)
 
-ys = copy(xs)
-f(ys)
-ys = copy(xs)
-@time f(ys)
 
-ys = copy(xs)
-g(ys)
-ys = copy(xs)
-@time g(ys)
+#ys = copy(xs)
+#f(ys)
+#ys = copy(xs)
+#@time f(ys)
+
+#ys = copy(xs)
+#g(ys)
+#ys = copy(xs)
+#@time g(ys)
 
 
 

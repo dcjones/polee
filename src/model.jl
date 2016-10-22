@@ -1,4 +1,5 @@
 
+
 type Model
     m::Int # number of fragments
     n::Int # number of transcripts
@@ -62,6 +63,13 @@ function simplex!(xs, grad, xs_sum, zs, zs_log_sum, ys)
     zs_log_sum[1] = 0.0
 
     for i in 1:k-1
+        ys[i] = 1/(k-1)
+    end
+    Yepp.log!()
+
+
+
+    for i in 1:k-1
         zs[i] = logistic(ys[i] + log(1/(k - i)))
 
         log_one_minus_z = log(1 - zs[i])
@@ -97,7 +105,7 @@ function log_post(model::Model, X, π, grad)
                     model.zs_log_sum, π)
 
     # conditional fragment probabilities
-    A_mul_B!(frag_probs, X, model.π_simplex)
+    mkl_A_mul_B!(frag_probs, X, model.π_simplex)
 
     # log-likelihood
     lp = 0.0
@@ -110,7 +118,7 @@ function log_post(model::Model, X, π, grad)
 
     # gradients
     raw_grad = model.raw_grad
-    At_mul_B!(raw_grad, X, frag_probs)
+    mkl_At_mul_B!(raw_grad, X, frag_probs)
 
     # compute the gradients the correct but intractable way
     zs = model.zs

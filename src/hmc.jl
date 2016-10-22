@@ -2,8 +2,10 @@
 using HDF5
 using NLopt
 using Distributions
+using Yeppp
 
 
+include("mkl.jl")
 include("model.jl")
 
 # TODO: understand what the jacobian term is to handl hypercube -> simple
@@ -33,7 +35,7 @@ function main()
 
     # optimize!
     opt = Opt(:LD_CCSAQ, n)
-    ftol_abs!(opt, 100)
+    ftol_abs!(opt, 1000)
     initial_step!(opt, 1e-9)
     max_objective!(opt, (π, grad) -> log_post(model, X, π, grad))
     @time optimize(opt, π)

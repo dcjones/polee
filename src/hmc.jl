@@ -1,12 +1,51 @@
 
 using HDF5
 using NLopt
-#using Optim
 using Distributions
 
-const NUM_SAMPLES = 100
-const NUM_SUBSAMPLES = 10
-const ϵ = 1.0
+
+# Optionally use MKL to do sparse matrix multiplication
+const libmkl_path = "/opt/intel/compilers_and_libraries_2017.0.098/linux/mkl/lib/intel64_lin/libmkl_rt.so"
+
+function mkl_A_mul_B!(ans::Vector{Float32}, A::SparseMatrixCSC{Float32},
+                      b::Vector{Float32})
+    ccall((:mkl_scscmv, libmkl_path), Void,
+          (Cstring,       # transa
+           Ptr{Int},      # m
+           Ptr{Int},      # k
+           Ptr{Float32},  # alpha
+           Cstring,       # matdescra
+           Ptr{Float32},  # val
+           Ptr{Int},      # indx
+           Ptr{Int},      # pntrb
+           Ptr{Int},      # pntre
+           Ptr{Float32},  # x
+           Ptr{Float32},  # beta
+           Ptr{Float32}), # y
+          "N", Ref(A.m), Ref(A.n), Ref(1.0f0), "GXXF", A.nzval, A.rowval, A.colptr,
+          pointer(A.colptr, 2), b, Ref(0.0f0), ans)
+end
+
+
+function mkl_At_mul_B!(ans::Vector{Float32}, A::SparseMatrixCSC{Float32},
+                       b::Vector{Float32})
+    ccall((:mkl_scscmv, libmkl_path), Void,
+          (Cstring,       # transa
+           Ptr{Int},      # m
+           Ptr{Int},      # k
+           Ptr{Float32},  # alpha
+           Cstring,       # matdescra
+           Ptr{Float32},  # val
+           Ptr{Int},      # indx
+           Ptr{Int},      # pntrb
+           Ptr{Int},      # pntre
+           Ptr{Float32},  # x
+           Ptr{Float32},  # beta
+           Ptr{Float32}), # y
+          "T", Ref(A.m), Ref(A.n), Ref(1.0f0), "GXXF", A.nzval, A.rowval, A.colptr,
+          pointer(A.colptr, 2), b, Ref(0.0f0), ans)
+end
+
 
 type Model
     m::Int # number of fragments
@@ -33,7 +72,7 @@ end
 
 function Model(m, n)
     return Model(Int(m), Int(n), Array(Float32, n), Array(Float32, m),
-                 Array(Float32, n), Array(Float64, n+1), Array(Float32, n),
+                 Array(Float32, n), Array(Float32, n+1), Array(Float32, n),
                  Array(Float32, n), Array(Float32, n), Array(Float32, n))
 end
 
@@ -69,12 +108,9 @@ function simplex!(xs, grad, xs_sum, zs, zs_log_sum, ys)
     z_log_sum = 0.0
     xs_sum[1] = 0.0
     zs_log_sum[1] = 0.0
-    for i in 1:k
-        zs[i] = logistic(ys[i] + log(1/(k - i)))
-    end
 
     for i in 1:k-1
-        #zs[i] = logistic(ys[i] + log(1/(k - i)))
+        zs[i] = logistic(ys[i] + log(1/(k - i)))
 
         log_one_minus_z = log(1 - zs[i])
         ladj += log(zs[i]) + log_one_minus_z + log(1 - xsum)
@@ -110,7 +146,6 @@ function log_post(model::Model, X, π, grad)
 
     # conditional fragment probabilities
     A_mul_B!(frag_probs, X, model.π_simplex)
-    #@show (minimum(frag_probs), maximum(frag_probs))
 
     # log-likelihood
     lp = 0.0
@@ -144,7 +179,7 @@ function log_post(model::Model, X, π, grad)
         grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
     end
 
-    @show π
+    #@show π
     @show lp + ladj
     return lp + ladj
 end
@@ -165,54 +200,38 @@ function main()
     @show (m, n)
 
     X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
-    #π = zeros(Float32, n)
-    π = rand(Normal(0, 1), n)
+    π = zeros(Float32, n)
+    #π = rand(Normal(0, 1), n)
     ϕ = zeros(Float32, n)
     grad = zeros(Float32, n)
 
     model = Model(m, n)
 
+    #log_post(model, X, π, grad)
+    #@time log_post(model, X, π, grad)
+    #exit()
 
-    # do some basic optimization
+    # optimize!
+    opt = Opt(:LD_CCSAQ, n)
+    ftol_abs!(opt, 100)
+    initial_step!(opt, 1e-9)
+    max_objective!(opt, (π, grad) -> log_post(model, X, π, grad))
+    @time optimize(opt, π)
 
-    # no luck with this
-    #optimize(π -> log_post(model, X, π, grad_),
-             #(π, grad) -> -log_post(model, X, π, grad),
-             #π, LBFGS(),
-             #OptimizationOptions(show_trace=true))
+    simplex!(model.π_simplex, grad, model.xs_sum, model.zs,
+             model.zs_log_sum, π)
 
-    #opt = Opt(:LD_LBFGS, n)
-    opt = Opt(:LD_MMA, n)
-    maxeval!(opt, 10)
-    initial_step!(opt, 1e-8)
-    min_objective!(opt, (π, grad) -> -log_post(model, X, π, grad))
-    @show optimize(opt, π)
-
-
-
-    @time lp0 = log_post(model, X, π, grad)
-    @show lp0
-    exit()
-
-    # check gradient
-    ε = 1e-4
-    grad_ = Array(Float32, n)
-    for j in 1:n
-        πj = π[j]
-        π[j] += ε
-        lp = log_post(model, X, π, grad_)
-        numgrad = (Float64(lp) - Float64(lp0)) / ε
-        π[j] = πj
-        @printf("%d\t%0.4e\t%0.4e\t%0.4f\t%0.4f\n", j, grad[j], numgrad,
-                (grad[j] - numgrad), (grad[j] - numgrad) / (grad[j] + numgrad))
-    end
-
-
-    #for sample_num in 1:NUM_SAMPLES
-        ##ϕ += 0.5 * ϵ * grad_lp0
-        #for sum_sample_num in 1:NUM_SUBSAMPLES
-            ## TODO
-        #end
+    ## check gradient
+    #ε = 1e-4
+    #grad_ = Array(Float32, n)
+    #for j in 1:n
+        #πj = π[j]
+        #π[j] += ε
+        #lp = log_post(model, X, π, grad_)
+        #numgrad = (Float64(lp) - Float64(lp0)) / ε
+        #π[j] = πj
+        #@printf("%d\t%0.4e\t%0.4e\t%0.4f\t%0.4f\n", j, grad[j], numgrad,
+                #(grad[j] - numgrad), (grad[j] - numgrad) / (grad[j] + numgrad))
     #end
 end
 

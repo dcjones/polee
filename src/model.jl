@@ -1,4 +1,5 @@
 
+using FastMath
 
 type Model
     m::Int # number of fragments
@@ -12,7 +13,6 @@ type Model
 
     # intermediate gradient (before accounting for transform)
     raw_grad::Vector{Float32}
-    raw_grad_cumsum::Vector{Float32}
 
     # intermediate values used in simplex calculation
     xs_sum::Vector{Float32}
@@ -24,9 +24,13 @@ type Model
 end
 
 function Model(m, n)
-    return Model(Int(m), Int(n), Array(Float32, n), Array(Float32, m),
-                 Array(Float32, n), Array(Float32, n+1), Array(Float32, n),
-                 Array(Float32, n), Array(Float32, n), Array(Float32, n))
+    # round up to align with 8-element vectors for simd
+    m_ = 8 * (div(m - 1, 8) + 1)
+    n_ = 8 * (div(n - 1, 8) + 1)
+
+    return Model(Int(m), Int(n), zeros(Float32, n_), zeros(Float32, m_),
+                 zeros(Float32, n_), zeros(Float32, n_), zeros(Float32, n_),
+                 zeros(Float32, n_), zeros(Float32, n_))
 end
 
 
@@ -48,26 +52,18 @@ Some intermediate values are also stored:
     * `zs`: intermediate adjusted y-values
     * `zs_log_sum`: cumulative sum of `log(1 - zs[j])`.
 """
-function simplex!(xs, grad, xs_sum, zs, zs_log_sum, ys)
-    k = length(ys)
-    @assert length(xs) == k
-    @assert length(grad) == k
-    @assert length(xs_sum) == k
-    @assert length(zs) == k
-    @assert length(zs_log_sum) == k
+function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
+    @assert length(xs) >= k
+    @assert length(grad) >= k
+    @assert length(xs_sum) >= k
+    @assert length(zs) >= k
+    @assert length(zs_log_sum) >= k
 
     ladj = 0.0
     xsum = 0.0
     z_log_sum = 0.0
     xs_sum[1] = 0.0
     zs_log_sum[1] = 0.0
-
-    for i in 1:k-1
-        ys[i] = 1/(k-1)
-    end
-    Yepp.log!()
-
-
 
     for i in 1:k-1
         zs[i] = logistic(ys[i] + log(1/(k - i)))
@@ -86,12 +82,74 @@ function simplex!(xs, grad, xs_sum, zs, zs_log_sum, ys)
     xs[k] = 1 - xsum
 
     for i in 1:k-1
-        grad[i] += 1 - 2*zs[i] +
-            (k - i - 1) * (-1 / (1 - xs_sum[i+1])) *
-            zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+        grad[i] +=
+            1 - 2*zs[i] +
+            (1 - i - k) * (1 + xs[i]) * zs[i] * (1 - zs[i])
     end
 
     return ladj
+end
+
+
+function simplex_vec!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
+    @assert length(xs) >= k
+    @assert length(grad) >= k
+    @assert length(xs_sum) >= k
+    @assert length(zs) >= k
+    @assert length(zs_log_sum) >= k
+
+    xvs = reinterpret(FloatVec, xs)
+    yvs = reinterpret(FloatVec, ys)
+    zvs = reinterpret(FloatVec, zs)
+    zvs_log_sum = reinterpret(FloatVec, zs_log_sum)
+    gradv = reinterpret(FloatVec, grad)
+    kv = fill(FloatVec, Float32(k))
+
+    ladj = fill(FloatVec, 0.0f0)
+    z_log_sum = fill(FloatVec, 0.0f0)
+    onev = fill(FloatVec, 1.0f0)
+    countv = count(FloatVec)
+
+    # compute zs and zs_log_sum
+    @inbounds for i in 1:length(zvs)
+        offset = fill(FloatVec, Float32((i - 1) * div(sizeof(FloatVec), sizeof(Float32))))
+        iv = countv + offset
+
+        zvs[i] = FastMath.logistic(yvs[i] + log(inv(kv - iv)))
+
+        log_one_minus_z = log(fill(FloatVec, 1.0f0) - zvs[i])
+        ladj += log(zvs[i]) + log_one_minus_z
+
+        zvs_log_sum[i] = cumsum(log_one_minus_z)
+    end
+
+    # shift zs_log_sum over by one
+    z_log_sum = zs_log_sum[1]
+    zs_log_sum[1] = 0.0
+    @inbounds for i in 2:length(zs_log_sum)
+        zs_log_sum[i], z_log_sum = z_log_sum, zs_log_sum[i]
+    end
+
+    # compute xs, xs_sum, zs_log_sum
+    xsum = 0.0
+    @inbounds for i in 1:k-1
+        xs[i] = (1 - xsum) * zs[i]
+        xsum += xs[i]
+        xs_sum[i+1] = xsum
+    end
+
+    # compute grad
+    gradv = reinterpret(FloatVec, grad)
+    @inbounds for i in 1:length(gradv)
+        offset = fill(FloatVec, Float32((i - 1) * div(sizeof(FloatVec), sizeof(Float32))))
+        iv = countv + offset
+        gradv[i] =
+            onev - fill(FloatVec, 2.0f0) .* zvs[i] +
+            (onev - iv - kv) .* (onev - xvs[i]) .* zvs[i] .* (onev - zvs[i])
+    end
+
+    # return horizontal sum of ladj
+    return sum(ladj)
 end
 
 
@@ -101,20 +159,22 @@ function log_post(model::Model, X, π, grad)
     fill!(grad, 0.0)
 
     # transform π to simplex
-    ladj = simplex!(model.π_simplex, grad, model.xs_sum, model.zs,
+    ladj = simplex!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
                     model.zs_log_sum, π)
+    #ladj = simplex_vec!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
+                        #model.zs_log_sum, π)
 
     # conditional fragment probabilities
     mkl_A_mul_B!(frag_probs, X, model.π_simplex)
 
     # log-likelihood
-    lp = 0.0
-    for i in 1:model.m
-        lp += log(frag_probs[i])
-
-        # invert for gradient computation
-        frag_probs[i] = 1 / frag_probs[i]
+    lpv = fill(FloatVec, 0.0f0)
+    frag_probs_v = reinterpret(FloatVec, frag_probs)
+    for i in 1:length(frag_probs_v)
+        lpv += log(frag_probs_v[i])
+        frag_probs_v[i] = inv(frag_probs_v[i])
     end
+    lp = sum(lpv)
 
     # gradients
     raw_grad = model.raw_grad
@@ -124,7 +184,6 @@ function log_post(model::Model, X, π, grad)
     zs = model.zs
     zs_log_sum = model.zs_log_sum
     xs_sum = model.xs_sum
-    raw_grad_cumsum = model.raw_grad_cumsum
     grad_work = model.grad_work
 
     grad_work0 = 0.0
@@ -133,7 +192,6 @@ function log_post(model::Model, X, π, grad)
             grad_work0 + raw_grad[j] * -zs[j] * exp(zs_log_sum[j])
     end
 
-    # Straghtforward version
     for i in 1:model.n-1
         b = (grad_work[model.n] - grad_work[i]) * exp(-zs_log_sum[i+1])
         grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])

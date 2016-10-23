@@ -2,9 +2,8 @@
 using HDF5
 using NLopt
 using Distributions
-using Yeppp
 
-
+include("fastmath.jl")
 include("mkl.jl")
 include("model.jl")
 
@@ -40,7 +39,7 @@ function main()
     max_objective!(opt, (π, grad) -> log_post(model, X, π, grad))
     @time optimize(opt, π)
 
-    simplex!(model.π_simplex, grad, model.xs_sum, model.zs,
+    simplex!(n, model.π_simplex, grad, model.xs_sum, model.zs,
              model.zs_log_sum, π)
 
     ## check gradient

@@ -1,17 +1,17 @@
 
 # Implement much faster approximate log functions
 
-using SIMD
+module FastMath
 
-typealias FloatVec Vec{4, Float32}
-typealias IntVec Vec{4, Int32}
+export FloatVec, IntVec, logistic
 
-typealias FloatTuple NTuple{4, VecElement{Float32}}
-typealias IntTuple NTuple{4, VecElement{Int32}}
+typealias FloatVec NTuple{8, VecElement{Float32}}
+typealias IntVec NTuple{8, VecElement{Int32}}
 
-const ir_fv_type = "<4 x float>"
-const ir_iv_type = "<4 x i32>"
-const ir_i1v_type = "<4 x i1>"
+const ir_fv_type = "<8 x float>"
+const ir_iv_type = "<8 x i32>"
+const ir_i1v_type = "<8 x i1>"
+
 
 function ir_set1(n, typ, val)
     out = IOBuffer()
@@ -21,9 +21,167 @@ function ir_set1(n, typ, val)
         print(out, ", ", typ, " ", val)
     end
     print(out, " >")
-    s = takebuf_string(out)
-    return s
+    return takebuf_string(out)
 end
+
+
+# generate a constant vector with incrementing entries
+function ir_count(n, typ, from=1)
+    out = IOBuffer()
+    print(out, "< ")
+    print(out, typ, " ")
+        @printf(out, "%0.f", from)
+    for i in 1:n-1
+        print(out, ", ", typ, " ")
+        @printf(out, "%0.f", from + i)
+    end
+    print(out, " >")
+    return takebuf_string(out)
+end
+
+
+@inline function Base.:-{N}(x::NTuple{N,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %res = fsub $(ir_fv_type) $(ir_set1(N, "float", 0.0)), %0
+        ret $(ir_fv_type) %res
+        """,
+        FloatVec, Tuple{FloatVec}, x)
+end
+
+
+@inline function Base.inv{N}(x::NTuple{N,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %res = fdiv $(ir_fv_type) $(ir_set1(N, "float", 1.0)), %0
+        ret $(ir_fv_type) %res
+        """,
+        FloatVec, Tuple{FloatVec}, x)
+end
+
+
+@inline function Base.:+{N}(x::NTuple{N,VecElement{Float32}},
+                            y::NTuple{N,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %res = fadd $(ir_fv_type) %0, %1
+        ret $(ir_fv_type) %res
+        """,
+        FloatVec, Tuple{FloatVec, FloatVec}, x, y)
+end
+
+
+@inline function Base.:-{N}(x::NTuple{N,VecElement{Float32}},
+                            y::NTuple{N,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %res = fsub $(ir_fv_type) %0, %1
+        ret $(ir_fv_type) %res
+        """,
+        FloatVec, Tuple{FloatVec, FloatVec}, x, y)
+end
+
+
+@inline function Base.:./{N}(x::NTuple{N,VecElement{Float32}},
+                             y::NTuple{N,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %res = fdiv $(ir_fv_type) %0, %1
+        ret $(ir_fv_type) %res
+        """,
+        FloatVec, Tuple{FloatVec, FloatVec}, x, y)
+end
+
+
+@inline function Base.:.*{N}(x::NTuple{N,VecElement{Float32}},
+                             y::NTuple{N,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %res = fmul $(ir_fv_type) %0, %1
+        ret $(ir_fv_type) %res
+        """,
+        FloatVec, Tuple{FloatVec, FloatVec}, x, y)
+end
+
+
+@inline function Base.count{N}(::Type{NTuple{N,VecElement{Float32}}})
+    return Base.llvmcall(
+        """
+        ret $(ir_fv_type) $(ir_count(N, "float"))
+        """,
+        FloatVec, Tuple{})
+end
+
+
+@inline function Base.fill{N}(::Type{NTuple{N,VecElement{Float32}}}, x::Float32)
+    return Base.llvmcall(
+        """
+        %y1 = insertelement $(ir_fv_type) undef, float %0, i32 0
+        %y2 = shufflevector $(ir_fv_type) %y1, $(ir_fv_type) undef,
+            $(ir_iv_type) $(ir_set1(N, "i32", 0))
+        ret $(ir_fv_type) %y2
+        """,
+        FloatVec, Tuple{Float32}, x)
+end
+
+
+# untested
+@inline function Base.cumsum(x::NTuple{4,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %shuf1 = shufflevector
+            $(ir_fv_type) %0,
+            $(ir_fv_type) $(ir_set1(4, "float", 0.0)),
+            $(ir_iv_type) < i32 4, i32 0, i32 1, i32 2 >
+        %sum1 = fadd $(ir_fv_type) %0, %shuf1
+        %shuf2 = shufflevector
+            $(ir_fv_type) %sum1,
+            $(ir_fv_type) $(ir_set1(4, "float", 0.0)),
+            $(ir_iv_type) < i32 4, i32 4, i32 0, i32 1 >
+        %sum2 = fadd $(ir_fv_type) %sum1, %shuf2
+        ret $(ir_fv_type) %sum2
+        """,
+        FloatVec, Tuple{FloatVec}, x)
+end
+
+
+@inline function Base.cumsum(x::NTuple{8,VecElement{Float32}})
+    return Base.llvmcall(
+        """
+        %shuf1 = shufflevector
+            $(ir_fv_type) %0,
+            $(ir_fv_type) < float 0.0, float undef, float undef, float undef,
+                            float undef, float undef, float undef, float undef >,
+            $(ir_iv_type) < i32 8, i32 0, i32 1, i32 2,
+                            i32 3, i32 4, i32 5, i32 6 >
+        %sum1 = fadd $(ir_fv_type) %0, %shuf1
+
+        %shuf2 = shufflevector
+            $(ir_fv_type) %sum1,
+            $(ir_fv_type) < float 0.0, float undef, float undef, float undef,
+                            float undef, float undef, float undef, float undef >,
+            $(ir_iv_type) < i32 8, i32 8, i32 0, i32 1,
+                            i32 2, i32 3, i32 4, i32 5 >
+        %sum2 = fadd $(ir_fv_type) %sum1, %shuf2
+
+        %shuf3 = shufflevector
+            $(ir_fv_type) %sum2,
+            $(ir_fv_type) < float 0.0, float undef, float undef, float undef,
+                            float undef, float undef, float undef, float undef >,
+            $(ir_iv_type) < i32 8, i32 8, i32 8, i32 8,
+                            i32 0, i32 1, i32 2, i32 3 >
+        %sum3 = fadd $(ir_fv_type) %sum2, %shuf3
+
+        ret $(ir_fv_type) %sum3
+        """,
+        FloatVec, Tuple{FloatVec}, x)
+end
+
+
+@inline function Base.sum{N}(x::NTuple{N,VecElement{Float32}})
+    return cumsum(x)[N].value
+end
+
 
 # various float32 constants in a form that llvm ir understands
 const ir_neginf = "0xfff0000000000000"
@@ -39,7 +197,7 @@ const ir_log_c4 = "0xbfd27ab720000000" # -0.288739945f0
 const ir_log_c5 = "0x3f9fd9bb40000000" # 3.110401639f-2
 const ir_log_c6 = "0x3fe62e4300000000" # 0.69314718055995f0
 
-function fastlog{N}(x::NTuple{N,VecElement{Float32}})
+function Base.log{N}(x::NTuple{N,VecElement{Float32}})
     ans = Base.llvmcall((
         """
         declare $(ir_fv_type) @llvm.fmuladd.f32($(ir_fv_type) %a, $(ir_fv_type) %b, $(ir_fv_type) %c)
@@ -90,22 +248,8 @@ function fastlog{N}(x::NTuple{N,VecElement{Float32}})
 
         ret $(ir_fv_type) %y5
         """),
-        FloatTuple, Tuple{FloatTuple}, x)
+        FloatVec, Tuple{FloatVec}, x)
     return ans
-end
-
-
-function fastlog(x::FloatVec)
-    exp = convert(FloatVec, reinterpret(IntVec, x) >> 23)
-
-    addcst = ifelse(x > 0.0f0, FloatVec(-89.970756366f0), FloatVec(-Inf))
-
-    x = reinterpret(FloatVec,
-                (reinterpret(IntVec, x) & Int32(0x007fffff)) | Int32(0x3f800000))
-
-    return x * (3.529304993f0 + x * (-2.461222105f0 +
-          x * (1.130626167f0 + x * (-0.288739945f0 +
-          x * 3.110401639f-2)))) + (addcst + 0.69314718055995f0*exp)
 end
 
 
@@ -119,7 +263,7 @@ const ir_exp_c6 = "0x3fc585b960000000" # 0.168143436463395944830000f0
 const ir_exp_c7 = "0xbf6799c2a0000000" # -2.88093587581985443087955f-3
 const ir_exp_c8 = "0x3f8bff8dc0000000" # 1.3671023382430374383648148f-2
 
-function fastexp{N}(x::NTuple{N,VecElement{Float32}})
+function Base.exp{N}(x::NTuple{N,VecElement{Float32}})
     ans = Base.llvmcall((
         """
         declare $(ir_fv_type) @llvm.fmuladd.f32($(ir_fv_type) %a, $(ir_fv_type) %b, $(ir_fv_type) %c)
@@ -172,68 +316,76 @@ function fastexp{N}(x::NTuple{N,VecElement{Float32}})
 
         ret $(ir_fv_type) %res
         """),
-        FloatTuple, Tuple{FloatTuple}, x)
+        FloatVec, Tuple{FloatVec}, x)
 
     return ans
 end
 
 
-function fastexp(x::FloatVec)
-  val2 = 12102203.1615614f0*x + 1065353216.0f0;
-
-  exp_cst1 = FloatVec(2139095040.f0)
-  exp_cst2 = FloatVec(0.0f0)
-  val3 = ifelse(val2 < exp_cst1, val2, exp_cst1)
-  val4 = ifelse(val3 > exp_cst2, val3, exp_cst2)
-
-  val4i = convert(IntVec, val4)
-  xu = reinterpret(FloatVec, val4i & Int32(0x7f800000))
-  b = reinterpret(FloatVec, (val4i & Int32(0x007fffff)) | Int32(0x3f800000))
-
-  return xu * (0.510397365625862338668154f0 + b *
-            (0.310670891004095530771135f0 + b *
-             (0.168143436463395944830000f0 + b *
-              (-2.88093587581985443087955f-3 + b *
-               1.3671023382430374383648148f-2))))
+function logistic{N}(x::NTuple{N,VecElement{Float32}})
+    return inv(fill(FloatVec, 1.0f0) + exp(-x))
 end
 
 
-function f(xs::Vector{Float32})
-    xsv = reinterpret(FloatTuple, xs)
-    @inbounds for i in length(xsv)
-        xsv[i] = fastlog(xsv[i])
+if false
+    function f(xs::Vector{Float32})
+        xsv = reinterpret(FloatVec, xs)
+        for i in 1:length(xsv)
+            xsv[i] = fastlog(xsv[i])
+        end
     end
-end
 
-function g(xs)
-    @inbounds for i in 1:n
-        xs[i] = log(xs[i])
+    function g(xs)
+        @inbounds for i in 1:n
+            xs[i] = log(xs[i])
+        end
     end
+
+    #n = 40000000
+    const n = 800000
+    const xs = rand(Float32, n)
+    #@show typeof(xs)
+
+    #const x = vload(FloatVec, xs, 1)
+    #@show fastexp(x)
+    #@show fastexp(x.elts)
+    #@show @code_native fastexp(x.elts)
+
+    @show @code_native f(xs)
+
+
+    #@show xs[1:10]
+    ys = copy(xs)
+    f(ys)
+    ys = copy(xs)
+    @time f(ys)
+    #@show ys[1:10]
+
+    ys = copy(xs)
+    g(ys)
+    ys = copy(xs)
+    @time g(ys)
+    #@show ys[1:10]
 end
 
-#n = 40000000
-const n = 400000
-const xs = rand(Float32, n)
-#@show typeof(xs)
+#const _x = VecElement{Float32}(1.2345)
+#const _xv = (_x, _x, _x, _x, _x, _x, _x, _x)
 
-const x = vload(FloatVec, xs, 1)
-@show fastexp(x)
-@show fastexp(x.elts)
+#@show 1 / (1 + Base.exp(-_x.value))
+#@show logistic(_xv)
+#@show @code_native logistic(_xv)
 
-@show @code_native fastexp(x.elts)
+#x = fill(FloatVec, 1.2345f0)
+#@show logistic(x)
+#@show @code_native(logistic(x))
+#@show @code_native fill(FloatVec, 1.2345f0)
 
-#@show @code_llvm f(xs)
-
-
-#ys = copy(xs)
-#f(ys)
-#ys = copy(xs)
-#@time f(ys)
-
-#ys = copy(xs)
-#g(ys)
-#ys = copy(xs)
-#@time g(ys)
+#x = count(FloatVec)
+#@show x + x
+#@show cumsum(x)
+#@show cumsum([1, 2, 3, 4, 5, 6, 7, 8])
+#@show @code_native cumsum(x)
 
 
+end # module FastMath
 

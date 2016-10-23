@@ -37,7 +37,8 @@ function main()
     ftol_abs!(opt, 1000)
     initial_step!(opt, 1e-9)
     max_objective!(opt, (π, grad) -> log_post(model, X, π, grad))
-    @time optimize(opt, π)
+    @profile optimize(opt, π)
+    Profile.print()
 
     simplex!(n, model.π_simplex, grad, model.xs_sum, model.zs,
              model.zs_log_sum, π)

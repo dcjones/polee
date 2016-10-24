@@ -165,7 +165,7 @@ function log_post(model::Model, X, π, grad)
                         #model.zs_log_sum, π)
 
     # conditional fragment probabilities
-    mkl_A_mul_B!(frag_probs, X, model.π_simplex)
+    A_mul_B!(frag_probs, X, model.π_simplex)
 
     # log-likelihood
     lpv = fill(FloatVec, 0.0f0)
@@ -178,7 +178,7 @@ function log_post(model::Model, X, π, grad)
 
     # gradients
     raw_grad = model.raw_grad
-    mkl_At_mul_B!(raw_grad, X, frag_probs)
+    At_mul_B!(raw_grad, X, frag_probs)
 
     # compute the gradients the correct but intractable way
     zs = model.zs

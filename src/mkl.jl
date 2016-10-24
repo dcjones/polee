@@ -87,11 +87,11 @@ function MKLSparseMatrixCSC(A::SparseMatrixCSC)
         #error("MKL sparse hint failed with code $(status)")
     #end
 
-    #status = ccall((:mkl_sparse_optimize, libmkl_path),
-                   #Cint, (Ptr{Void},), handle.x)
-    #if status != 0
-        #error("MKL sparse matrix optimization failed with code $(status)")
-    #end
+    status = ccall((:mkl_sparse_optimize, libmkl_path),
+                   Cint, (Ptr{Void},), handle.x)
+    if status != 0
+        error("MKL sparse matrix optimization failed with code $(status)")
+    end
 
     return MKLSparseMatrixCSC(A, handle)
 end

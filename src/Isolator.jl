@@ -74,8 +74,22 @@ function main()
 
     MIN_FRAG_PROB = 1e-8
 
-    # TODO: we need to either remove remove rows (reads) that have no compatible
-    # transcript or introduce a "noise" transcript to handle these.
+    # reassign indexes to alignments to group by position
+    aln_idx_map = Dict{Int, Int}()
+    for alnpr in rs.alignment_pairs
+        if alnpr.metadata.mate1_idx > 0
+            get!(aln_idx_map, rs.alignments[alnpr.metadata.mate1_idx].id,
+                 length(aln_idx_map) + 1)
+        else
+            get!(aln_idx_map, rs.alignments[alnpr.metadata.mate2_idx].id,
+                 length(aln_idx_map) + 1)
+        end
+    end
+
+    # reassign transcript indexes to group by position
+    for (tid, t) in enumerate(ts)
+        t.metadata.id = tid
+    end
 
     tic()
     for (t, alnpr) in intersect(ts, rs.alignment_pairs)
@@ -85,7 +99,7 @@ function main()
             i = alnpr.metadata.mate1_idx > 0 ?
                     rs.alignments[alnpr.metadata.mate1_idx].id :
                     rs.alignments[alnpr.metadata.mate2_idx].id
-            push!(I, i)
+            push!(I, aln_idx_map[i])
             push!(J, t.metadata.id + 1) # +1 to make room for pseudotranscript
             push!(V, fragpr)
         end

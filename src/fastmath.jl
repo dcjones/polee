@@ -3,7 +3,7 @@
 
 module FastMath
 
-export FloatVec, IntVec, logistic
+export FloatVec, IntVec, logistic, fillpadded
 
 typealias FloatVec NTuple{8, VecElement{Float32}}
 typealias IntVec NTuple{8, VecElement{Int32}}
@@ -37,6 +37,25 @@ function ir_count(n, typ, from=1)
     end
     print(out, " >")
     return takebuf_string(out)
+end
+
+
+@inline function Base.zero{N}(::Type{NTuple{N,VecElement{Float32}}})
+    return fill(NTuple{N,VecElement{Float32}}, 0.0f0)
+end
+
+
+"""
+Allocate a Float32 vector padded to have length divisible by N, with any extra
+entries set to `pad`.
+"""
+function fillpadded{N}(::Type{NTuple{N,VecElement{Float32}}}, v, n, pad=0.0f0)
+    m = div(n - 1, N) * N + 1 # ceil(n / N)
+    xs = fill(Float32(v), m)
+    for i in n+1:m
+        xs[i] = pad
+    end
+    return xs
 end
 
 

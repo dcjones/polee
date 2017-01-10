@@ -1,7 +1,7 @@
 
 module Isolator
 
-import TensorFlow
+#import TensorFlow
 using Bio.Align
 using Bio.Intervals
 using Bio.Seq

@@ -2,7 +2,7 @@
 # Sparse matrix multiplication with MKL
 
 
-const libmkl_path = "/opt/intel/compilers_and_libraries_2017.0.098/linux/mkl/lib/intel64_lin/libmkl_rt.so"
+const libmkl_path = "/opt/intel/compilers_and_libraries_2017.1.132/linux/mkl/lib/intel64_lin/libmkl_rt.so"
 
 
 function mkl_A_mul_B!(ans::Vector{Float32}, A::SparseMatrixCSC{Float32},

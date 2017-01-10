@@ -25,9 +25,9 @@ function main()
 
     model = Model(m, n)
 
-    #log_post(model, X, π, grad)
-    #@time log_post(model, X, π, grad)
-    #exit()
+    log_post(model, mklX, π, grad)
+    @time log_post(model, mklX, π, grad)
+    exit()
 
     # optimize!
     opt = Opt(:LD_CCSAQ, n)

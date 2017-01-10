@@ -27,6 +27,8 @@ function Model(m, n)
     # round up to align with 8-element vectors for simd
     m_ = 8 * (div(m - 1, 8) + 1)
     n_ = 8 * (div(n - 1, 8) + 1)
+    #m_ = m
+    #n_ = n
 
     return Model(Int(m), Int(n), zeros(Float32, n_), zeros(Float32, m_),
                  zeros(Float32, n_), zeros(Float32, n_), zeros(Float32, n_),
@@ -68,6 +70,16 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
     for i in 1:k-1
         zs[i] = logistic(ys[i] + log(1/(k - i)))
 
+        #if zs[i] > 0.99
+            #@show (i, k)
+            #@show zs[i]
+            #@show ys[i]
+            #@show ys[i] + log(1/(k-i))
+            #@show logistic(ys[i] + log(1/(k-i)))
+
+            #error("FUCK 1")
+        #end
+
         log_one_minus_z = log(1 - zs[i])
         ladj += log(zs[i]) + log_one_minus_z + log(1 - xsum)
 
@@ -75,6 +87,15 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
 
         xsum += xs[i]
         xs_sum[i+1] = xsum
+
+        #if xsum > 1.0
+            #@show xsum
+            #@show (i, k)
+            #@show xs[i]
+            #@show maximum(zs[1:i])
+            #@show maximum(xs[1:i])
+            #error("FUCK 2")
+        #end
 
         z_log_sum += log_one_minus_z
         zs_log_sum[i+1] = z_log_sum
@@ -154,7 +175,7 @@ end
 
 
 # assumes a flat prior on π
-function log_post(model::Model, X, π, grad)
+function log_likelihood(model::Model, X, π, grad)
     frag_probs = model.frag_probs
     fill!(grad, 0.0)
 
@@ -197,7 +218,7 @@ function log_post(model::Model, X, π, grad)
         grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
     end
 
-    @show lp + ladj
+    #@show lp + ladj
     return lp + ladj
 end
 

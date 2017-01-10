@@ -1,6 +1,7 @@
 
 using Distributions
 using HDF5
+using StatsBase
 
 include("fastmath.jl")
 include("mkl.jl")
@@ -31,6 +32,33 @@ function normal_entropy!(grad, σ)
 end
 
 
+"""
+Sample from the variational distribution and evaluate the true likelihood
+function at these samples.
+"""
+function diagnostic_samples(model, X, μ, σ, i)
+    n = length(μ)
+
+    num_samples = 500
+    samples = Array(Float32, num_samples)
+    weights = Array(Float32, num_samples)
+    π = Array(Float32, n)
+    π_grad = Array(Float32, n)
+
+    for k in 1:num_samples
+        for j in 1:n
+            π[j] = rand(Normal(μ[j], σ[j]))
+        end
+
+        ll = log_likelihood(model, X, π, π_grad)
+        samples[k] = model.π_simplex[i]
+        weights[k] = ll
+    end
+
+    return (samples, weights)
+end
+
+
 function main()
     input = h5open(ARGS[1], "r")
     m = read(input["m"]) # number of reads
@@ -50,11 +78,11 @@ function main()
     ss_η = 1.0
     ss_max_μ_step = 5e-1
     ss_max_ω_step = 1e-1
-    srand(1234)
+    srand(4324)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 1
+    num_mc_samples = 2
     η = fillpadded(FloatVec, 0.0f0, n)
     ζ = fillpadded(FloatVec, 0.0f0, n)
 
@@ -94,6 +122,9 @@ function main()
     max_fruitless_steps = 20
     max_steps = 200
 
+    output_idx = 99000
+    #output_idx = 99
+
     while true
         step_num += 1
         elbo0 = elbo
@@ -130,15 +161,15 @@ function main()
         c = ss_η * step_num^(-0.5 + ss_ε)
 
         for i in 1:length(μ)
+            s_μ[i] = (1 - ss_α) * s_μ[i] + ss_α * μ_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_μ[i]))
             μ[i] += clamp(ρ * μ_grad[i], -ss_max_μ_step, ss_max_μ_step)
-            s_μ[i] = (1 - ss_α) * s_μ[i] + ss_α * μ_grad[i]^2
         end
 
         for i in 1:length(ω)
+            s_ω[i] = (1 - ss_α) * s_ω[i] + ss_α * ω_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_ω[i]))
             ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
-            s_ω[i] = (1 - ss_α) * s_ω[i] + ss_α * ω_grad[i]^2
         end
 
         if elbo < max_elbo
@@ -153,14 +184,43 @@ function main()
             small_step_count = 0
         end
 
-        if small_step_count > max_small_steps ||
-           fruitless_step_count > max_fruitless_steps ||
-           step_num > max_steps
+        if step_num > 1000
             break
         end
+
+        #if small_step_count > max_small_steps ||
+           #fruitless_step_count > max_fruitless_steps ||
+           #step_num > max_steps
+            #break
+        #end
+
+        @show c
+        @show s_μ[output_idx]
+        @show c / (ss_τ + sqrt(s_μ[output_idx]))
+        @show μ[output_idx]
+        @show μ_grad[output_idx]
+        @show ω[output_idx]
+        @show ω_grad[output_idx]
+        @show model.π_simplex[output_idx]
     end
 
     @show step_num
+
+    # TODO: generate the mean or mode from the variational distribution then
+    # find something to compare it to
+
+    # TODO: find some interesting examples with two transcripts and plot
+    # likelihood versus variational approx
+
+    idx = searchsorted(ordinalrank(μ), 9 * div(length(μ), 10))
+    @show idx.start
+
+    samples, weights = diagnostic_samples(model, mklX, μ, σ, idx.start)
+    out = open("diagnostic_samples.csv", "w")
+    for (s, w) in zip(samples, weights)
+        @printf(out, "%.12e,%.12e\n", Float64(s), Float64(w))
+    end
+    close(out)
 end
 
 

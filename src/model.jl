@@ -1,6 +1,4 @@
 
-using FastMath
-
 type Model
     m::Int # number of fragments
     n::Int # number of transcripts
@@ -25,10 +23,10 @@ end
 
 function Model(m, n)
     # round up to align with 8-element vectors for simd
-    m_ = 8 * (div(m - 1, 8) + 1)
-    n_ = 8 * (div(n - 1, 8) + 1)
-    #m_ = m
-    #n_ = n
+    #m_ = 8 * (div(m - 1, 8) + 1)
+    #n_ = 8 * (div(n - 1, 8) + 1)
+    m_ = m
+    n_ = n
 
     return Model(Int(m), Int(n), zeros(Float32, n_), zeros(Float32, m_),
                  zeros(Float32, n_), zeros(Float32, n_), zeros(Float32, n_),
@@ -184,6 +182,7 @@ function log_likelihood(model::Model, X, π, grad)
                     model.zs_log_sum, π)
     #ladj = simplex_vec!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
                         #model.zs_log_sum, π)
+    #@show model.π_simplex[16]
 
     # conditional fragment probabilities
     A_mul_B!(frag_probs, X, model.π_simplex)

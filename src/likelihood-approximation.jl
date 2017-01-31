@@ -1,13 +1,45 @@
 
-using Distributions
-using HDF5
-using StatsBase
 
-include("fastmath.jl")
-include("mkl.jl")
-include("model.jl")
+function approximate_likelihood(input_filename, output_filename)
+    sample = read(input_filename, RNASeqSample)
+    μ, σ = approximate_likelihood(sample)
 
-using FastMath
+    h5open(output_filename, "w") do out
+        n = sample.n
+        out["n"] = sample.n
+        out["mu", "compress", 1] = μ[1:n]
+        out["sigma", "compress", 1] = σ[1:n]
+    end
+end
+
+
+function approximate_likelihood_from_isolator(input_filename, output_filename)
+    input = open(input_filename)
+    n = parse(Int, readline(input))
+    m = parse(Int, readline(input))
+    @show (m, n)
+    I = Array(Int, 0)
+    J = Array(Int, 0)
+    V = Array(Float32, 0)
+    for line in eachline(input)
+        j, i, v = split(line, ',')
+        push!(I, 1 + parse(Int, i))
+        push!(J, 1 + parse(Int, j))
+        push!(V, parse(Float32, v))
+    end
+    X = sparse(I, J, V, m, n)
+    mklX = MKLSparseMatrixCSC(X)
+    sample = RNASeqSample(m, n, X)
+
+    μ, σ = approximate_likelihood(sample)
+
+    h5open(output_filename, "w") do out
+        n = sample.n
+        out["n"] = sample.n
+        out["mu", "compress", 1] = μ[1:n]
+        out["sigma", "compress", 1] = σ[1:n]
+    end
+end
 
 
 """
@@ -59,16 +91,8 @@ function diagnostic_samples(model, X, μ, σ, i)
 end
 
 
-function main()
-    input = h5open(ARGS[1], "r")
-    m = read(input["m"]) # number of reads
-    n = read(input["n"]) # number of transcripts
-    colptr = read(input["colptr"])
-    rowval = read(input["rowval"])
-    nzval = read(input["nzval"])
-
-    X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
-    mklX = MKLSparseMatrixCSC(X)
+function approximate_likelihood(s::RNASeqSample)
+    m, n = size(s)
     model = Model(m, n)
 
     # step size constants
@@ -82,7 +106,7 @@ function main()
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 2
+    num_mc_samples = 4
     η = fillpadded(FloatVec, 0.0f0, n)
     ζ = fillpadded(FloatVec, 0.0f0, n)
 
@@ -122,8 +146,7 @@ function main()
     max_fruitless_steps = 20
     max_steps = 200
 
-    output_idx = 99000
-    #output_idx = 99
+    output_idx = 16
 
     while true
         step_num += 1
@@ -141,7 +164,7 @@ function main()
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
 
-            elbo += log_likelihood(model, mklX, ζ, π_grad)
+            elbo += log_likelihood(model, s.X, ζ, π_grad)
             μ_grad .+= π_grad
             ω_grad .+= π_grad .* η .* σ
         end
@@ -184,7 +207,8 @@ function main()
             small_step_count = 0
         end
 
-        if step_num > 1000
+        # TODO: reasonable stopping criteria
+        if step_num > 750
             break
         end
 
@@ -194,36 +218,35 @@ function main()
             #break
         #end
 
-        @show c
-        @show s_μ[output_idx]
-        @show c / (ss_τ + sqrt(s_μ[output_idx]))
+        #@show c
+        #@show s_μ[output_idx]
+        #@show c / (ss_τ + sqrt(s_μ[output_idx]))
         @show μ[output_idx]
-        @show μ_grad[output_idx]
+        #@show μ_grad[output_idx]
         @show ω[output_idx]
         @show ω_grad[output_idx]
         @show model.π_simplex[output_idx]
+
+        #log_likelihood(model, s.X, ζ, π_grad)
+        #@show ζ
+        #@show μ
+        #@show model.π_simplex
     end
 
-    @show step_num
+    #@show step_num
 
-    # TODO: generate the mean or mode from the variational distribution then
-    # find something to compare it to
+    #idx = searchsorted(ordinalrank(μ), 9 * div(length(μ), 10))
+    #@show idx.start
 
-    # TODO: find some interesting examples with two transcripts and plot
-    # likelihood versus variational approx
+    #samples, weights = diagnostic_samples(model, mklX, μ, σ, idx.start)
+    #out = open("diagnostic_samples.csv", "w")
+    #for (s, w) in zip(samples, weights)
+        #@printf(out, "%.12e,%.12e\n", Float64(s), Float64(w))
+    #end
+    #close(out)
 
-    idx = searchsorted(ordinalrank(μ), 9 * div(length(μ), 10))
-    @show idx.start
-
-    samples, weights = diagnostic_samples(model, mklX, μ, σ, idx.start)
-    out = open("diagnostic_samples.csv", "w")
-    for (s, w) in zip(samples, weights)
-        @printf(out, "%.12e,%.12e\n", Float64(s), Float64(w))
-    end
-    close(out)
+    map!(exp, σv, ωv)
+    return μ, σ
 end
-
-
-main()
 
 

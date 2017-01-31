@@ -1,7 +1,8 @@
+#!/usr/bin/env julia
 
-module Isolator
+module Extruder
 
-#import TensorFlow
+using ArgParse
 using Bio.Align
 using Bio.Intervals
 using Bio.Seq
@@ -10,6 +11,11 @@ using Distributions
 using HDF5
 using ProgressMeter
 using StatsBase
+using Stan
+import TensorFlow
+
+include("fastmath.jl")
+using .FastMath
 
 include("constants.jl")
 include("hattrie.jl")
@@ -17,6 +23,11 @@ include("transcripts.jl")
 include("reads.jl")
 include("bias.jl")
 include("fragmodel.jl")
+include("mkl.jl")
+include("model.jl")
+include("sample.jl")
+include("likelihood-approximation.jl")
+include("estimate.jl")
 
 
 function read_transcript_sequences!(ts, filename)
@@ -45,7 +56,88 @@ function read_transcript_sequences!(ts, filename)
 end
 
 
+function print_usage()
+    println("Usage: extruder <command>\n")
+    println("where command is one of:")
+    println("  likelihood-matrix")
+    println("  likelihood-approx")
+    println("  prepare")
+    println("  estimate")
+end
+
+
 function main()
+    if isempty(ARGS)
+        print_usage()
+        exit(1)
+    end
+
+    subcmd = ARGS[1]
+    subcmd_args = ARGS[2:end]
+    arg_settings = ArgParseSettings()
+
+    if subcmd == "likelihood-matrix"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "likelihood-matrix.h5"
+            "transcripts_file"
+                required = true
+            "genome_filename"
+                required = true
+            "reads_filename"
+                required = true
+        end
+        parsed_args = parsed_args(subcmd_args, arg_settings)
+        error("TODO")
+
+    elseif subcmd == "likelihood-approx"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "sample-data.h5"
+            "likelihood_matrix_filename"
+                required = true
+        end
+        parsed_args = parse_args(subcmd_args, arg_settings)
+        approximate_likelihood(parsed_args["likelihood_matrix_filename"],
+                               parsed_args["output"])
+        return
+    elseif subcmd == "prepare"
+        # TODO: do both likelihood-matrix and likelihood-approx in one step with
+        # no intermediate output
+
+        error("TODO")
+    elseif subcmd == "estimate"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "results.h5"
+            "prepared_sample"
+                required = true
+        end
+        parsed_args = parse_args(subcmd_args, arg_settings)
+        estimate(parsed_args["prepared_sample"],
+                 parsed_args["output"])
+        return
+    elseif subcmd == "likelihood-approx-from-isolator"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "sample-data.h5"
+            "isolator_data"
+                required = true
+        end
+        parsed_args = parse_args(subcmd_args, arg_settings)
+        approximate_likelihood_from_isolator(
+                               parsed_args["isolator_data"],
+                               parsed_args["output"])
+        return
+    else
+        println("Unknown command: ", subcmd, "\n")
+        print_usage()
+        exit(1)
+    end
+
+
+    # TODO: put all this stuff under likelihood-matrix
+
     #reads_filename = "MT.bam"
     #transcripts_filename = "MT.gff3"
     #genome_filename = "/home/dcjones/data/homo_sapiens/seqs/MT.fa"

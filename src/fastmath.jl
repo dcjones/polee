@@ -50,7 +50,7 @@ Allocate a Float32 vector padded to have length divisible by N, with any extra
 entries set to `pad`.
 """
 function fillpadded{N}(::Type{NTuple{N,VecElement{Float32}}}, v, n, pad=0.0f0)
-    m = div(n - 1, N) * N + 1 # ceil(n / N)
+    m = (div(n - 1, N) + 1) * N # ceil(n / N)
     xs = fill(Float32(v), m)
     for i in n+1:m
         xs[i] = pad

@@ -25,12 +25,17 @@ function Model(m, n)
     # round up to align with 8-element vectors for simd
     #m_ = 8 * (div(m - 1, 8) + 1)
     #n_ = 8 * (div(n - 1, 8) + 1)
-    m_ = m
-    n_ = n
+    #m_ = m
+    #n_ = n
 
-    return Model(Int(m), Int(n), zeros(Float32, n_), zeros(Float32, m_),
-                 zeros(Float32, n_), zeros(Float32, n_), zeros(Float32, n_),
-                 zeros(Float32, n_), zeros(Float32, n_))
+    return Model(Int(m), Int(n),
+                 fillpadded(FloatVec, 0.0, n),
+                 fillpadded(FloatVec, 0.0, m),
+                 fillpadded(FloatVec, 0.0, n),
+                 fillpadded(FloatVec, 0.0, n),
+                 fillpadded(FloatVec, 0.0, n),
+                 fillpadded(FloatVec, 0.0, n),
+                 fillpadded(FloatVec, 0.0, n))
 end
 
 
@@ -68,16 +73,6 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
     for i in 1:k-1
         zs[i] = logistic(ys[i] + log(1/(k - i)))
 
-        #if zs[i] > 0.99
-            #@show (i, k)
-            #@show zs[i]
-            #@show ys[i]
-            #@show ys[i] + log(1/(k-i))
-            #@show logistic(ys[i] + log(1/(k-i)))
-
-            #error("FUCK 1")
-        #end
-
         log_one_minus_z = log(1 - zs[i])
         ladj += log(zs[i]) + log_one_minus_z + log(1 - xsum)
 
@@ -85,15 +80,6 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
 
         xsum += xs[i]
         xs_sum[i+1] = xsum
-
-        #if xsum > 1.0
-            #@show xsum
-            #@show (i, k)
-            #@show xs[i]
-            #@show maximum(zs[1:i])
-            #@show maximum(xs[1:i])
-            #error("FUCK 2")
-        #end
 
         z_log_sum += log_one_minus_z
         zs_log_sum[i+1] = z_log_sum
@@ -117,6 +103,7 @@ function simplex_vec!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
     @assert length(zs) >= k
     @assert length(zs_log_sum) >= k
 
+    xs_sumv = reinterpret(FloatVec, xs_sum)
     xvs = reinterpret(FloatVec, xs)
     yvs = reinterpret(FloatVec, ys)
     zvs = reinterpret(FloatVec, zs)
@@ -130,24 +117,14 @@ function simplex_vec!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
     countv = count(FloatVec)
 
     # compute zs and zs_log_sum
+
+    vecsize = div(sizeof(FloatVec), sizeof(Float32))
     @inbounds for i in 1:length(zvs)
-        offset = fill(FloatVec, Float32((i - 1) * div(sizeof(FloatVec), sizeof(Float32))))
+        offset = fill(FloatVec, Float32((i - 1) * vecsize))
         iv = countv + offset
-
         zvs[i] = FastMath.logistic(yvs[i] + log(inv(kv - iv)))
-
-        log_one_minus_z = log(fill(FloatVec, 1.0f0) - zvs[i])
-        ladj += log(zvs[i]) + log_one_minus_z
-
-        zvs_log_sum[i] = cumsum(log_one_minus_z)
     end
-
-    # shift zs_log_sum over by one
-    z_log_sum = zs_log_sum[1]
-    zs_log_sum[1] = 0.0
-    @inbounds for i in 2:length(zs_log_sum)
-        zs_log_sum[i], z_log_sum = z_log_sum, zs_log_sum[i]
-    end
+    zs[k] = 0.0
 
     # compute xs, xs_sum, zs_log_sum
     xsum = 0.0
@@ -156,19 +133,44 @@ function simplex_vec!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
         xsum += xs[i]
         xs_sum[i+1] = xsum
     end
+    xs[k] = 1 - xsum
+
+    @inbounds for i in 1:length(zvs)-1
+        log_one_minus_xsum = log(fill(FloatVec, 1.0f0) - xs_sumv[i])
+        log_one_minus_z = log(fill(FloatVec, 1.0f0) - zvs[i])
+        ladj += log(zvs[i]) + log_one_minus_z + log_one_minus_xsum
+        zvs_log_sum[i] = cumsum(log_one_minus_z)
+    end
+    total_ladj = sum(ladj)
+
+    # shift zs_log_sum over by one
+    z_log_sum = zs_log_sum[1]
+    zs_log_sum[1] = 0.0
+    @inbounds for i in 2:length(zs_log_sum)
+        zs_log_sum[i], z_log_sum = z_log_sum, zs_log_sum[i]
+    end
+
+    @inbounds for i in ((length(zvs)-1)*vecsize+1):k-1
+        total_ladj += log(zs[i]) + log(1 - zs[i]) + log(1 - xs_sum[i])
+        zs_log_sum[i] = zs_log_sum[i-1] + log(1 - zs[i-1])
+    end
+    if k > 1
+        zs_log_sum[k] = zs_log_sum[k-1] + log(1 - zs[k-1])
+    end
 
     # compute grad
     gradv = reinterpret(FloatVec, grad)
     @inbounds for i in 1:length(gradv)
-        offset = fill(FloatVec, Float32((i - 1) * div(sizeof(FloatVec), sizeof(Float32))))
+        offset = fill(FloatVec, Float32((i - 1) * vecsize))
         iv = countv + offset
         gradv[i] =
             onev - fill(FloatVec, 2.0f0) .* zvs[i] +
-            (onev - iv - kv) .* (onev - xvs[i]) .* zvs[i] .* (onev - zvs[i])
+            (onev - iv - kv) .* (onev + xvs[i]) .* zvs[i] .* (onev - zvs[i])
     end
+    grad[k] = 0.0
 
     # return horizontal sum of ladj
-    return sum(ladj)
+    return total_ladj
 end
 
 
@@ -176,16 +178,17 @@ end
 function log_likelihood(model::Model, X, π, grad)
     frag_probs = model.frag_probs
     fill!(grad, 0.0)
+    m, n = size(X)
 
     # transform π to simplex
-    ladj = simplex!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
-                    model.zs_log_sum, π)
-    #ladj = simplex_vec!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
-                        #model.zs_log_sum, π)
+    #ladj = simplex!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
+                    #model.zs_log_sum, π)
+    ladj = simplex_vec!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
+                        model.zs_log_sum, π)
     #@show model.π_simplex[16]
 
     # conditional fragment probabilities
-    A_mul_B!(frag_probs, X, model.π_simplex)
+    A_mul_B!(view(frag_probs, 1:m), X, view(model.π_simplex, 1:n))
 
     # log-likelihood
     lpv = fill(FloatVec, 0.0f0)
@@ -198,7 +201,7 @@ function log_likelihood(model::Model, X, π, grad)
 
     # gradients
     raw_grad = model.raw_grad
-    At_mul_B!(raw_grad, X, frag_probs)
+    At_mul_B!(view(raw_grad, 1:n), X, view(frag_probs, 1:m))
 
     # compute the gradients the correct but intractable way
     zs = model.zs

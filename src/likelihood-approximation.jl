@@ -208,7 +208,8 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         # TODO: reasonable stopping criteria
-        if step_num > 750
+        #if step_num > 750
+        if step_num > 20
             break
         end
 
@@ -221,15 +222,16 @@ function approximate_likelihood(s::RNASeqSample)
         #@show c
         #@show s_μ[output_idx]
         #@show c / (ss_τ + sqrt(s_μ[output_idx]))
-        @show μ[output_idx]
+        #@show μ[output_idx]
         #@show μ_grad[output_idx]
-        @show ω[output_idx]
-        @show ω_grad[output_idx]
-        @show model.π_simplex[output_idx]
+        #@show ω[output_idx]
+        #@show ω_grad[output_idx]
+        #@show model.π_simplex[output_idx]
 
         #log_likelihood(model, s.X, ζ, π_grad)
         #@show ζ
-        #@show μ
+        @show μ
+        @show μ_grad
         #@show model.π_simplex
     end
 

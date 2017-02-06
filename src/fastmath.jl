@@ -201,6 +201,8 @@ end
     return cumsum(x)[N].value
 end
 
+# Most of this was adapted from:
+# http://gallium.inria.fr/blog/fast-vectorizable-math-approx/
 
 # various float32 constants in a form that llvm ir understands
 const ir_neginf = "0xfff0000000000000"

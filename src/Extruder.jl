@@ -17,6 +17,10 @@ import TensorFlow
 include("fastmath.jl")
 using .FastMath
 
+include("rsb.jl")
+using .RSB
+RSB.rsb_init()
+
 include("constants.jl")
 include("hattrie.jl")
 include("transcripts.jl")

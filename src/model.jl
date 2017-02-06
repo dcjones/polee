@@ -22,12 +22,6 @@ type Model
 end
 
 function Model(m, n)
-    # round up to align with 8-element vectors for simd
-    #m_ = 8 * (div(m - 1, 8) + 1)
-    #n_ = 8 * (div(n - 1, 8) + 1)
-    #m_ = m
-    #n_ = n
-
     return Model(Int(m), Int(n),
                  fillpadded(FloatVec, 0.0, n),
                  fillpadded(FloatVec, 0.0, m),
@@ -92,6 +86,10 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
             (1 - i - k) * (1 + xs[i]) * zs[i] * (1 - zs[i])
     end
 
+    #@show zs[1:10]
+    #@show zs_log_sum[1:10]
+    #exit()
+
     return ladj
 end
 
@@ -140,6 +138,9 @@ function simplex_vec!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
         log_one_minus_z = log(fill(FloatVec, 1.0f0) - zvs[i])
         ladj += log(zvs[i]) + log_one_minus_z + log_one_minus_xsum
         zvs_log_sum[i] = cumsum(log_one_minus_z)
+        @show log_one_minus_z
+        @show cumsum(log_one_minus_z)
+        exit()
     end
     total_ladj = sum(ladj)
 
@@ -169,6 +170,10 @@ function simplex_vec!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
     end
     grad[k] = 0.0
 
+    @show zs[1:10]
+    @show zs_log_sum[1:10]
+    exit()
+
     # return horizontal sum of ladj
     return total_ladj
 end
@@ -178,17 +183,18 @@ end
 function log_likelihood(model::Model, X, π, grad)
     frag_probs = model.frag_probs
     fill!(grad, 0.0)
-    m, n = size(X)
+    m, n = model.m, model.n
 
     # transform π to simplex
-    #ladj = simplex!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
-                    #model.zs_log_sum, π)
-    ladj = simplex_vec!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
-                        model.zs_log_sum, π)
+    ladj = simplex!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
+                    model.zs_log_sum, π)
+    #ladj = simplex_vec!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
+                        #model.zs_log_sum, π)
     #@show model.π_simplex[16]
 
     # conditional fragment probabilities
-    A_mul_B!(view(frag_probs, 1:m), X, view(model.π_simplex, 1:n))
+    #A_mul_B!(view(frag_probs, 1:m), X, view(model.π_simplex, 1:n))
+    A_mul_B!(frag_probs, X, model.π_simplex)
 
     # log-likelihood
     lpv = fill(FloatVec, 0.0f0)
@@ -201,7 +207,8 @@ function log_likelihood(model::Model, X, π, grad)
 
     # gradients
     raw_grad = model.raw_grad
-    At_mul_B!(view(raw_grad, 1:n), X, view(frag_probs, 1:m))
+    #At_mul_B!(view(raw_grad, 1:n), X, view(frag_probs, 1:m))
+    At_mul_B!(raw_grad, X, frag_probs)
 
     # compute the gradients the correct but intractable way
     zs = model.zs
@@ -220,7 +227,15 @@ function log_likelihood(model::Model, X, π, grad)
         grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
     end
 
-    #@show lp + ladj
+    #@show grad_work[model.n]
+    #@show grad_work[1]
+    #@show zs_log_sum[1+1]
+    #b = (grad_work[model.n] - grad_work[1]) * exp(-zs_log_sum[1+1])
+    #@show b
+    #@show xs_sum[1]
+    #@show zs[1]
+    #@show raw_grad[1]
+
     return lp + ladj
 end
 

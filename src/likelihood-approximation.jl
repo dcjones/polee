@@ -28,8 +28,9 @@ function approximate_likelihood_from_isolator(input_filename, output_filename)
         push!(V, parse(Float32, v))
     end
     X = sparse(I, J, V, m, n)
-    mklX = MKLSparseMatrixCSC(X)
-    sample = RNASeqSample(m, n, X)
+    #mklX = MKLSparseMatrixCSC(X)
+    rsbX = RSBMatrix(X)
+    sample = RNASeqSample(m, n, rsbX)
 
     μ, σ = approximate_likelihood(sample)
 
@@ -49,8 +50,7 @@ wrt σ.
 Note: when σ² does not have length divisible by the simd vector length it needs
 to be padded with extra 1s
 """
-function normal_entropy!(grad, σ)
-    n = length(σ)
+function normal_entropy!(grad, σ, n)
     vs = reinterpret(FloatVec, σ)
     vs_sumlogs = sum(mapreduce(log, +, zero(FloatVec), vs))
     entropy = n * log(2 * π * e) + vs_sumlogs
@@ -106,7 +106,7 @@ function approximate_likelihood(s::RNASeqSample)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 4
+    num_mc_samples = 2
     η = fillpadded(FloatVec, 0.0f0, n)
     ζ = fillpadded(FloatVec, 0.0f0, n)
 
@@ -172,9 +172,9 @@ function approximate_likelihood(s::RNASeqSample)
         ω_grad /= num_mc_samples
         ω_grad .+= 1
         elbo /= num_mc_samples
-        elbo += normal_entropy!(ω_grad, σ)
+        elbo += normal_entropy!(ω_grad, σ, n)
         max_elbo = max(max_elbo, elbo)
-        @show elbo
+        @printf("ELBO: %e", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2
@@ -208,8 +208,7 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         # TODO: reasonable stopping criteria
-        #if step_num > 750
-        if step_num > 20
+        if step_num > 350
             break
         end
 
@@ -222,16 +221,16 @@ function approximate_likelihood(s::RNASeqSample)
         #@show c
         #@show s_μ[output_idx]
         #@show c / (ss_τ + sqrt(s_μ[output_idx]))
-        #@show μ[output_idx]
-        #@show μ_grad[output_idx]
-        #@show ω[output_idx]
-        #@show ω_grad[output_idx]
-        #@show model.π_simplex[output_idx]
+        @show μ[output_idx]
+        @show μ_grad[output_idx]
+        @show ω[output_idx]
+        @show ω_grad[output_idx]
+        @show model.π_simplex[output_idx]
 
         #log_likelihood(model, s.X, ζ, π_grad)
         #@show ζ
-        @show μ
-        @show μ_grad
+        #@show μ
+        #@show μ_grad
         #@show model.π_simplex
     end
 

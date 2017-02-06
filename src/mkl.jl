@@ -5,8 +5,38 @@
 const libmkl_path = "/opt/intel/compilers_and_libraries_2017.1.132/linux/mkl/lib/intel64_lin/libmkl_rt.so"
 
 
+#void MKL_SCSCMV(
+#const char *transa,
+#const MKL_INT *m,
+#const MKL_INT *k,
+#const float *alpha,
+#const char *matdescra,
+#const float *val,
+#const MKL_INT *indx,
+#const MKL_INT *pntrb,
+#const MKL_INT *pntre,
+#const float *x,
+#const float *beta,
+#float *y);
+
 function mkl_A_mul_B!(ans::Vector{Float32}, A::SparseMatrixCSC{Float32},
                       b::Vector{Float32})
+    @show typeof(A.nzval)
+
+    m     = Ref(A.m)
+    n     = Ref(A.n)
+    val   = pointer(A.nzval)
+    indx  = pointer(A.rowval)
+    pntrb = pointer(A.colptr)
+    pntre = pointer(A.colptr, 2)
+    alpha = Ref(1.0f0)
+    beta  = Ref(0.0f0)
+
+    @show typeof(val)
+    @show typeof(indx)
+    @show typeof(pntrb)
+    @show typeof(pntre)
+
     ccall((:mkl_scscmv, libmkl_path), Void,
           (Cstring,       # transa
            Ptr{Int},      # m
@@ -20,8 +50,8 @@ function mkl_A_mul_B!(ans::Vector{Float32}, A::SparseMatrixCSC{Float32},
            Ptr{Float32},  # x
            Ptr{Float32},  # beta
            Ptr{Float32}), # y
-          "N", Ref(A.m), Ref(A.n), Ref(1.0f0), "GXXF", A.nzval, A.rowval, A.colptr,
-          pointer(A.colptr, 2), b, Ref(0.0f0), ans)
+          "N", m, n, alpha, "GXXF", A.nzval, indx,
+          pntrb, pntre, b, beta, ans)
 end
 
 

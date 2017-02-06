@@ -2,7 +2,7 @@
 type RNASeqSample
     m::Int
     n::Int
-    X::Union{MKLSparseMatrixCSC, SparseMatrixCSC}
+    X::Union{MKLSparseMatrixCSC, SparseMatrixCSC, RSBMatrix}
 end
 
 
@@ -18,10 +18,10 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     colptr = read(input["colptr"])
     rowval = read(input["rowval"])
     nzval = read(input["nzval"])
-    X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
-    mklX = MKLSparseMatrixCSC(X)
+    X = RSBMatrix(SparseMatrixCSC(m, n, colptr, rowval, nzval))
+    #mklX = MKLSparseMatrixCSC(X)
 
-    return RNASeqSample(m, n, mklX)
+    return RNASeqSample(m, n, X)
 end
 
 

@@ -53,12 +53,26 @@ to be padded with extra 1s
 function normal_entropy!(grad, σ, n)
     vs = reinterpret(FloatVec, σ)
     vs_sumlogs = sum(mapreduce(log, +, zero(FloatVec), vs))
-    entropy = n * log(2 * π * e) + vs_sumlogs
+    entropy = 0.5 * n * log(2 * π * e) + vs_sumlogs
 
     gradv = reinterpret(FloatVec, grad)
+    hlfv = fill(FloatVec, 0.5f0)
     for i in 1:length(vs)
-        gradv[i] += inv(vs[i])
+        gradv[i] += hlfv
     end
+
+    # Note: This is the gradient for σ, not ω
+    #gradv = reinterpret(FloatVec, grad)
+    #twov = fill(FloatVec, 2.0f0)
+    #for i in 1:length(vs)
+        #gradv[i] +=  inv(vs[i] .* twov)
+    #end
+
+    #vs_sumlogs = sum(mapreduce(log, +, 0.0, σ))
+    #entropy = n * log(2 * π * e) + vs_sumlogs
+    #for i in 1:length(σ)
+        #grad[i] += inv(σ[i])
+    #end
 
     return entropy
 end
@@ -98,7 +112,8 @@ function approximate_likelihood(s::RNASeqSample)
     # step size constants
     ss_τ = 1.0
     ss_ε = 1e-16
-    ss_α = 0.1
+    ss_ω_α = 0.1
+    ss_μ_α = 0.01
     ss_η = 1.0
     ss_max_μ_step = 5e-1
     ss_max_ω_step = 1e-1
@@ -174,7 +189,7 @@ function approximate_likelihood(s::RNASeqSample)
         elbo /= num_mc_samples
         elbo += normal_entropy!(ω_grad, σ, n)
         max_elbo = max(max_elbo, elbo)
-        @printf("ELBO: %e", elbo)
+        @printf("ELBO: %e\n", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2
@@ -184,13 +199,13 @@ function approximate_likelihood(s::RNASeqSample)
         c = ss_η * step_num^(-0.5 + ss_ε)
 
         for i in 1:length(μ)
-            s_μ[i] = (1 - ss_α) * s_μ[i] + ss_α * μ_grad[i]^2
+            s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_μ[i]))
             μ[i] += clamp(ρ * μ_grad[i], -ss_max_μ_step, ss_max_μ_step)
         end
 
         for i in 1:length(ω)
-            s_ω[i] = (1 - ss_α) * s_ω[i] + ss_α * ω_grad[i]^2
+            s_ω[i] = (1 - ss_ω_α) * s_ω[i] + ss_ω_α * ω_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_ω[i]))
             ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
         end
@@ -208,7 +223,7 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         # TODO: reasonable stopping criteria
-        if step_num > 350
+        if step_num > 600
             break
         end
 

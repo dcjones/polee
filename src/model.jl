@@ -64,12 +64,21 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
     xs_sum[1] = 0.0
     zs_log_sum[1] = 0.0
 
+    # reusing these vectors as temporary storage
+    work1 = xs_sum
+    work2 = zs_log_sum
+
+    Threads.@threads for i in 1:k-1
+        zs[i] = logistic(ys[i] + log(1.0f0/(k - i)))
+        work1[i+1] = log(zs[i])
+        work2[i+1] = log1p(-zs[i])
+    end
+
     for i in 1:k-1
-        zs[i] = logistic(ys[i] + log(1/(k - i)))
+        log_z = work1[i+1]
+        log_one_minus_z = work2[i+1]
 
-        log_one_minus_z = log(1 - zs[i])
-        ladj += log(zs[i]) + log_one_minus_z + log(1 - xsum)
-
+        ladj += log_z + log_one_minus_z + log(1.0f0 - xsum)
         xs[i] = (1 - xsum) * zs[i]
 
         xsum += xs[i]
@@ -78,6 +87,21 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
         z_log_sum += log_one_minus_z
         zs_log_sum[i+1] = z_log_sum
     end
+
+    #for i in 1:k-1
+        #zs[i] = logistic(ys[i] + log(1/(k - i)))
+
+        #log_one_minus_z = log(1 - zs[i])
+        #ladj += log(zs[i]) + log_one_minus_z + log(1 - xsum)
+
+        #xs[i] = (1 - xsum) * zs[i]
+
+        #xsum += xs[i]
+        #xs_sum[i+1] = xsum
+
+        #z_log_sum += log_one_minus_z
+        #zs_log_sum[i+1] = z_log_sum
+    #end
     xs[k] = 1 - xsum
 
     for i in 1:k-1
@@ -85,10 +109,6 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
             1 - 2*zs[i] +
             (1 - i - k) * (1 + xs[i]) * zs[i] * (1 - zs[i])
     end
-
-    #@show zs[1:10]
-    #@show zs_log_sum[1:10]
-    #exit()
 
     return ladj
 end
@@ -205,12 +225,12 @@ function log_likelihood(model::Model, X, π, grad)
     end
     lp = sum(lpv)
 
-    # gradients
+    # computed untransformed gradient in raw_grad
     raw_grad = model.raw_grad
     #At_mul_B!(view(raw_grad, 1:n), X, view(frag_probs, 1:m))
     At_mul_B!(raw_grad, X, frag_probs)
 
-    # compute the gradients the correct but intractable way
+    # compute gradient of simplex transform
     zs = model.zs
     zs_log_sum = model.zs_log_sum
     xs_sum = model.xs_sum

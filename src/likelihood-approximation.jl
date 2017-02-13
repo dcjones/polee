@@ -15,17 +15,45 @@ end
 
 function approximate_likelihood_from_isolator(input_filename, output_filename)
     input = open(input_filename)
+
     n = parse(Int, readline(input))
+    #n = 3 # XXX
+
     m = parse(Int, readline(input))
     @show (m, n)
     I = Array(Int, 0)
     J = Array(Int, 0)
     V = Array(Float32, 0)
     for line in eachline(input)
-        j, i, v = split(line, ',')
-        push!(I, 1 + parse(Int, i))
-        push!(J, 1 + parse(Int, j))
-        push!(V, parse(Float32, v))
+        j_, i_, v_ = split(line, ',')
+        i = 1 + parse(Int, i_)
+        j = 1 + parse(Int, j_)
+        v = parse(Float32, j_)
+
+        # XXX
+        #if j == 72281
+            #push!(I, i)
+            #push!(J, 1)
+            #push!(V, v)
+
+            #push!(I, i)
+            #push!(J, 2)
+            #push!(V, v)
+        #else
+            #continue
+        #end
+
+        #if j == 72281
+            #j = 1
+        #elseif j == 72283
+            #j = 3
+        #else
+            #continue
+        #end
+
+        push!(I, i)
+        push!(J, j)
+        push!(V, v)
     end
     X = sparse(I, J, V, m, n)
     #mklX = MKLSparseMatrixCSC(X)
@@ -127,7 +155,7 @@ function approximate_likelihood(s::RNASeqSample)
 
     μ = fillpadded(FloatVec, 0.0f0, n)
     σ = fillpadded(FloatVec, 1.0f0, n, 1.f0)
-    ω = fillpadded(FloatVec, 0.0f0, n) # log transformed σ
+    ω = fillpadded(FloatVec, -3.0f0, n) # log transformed σ
 
     π_grad = fillpadded(FloatVec, 0.0f0, n)
     μ_grad = fillpadded(FloatVec, 0.0f0, n)
@@ -179,7 +207,10 @@ function approximate_likelihood(s::RNASeqSample)
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
 
-            elbo += log_likelihood(model, s.X, ζ, π_grad)
+            lp = log_likelihood(model, s.X, ζ, π_grad)
+            @assert isfinite(lp)
+            @show lp
+            elbo += lp
             μ_grad .+= π_grad
             ω_grad .+= π_grad .* η .* σ
         end
@@ -189,6 +220,7 @@ function approximate_likelihood(s::RNASeqSample)
         elbo /= num_mc_samples
         elbo += normal_entropy!(ω_grad, σ, n)
         max_elbo = max(max_elbo, elbo)
+        @assert isfinite(elbo)
         @printf("ELBO: %e\n", elbo)
 
         if step_num == 1
@@ -223,7 +255,7 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         # TODO: reasonable stopping criteria
-        if step_num > 600
+        if step_num > 200
             break
         end
 
@@ -233,14 +265,20 @@ function approximate_likelihood(s::RNASeqSample)
             #break
         #end
 
+
         #@show c
         #@show s_μ[output_idx]
         #@show c / (ss_τ + sqrt(s_μ[output_idx]))
-        @show μ[output_idx]
-        @show μ_grad[output_idx]
-        @show ω[output_idx]
-        @show ω_grad[output_idx]
-        @show model.π_simplex[output_idx]
+        #@show μ[output_idx]
+        #@show μ_grad[output_idx]
+        #@show ω[output_idx]
+        #@show ω_grad[output_idx]
+        #@show model.π_simplex[output_idx]
+
+
+        #@show μ
+        #@show μ_grad
+        #@show model.π_simplex
 
         #log_likelihood(model, s.X, ζ, π_grad)
         #@show ζ

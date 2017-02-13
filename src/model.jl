@@ -15,16 +15,18 @@ type Model
     # intermediate values used in simplex calculation
     xs_sum::Vector{Float32}
     zs::Vector{Float32}
-    zs_log_sum::Vector{Float32}
 
     # intermediate values in gradient computation
-    grad_work::Vector{Float32}
+    work1::Vector{Float32}
+    work2::Vector{Float32}
+    work3::Vector{Float32}
 end
 
 function Model(m, n)
     return Model(Int(m), Int(n),
                  fillpadded(FloatVec, 0.0, n),
                  fillpadded(FloatVec, 0.0, m),
+                 fillpadded(FloatVec, 0.0, n),
                  fillpadded(FloatVec, 0.0, n),
                  fillpadded(FloatVec, 0.0, n),
                  fillpadded(FloatVec, 0.0, n),
@@ -51,25 +53,22 @@ Some intermediate values are also stored:
     * `zs`: intermediate adjusted y-values
     * `zs_log_sum`: cumulative sum of `log(1 - zs[j])`.
 """
-function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
+function simplex!(k, xs, xs_sum, work, zs, ys)
     @assert length(xs) >= k
-    @assert length(grad) >= k
     @assert length(xs_sum) >= k
+    @assert length(work) >= k
     @assert length(zs) >= k
-    @assert length(zs_log_sum) >= k
 
     ladj = 0.0
     xsum = 0.0
-    z_log_sum = 0.0
     xs_sum[1] = 0.0
-    zs_log_sum[1] = 0.0
 
     # reusing these vectors as temporary storage
     work1 = xs_sum
-    work2 = zs_log_sum
+    work2 = work
 
     Threads.@threads for i in 1:k-1
-        zs[i] = logistic(ys[i] + log(1.0f0/(k - i)))
+        zs[i] = logistic(Float64(ys[i]) + log(1/(k - i)))
         work1[i+1] = log(zs[i])
         work2[i+1] = log1p(-zs[i])
     end
@@ -84,8 +83,13 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
         xsum += xs[i]
         xs_sum[i+1] = xsum
 
-        z_log_sum += log_one_minus_z
-        zs_log_sum[i+1] = z_log_sum
+        if Float32(xsum) >= 1.0 && i < k-1
+            @show xsum
+            @show xs[i]
+            @show ys[i]
+            @show zs[i]
+        end
+        @assert Float32(xsum) < 1.0 || i == k-1
     end
 
     #for i in 1:k-1
@@ -104,11 +108,11 @@ function simplex!(k, xs, grad, xs_sum, zs, zs_log_sum, ys)
     #end
     xs[k] = 1 - xsum
 
-    for i in 1:k-1
-        grad[i] +=
-            1 - 2*zs[i] +
-            (1 - i - k) * (1 + xs[i]) * zs[i] * (1 - zs[i])
-    end
+    #for i in 1:k-1
+        #grad[i] +=
+            #1 - 2*zs[i] +
+            #(1 - i - k) * (1 + xs[i]) * zs[i] * (1 - zs[i])
+    #end
 
     return ladj
 end
@@ -206,8 +210,9 @@ function log_likelihood(model::Model, X, π, grad)
     m, n = model.m, model.n
 
     # transform π to simplex
-    ladj = simplex!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
-                    model.zs_log_sum, π)
+    ladj = simplex!(model.n, model.π_simplex, model.xs_sum,
+                    model.work1, model.zs, π)
+    #@show model.π_simplex[1:n]
     #ladj = simplex_vec!(model.n, model.π_simplex, grad, model.xs_sum, model.zs,
                         #model.zs_log_sum, π)
     #@show model.π_simplex[16]
@@ -232,29 +237,82 @@ function log_likelihood(model::Model, X, π, grad)
 
     # compute gradient of simplex transform
     zs = model.zs
-    zs_log_sum = model.zs_log_sum
     xs_sum = model.xs_sum
-    grad_work = model.grad_work
 
-    grad_work0 = 0.0
-    for j in 1:model.n
-        grad_work0 = grad_work[j] =
-            grad_work0 + raw_grad[j] * -zs[j] * exp(zs_log_sum[j])
+    log1mz_sum = model.work1
+    log1mz_sum[1] = log(1.0f0 - zs[1])
+    for i in 2:n
+        log1mz_sum[i] = log1mz_sum[i-1] + log(1.0f0 - zs[i])
     end
+
+    us = model.work2
+    us[1] = zs[1] * raw_grad[1]
+    for i in 2:n
+        us[i] = us[i-1] + zs[i] * exp(log1mz_sum[i-1]) * raw_grad[i]
+    end
+
+    # now we can compute gradients
+
+    #@show raw_grad[1:n]
+    #@show log1mz_sum[1:n]
+    #@show us[1:n]
+    #@show zs[1:n]
 
     for i in 1:model.n-1
-        b = (grad_work[model.n] - grad_work[i]) * exp(-zs_log_sum[i+1])
-        grad[i] += (raw_grad[i] + b) * zs[i] * (1 - zs[i]) * (1 - xs_sum[i])
+        dxi_dyi = (1.0 - xs_sum[i]) * zs[i] * (1.0 - zs[i])
+
+        # (dp(x) / dyi)_i
+        df_dyi_i = raw_grad[i] * dxi_dyi
+        grad[i] += df_dyi_i
+
+        # (dp(x) / dyi)_n
+        dxn_dxi = -exp(log1mz_sum[n-1] - log1mz_sum[i])
+        df_dyi_n = dxi_dyi * dxn_dxi * raw_grad[n]
+        grad[i] += df_dyi_n
+
+        # I feel pretty confident about these first two parts
+        # I guess the third part is mots iffy
+
+        # sum_{j=i+1}^{n-1} (dp(x) / dyi)_j
+        df_dy_mid = -dxi_dyi * (us[n-1] - us[i]) * exp(-log1mz_sum[i])
+        grad[i] += df_dy_mid
+
+        #@show (i, df_dyi_i, df_dyi_n, df_dy_mid)
+        @assert isfinite(grad[i])
     end
 
-    #@show grad_work[model.n]
-    #@show grad_work[1]
-    #@show zs_log_sum[1+1]
-    #b = (grad_work[model.n] - grad_work[1]) * exp(-zs_log_sum[1+1])
-    #@show b
-    #@show xs_sum[1]
-    #@show zs[1]
-    #@show raw_grad[1]
+
+    # gradient of the log absolute determinate of the jacobian (ladj)
+    us[1] = -1 / (1 - xs_sum[1])
+    for i in 2:n-1
+        us[i] = us[i-1] - exp(log1mz_sum[i-1]) / (1 - xs_sum[i])
+        if !isfinite(us[i])
+            @show us[i-1]
+            @show exp(log1mz_sum[i-1])
+            @show (1 - xs_sum[i])
+            @show xs_sum[i]
+            @show i
+        end
+        @assert isfinite(us[i])
+    end
+
+    for i in 1:n-1
+        # d/dy_i log(dx_i / dy_i)
+        grad[i] += (1 - 2*zs[i])
+
+        dxi_dyi = (1.0 - xs_sum[i]) * zs[i] * (1.0 - zs[i])
+        grad[i] += dxi_dyi * (us[n-1] - us[i]) * exp(-log1mz_sum[i])
+        if !isfinite(grad[i])
+            @show dxi_dyi
+            @show us[n-1]
+            @show us[i]
+            @show log1mz_sum[i]
+            @show exp(-log1mz_sum[i])
+        end
+        @assert isfinite(grad[i])
+    end
+
+    #@show grad[1:n]
 
     return lp + ladj
 end

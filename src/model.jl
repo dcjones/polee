@@ -45,8 +45,7 @@ function simplex!_loop1(k, xs, work1, work2, zs, ys)
     Threads.@threads for i in 1:k-1
         zs[i] = logistic(ys[i] + log(1.0f0/(k - i)))
         work1[i+1] = log(zs[i])
-        log_one_minus_z = log1p(-zs[i])
-        work2[i+1] = log_one_minus_z
+        work2[i+1] = log1p(-zs[i])
     end
 end
 
@@ -98,19 +97,7 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
         log_z = work1[i+1]
         log_one_minus_z = work2[i+1]
 
-        ladj += log_z + log_one_minus_z + log(1.0f0 - xsum)
-        if !isfinite(ladj)
-            @show log_z
-            @show log_one_minus_z
-            @show log(1.0f0 - xsum)
-            @show xsum
-            @show zs[i]
-            @show i
-            @show k
-            @show (minimum(ys), maximum(ys))
-            # TODO: maybe we should but a bound on how small xs can be?
-        end
-        @assert isfinite(ladj)
+        ladj += log_z + log_one_minus_z + log1p(-xsum)
         xs[i] = (1 - xsum) * zs[i]
 
         xsum += xs[i]

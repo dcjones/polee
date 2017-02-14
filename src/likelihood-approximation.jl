@@ -206,6 +206,8 @@ function approximate_likelihood(s::RNASeqSample)
 
     output_idx = 16
 
+    println("Optimizing ELBO: ", -Inf)
+
     while true
         step_num += 1
         elbo0 = elbo
@@ -244,7 +246,7 @@ function approximate_likelihood(s::RNASeqSample)
         elbo += normal_entropy!(ω_grad, σ, n)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        @printf("ELBO: %e\n", elbo)
+        @printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2
@@ -270,19 +272,13 @@ function approximate_likelihood(s::RNASeqSample)
             fruitless_step_count = 0
         end
 
-        if abs((elbo - elbo0) / elbo) < 1e-4
-            small_step_count += 1
-        else
-            small_step_count = 0
-        end
-
-        # TODO: reasonable stopping criteria
-        if step_num > 200
+        if fruitless_step_count > 5
             break
         end
     end
 
-    #@show step_num
+    println("Finished in ", step_num, " steps")
+
 
     #idx = searchsorted(ordinalrank(μ), 9 * div(length(μ), 10))
     #@show idx.start

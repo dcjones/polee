@@ -1,4 +1,5 @@
 
+include("randn.jl")
 
 function approximate_likelihood(input_filename, output_filename)
     sample = read(input_filename, RNASeqSample)
@@ -60,7 +61,14 @@ function approximate_likelihood_from_isolator(input_filename, output_filename)
     rsbX = RSBMatrix(X)
     sample = RNASeqSample(m, n, rsbX)
 
-    μ, σ = approximate_likelihood(sample)
+    #@profile μ, σ = approximate_likelihood(sample)
+    #Profile.print()
+
+    @time μ, σ = approximate_likelihood(sample)
+
+    #wt = @code_warntype approximate_likelihood(sample)
+    #println(wt)
+    #exit()
 
     h5open(output_filename, "w") do out
         n = sample.n
@@ -133,6 +141,13 @@ function diagnostic_samples(model, X, μ, σ, i)
 end
 
 
+function myrandn!(xs::Vector{Float32})
+    for i in 1:length(xs)
+        xs[i] = randn()
+    end
+end
+
+
 function approximate_likelihood(s::RNASeqSample)
     m, n = size(s)
     model = Model(m, n)
@@ -200,7 +215,9 @@ function approximate_likelihood(s::RNASeqSample)
         map!(exp, σv, ωv)
 
         for _ in 1:num_mc_samples
-            rand!(Normal(), η)
+            for i in 1:n
+                η[i] = _randn()
+            end
 
             # de-standardize normal variate
             for i in 1:length(ζv)
@@ -209,13 +226,15 @@ function approximate_likelihood(s::RNASeqSample)
 
             lp = log_likelihood(model, s.X, ζ, π_grad)
             @assert isfinite(lp)
-            @show lp
             elbo += lp
-            μ_grad .+= π_grad
-            ω_grad .+= π_grad .* η .* σ
+
+            @inbounds for i in 1:n
+                μ_grad[i] += π_grad[i]
+                ω_grad[i] += π_grad[i] * η[i] * σ[i]
+            end
         end
-        μ_grad /= num_mc_samples
-        ω_grad /= num_mc_samples
+        μ_grad ./= num_mc_samples
+        ω_grad ./= num_mc_samples
         ω_grad .+= 1
         elbo /= num_mc_samples
         elbo += normal_entropy!(ω_grad, σ, n)
@@ -228,7 +247,10 @@ function approximate_likelihood(s::RNASeqSample)
             s_ω[:] = ω_grad.^2
         end
 
-        c = ss_η * step_num^(-0.5 + ss_ε)
+        tmp1 = -0.5 + ss_ε
+        tmp2 = step_num^tmp1 # TODO: this is type instable. Why?!?!
+        c = ss_η * tmp2
+        #c = ss_η * Float64(step_num)^(-0.5 + ss_ε)
 
         for i in 1:length(μ)
             s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
@@ -255,36 +277,9 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         # TODO: reasonable stopping criteria
-        if step_num > 200
+        if step_num > 20
             break
         end
-
-        #if small_step_count > max_small_steps ||
-           #fruitless_step_count > max_fruitless_steps ||
-           #step_num > max_steps
-            #break
-        #end
-
-
-        #@show c
-        #@show s_μ[output_idx]
-        #@show c / (ss_τ + sqrt(s_μ[output_idx]))
-        #@show μ[output_idx]
-        #@show μ_grad[output_idx]
-        #@show ω[output_idx]
-        #@show ω_grad[output_idx]
-        #@show model.π_simplex[output_idx]
-
-
-        #@show μ
-        #@show μ_grad
-        #@show model.π_simplex
-
-        #log_likelihood(model, s.X, ζ, π_grad)
-        #@show ζ
-        #@show μ
-        #@show μ_grad
-        #@show model.π_simplex
     end
 
     #@show step_num

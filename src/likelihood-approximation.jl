@@ -91,11 +91,11 @@ function normal_entropy!(grad, σ, n)
     vs_sumlogs = sum(mapreduce(log, +, zero(FloatVec), vs))
     entropy = 0.5 * n * log(2 * π * e) + vs_sumlogs
 
-    gradv = reinterpret(FloatVec, grad)
-    hlfv = fill(FloatVec, 0.5f0)
-    for i in 1:length(vs)
-        gradv[i] += hlfv
-    end
+    #gradv = reinterpret(FloatVec, grad)
+    #hlfv = fill(FloatVec, 0.5f0)
+    #for i in 1:length(vs)
+        #gradv[i] += hlfv
+    #end
 
     # Note: This is the gradient for σ, not ω
     #gradv = reinterpret(FloatVec, grad)
@@ -233,11 +233,15 @@ function approximate_likelihood(s::RNASeqSample)
                 ω_grad[i] += π_grad[i] * η[i] * σ[i]
             end
         end
-        μ_grad ./= num_mc_samples
-        ω_grad ./= num_mc_samples
-        ω_grad .+= 1
+
+        for i in 1:n
+            μ_grad[i] /= num_mc_samples
+            ω_grad[i] /= num_mc_samples
+            ω_grad[i] += 1 # normal distribution entropy gradient
+        end
+
         elbo /= num_mc_samples
-        elbo += normal_entropy!(ω_grad, σ, n)
+        elbo += normal_entropy!(ω_grad, σ, n)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
         @printf("ELBO: %e\n", elbo)
@@ -247,11 +251,7 @@ function approximate_likelihood(s::RNASeqSample)
             s_ω[:] = ω_grad.^2
         end
 
-        tmp1 = -0.5 + ss_ε
-        tmp2 = step_num^tmp1 # TODO: this is type instable. Why?!?!
-        c = ss_η * tmp2
-        #c = ss_η * Float64(step_num)^(-0.5 + ss_ε)
-
+        c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
         for i in 1:length(μ)
             s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_μ[i]))
@@ -277,7 +277,7 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         # TODO: reasonable stopping criteria
-        if step_num > 20
+        if step_num > 200
             break
         end
     end

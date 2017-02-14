@@ -99,6 +99,18 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
         log_one_minus_z = work2[i+1]
 
         ladj += log_z + log_one_minus_z + log(1.0f0 - xsum)
+        if !isfinite(ladj)
+            @show log_z
+            @show log_one_minus_z
+            @show log(1.0f0 - xsum)
+            @show xsum
+            @show zs[i]
+            @show i
+            @show k
+            @show (minimum(ys), maximum(ys))
+            # TODO: maybe we should but a bound on how small xs can be?
+        end
+        @assert isfinite(ladj)
         xs[i] = (1 - xsum) * zs[i]
 
         xsum += xs[i]
@@ -109,6 +121,41 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
 
     return ladj
 end
+
+
+function log_likelihood_loop1(frag_probs_v)
+    lpv = fill(fill(FloatVec, 0.0f0), Threads.nthreads())
+    Threads.@threads for i in 1:length(frag_probs_v)
+        lpv[Threads.threadid()] += log(frag_probs_v[i])
+        frag_probs_v[i] = inv(frag_probs_v[i])
+    end
+    ans = 0.0
+    for v in lpv
+        ans += sum(v)
+    end
+    return ans
+end
+
+
+#function log_likelihood_loop2(n, xs_sum, zs, raw_grad, onemz_prod, us, grad)
+    #Threads.@threads for i in 1:n-1
+        #dxi_dyi = (1 - xs_sum[i]) * zs[i] * (1 - zs[i])
+
+        ## (dp(x) / dyi)_i
+        #df_dyi_i = raw_grad[i] * dxi_dyi
+        #grad[i] += df_dyi_i
+
+        ## (dp(x) / dyi)_n
+        ##dxn_dxi = -exp(log1mz_sum[n-1] - log1mz_sum[i])
+        #dxn_dxi = -onemz_prod[n-1] / onemz_prod[i]
+        #df_dyi_n = dxi_dyi * dxn_dxi * raw_grad[n]
+        #grad[i] += df_dyi_n
+
+        ## sum_{j=i+1}^{n-1} (dp(x) / dyi)_j
+        #df_dy_mid = -dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
+        #grad[i] += df_dy_mid
+    #end
+#end
 
 
 # assumes a flat prior on π
@@ -128,13 +175,14 @@ function log_likelihood(model::Model, X, π, grad)
     A_mul_B!(frag_probs, X, model.π_simplex)
 
     # log-likelihood
-    lpv = fill(FloatVec, 0.0f0)
     frag_probs_v = reinterpret(FloatVec, frag_probs)
-    for i in 1:length(frag_probs_v)
-        lpv += log(frag_probs_v[i])
-        frag_probs_v[i] = inv(frag_probs_v[i])
-    end
-    lp = sum(lpv)
+
+    lp = log_likelihood_loop1(frag_probs_v)
+    #for i in 1:length(frag_probs_v)
+        #lpv += log(frag_probs_v[i])
+        #frag_probs_v[i] = inv(frag_probs_v[i])
+    #end
+    #lp = sum(lpv)
 
     # computed untransformed gradient in raw_grad
     raw_grad = model.raw_grad
@@ -144,16 +192,6 @@ function log_likelihood(model::Model, X, π, grad)
     zs = model.zs
     xs_sum = model.xs_sum
 
-    #@show log1mz_sum[1:10]
-    #@show log1mz_sum[end-10:end]
-    #log1mz_sum[1] = log(1.0f0 - zs[1])
-    #for i in 2:n
-        #log1mz_sum[i] = log1mz_sum[i-1] + log(1.0f0 - zs[i])
-    #end
-    #@show log1mz_sum[1:10]
-    #@show log1mz_sum[end-10:end]
-    #exit()
-
     us = model.work
     us[1] = zs[1] * raw_grad[1]
     for i in 2:n
@@ -162,14 +200,15 @@ function log_likelihood(model::Model, X, π, grad)
 
     # compute df(x) / dyi gradients
     for i in 1:model.n-1
-        dxi_dyi = (1.0 - xs_sum[i]) * zs[i] * (1.0 - zs[i])
+        dxi_dyi = (1 - xs_sum[i]) * zs[i] * (1 - zs[i])
 
         # (dp(x) / dyi)_i
         df_dyi_i = raw_grad[i] * dxi_dyi
         grad[i] += df_dyi_i
 
         # (dp(x) / dyi)_n
-        dxn_dxi = -exp(log1mz_sum[n-1] - log1mz_sum[i])
+        #dxn_dxi = -exp(log1mz_sum[n-1] - log1mz_sum[i])
+        dxn_dxi = -onemz_prod[n-1] / onemz_prod[i]
         df_dyi_n = dxi_dyi * dxn_dxi * raw_grad[n]
         grad[i] += df_dyi_n
 
@@ -177,6 +216,7 @@ function log_likelihood(model::Model, X, π, grad)
         df_dy_mid = -dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
         grad[i] += df_dy_mid
     end
+    #log_likelihood_loop2(n, xs_sum, zs, raw_grad, onemz_prod, us, grad)
 
     # gradient of the log absolute determinate of the jacobian (ladj)
     us[1] = -1 / (1 - xs_sum[1])
@@ -192,6 +232,9 @@ function log_likelihood(model::Model, X, π, grad)
         dxi_dyi = (1.0 - xs_sum[i]) * zs[i] * (1.0 - zs[i])
         grad[i] += dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
     end
+
+    @assert isfinite(lp)
+    @assert isfinite(ladj)
 
     return lp + ladj
 end

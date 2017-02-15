@@ -16,10 +16,12 @@ function sample_variational_model(mu, sigma, idx, numsamples)
     unused2 = Array(Float64, length(mu))
     unused3 = Array(Float64, length(mu))
     unused4 = Array(Float64, length(mu))
+    unused5 = Array(Float64, length(mu))
 
     for i in 1:numsamples
         rand!(MultivariateNormal(mu, sigma), s1)
-        simplex!(length(mu), s2, unused1, unused2, unused3, unused4, s1)
+        simplex!(length(mu), s2, unused1, unused2, unused3, unused4,
+                 unused5, s1)
         xs[i] = s2[idx]
     end
 
@@ -60,7 +62,8 @@ function main()
     ordidx = reverse(sort(1:length(lastsample), by=i -> lastsample[i]))
     #idx = ordidx[rand(1:10000)]
     #idx = rand(1:length(ordidx))
-    idx = 16
+    #idx = 16
+    idx = 72281
     #@show idx
     #@show isotw[idx]
 

@@ -1,0 +1,233 @@
+
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{mathtools}
+\newcommand{\defeq}{\vcentcolon=}
+
+\newtheorem{thm}{Theorem}
+%\newtheorem{thm}{Definition}
+
+\begin{document}
+
+
+\section{Simplex transform $S$}
+
+
+\subsection{Gradients of $S$}
+
+
+There are four cases to consider when deriving $\frac{x_j}{y_i}$: $j < i$, $j =
+i$, $i < j < n$, and  $j = n$.
+
+
+For each we'll need the derivative of the intermediate values $z$.
+\begin{equation}
+\frac{\partial z_i}{\partial y_i} = z_i (1 - z_i)
+\end{equation}
+For any $i \neq j$ $\partial z_j / \partial y_i = 0$.
+
+
+\subsubsection{$j < i$}
+This case is simply 0. Intuitively, in a stick breaking process, a break cannot
+depend on another break that occurs after it. More formally, this can be shown
+by induction.
+
+First, note that for any $i > 1$,
+$$\frac{\partial x_1}{\partial y_i} = \frac{\partial}{\partial
+y_i} z_1 \left(1 - \sum_{k=1}^0 x_k \right) = \frac{\partial}{\partial y_i} z_1 = 0$$
+
+Now, for any $1 < k < j < i < n$, assume $\frac{\partial x_k}{\partial y_i} = 0$.
+
+$$\frac{\partial x_j}{\partial y_i} = \frac{\partial}{\partial y_i} z_j \left(1 -
+\sum_{k=1}^{j-1} x_k \right) = z_j \sum_{k=1}^{j-1} \frac{\partial x_k}{\partial y_i} = 0
+$$
+
+By induction $\frac{\partial x_j}{\partial y_i} = 0$ holds for all $j < i$.
+
+
+\subsubsection{$j = i$}
+
+$$\frac{\partial x_i}{\partial y_i} = z_i \left( 1 - \sum_{k=1}^{i-1} x_k \right) =
+\frac{\partial z_i}{\partial y_i} \left( 1 - \sum_{k=1}^{i-1} x_k \right) =
+z_i (1 - z_i) \left( 1 - \sum_{k=1}^{i-1} x_k \right)$$
+
+\subsubsection{$i < j < n$}
+
+$$\frac{\partial x_j}{\partial y_i} =  - z_j \sum_{k=1}^{j-1}
+\frac{\partial x_k}{\partial y_i} =
+-z_j \sum_{k=i}^{j-1}
+\frac{\partial x_k}{\partial y_i}
+$$
+
+Defined as a recurrence relation, it's not obvious that this can be efficiently
+computed. However, we can use the following fact to derive a more convenient
+form:
+
+\begin{equation}
+\frac{\partial x_j}{\partial x_i} = -z_j \prod_{k=i+1}^{j-1} (1 - z_k)
+\end{equation}
+
+\begin{proof}
+We proceed by induction. First, note that $$
+\frac{\partial x_{i+1}}{\partial x_i}
+= -z_{i+1} \sum_{k=i}^{i}\frac{\partial x_k}{\partial x_i}
+= -z_{i+1} \frac{\partial{x_i}}{\partial x_i}
+= -z_{i+1}
+= -z_{i+1} \prod_{k=i+1}^{i} (1 - z_k)
+$$
+
+Now for any $i, j$ where $i + 1 < j < n$, assume that $\frac{\partial
+x_{j-1}}{\partial x_i} =
+-z_{j-1} \prod_{i+1}^{j-2} (1 - z_k)$.
+
+\begin{align*}
+\frac{\partial x_j}{\partial x_i} &= -z_j \sum_{k=i}^{j-1} \frac{\partial
+x_k}{\partial x_i} \\
+&= -z_j \left( \frac{\partial x_{j-1}}{\partial x_i} + \sum_{k=i}^{j-2} \frac{\partial
+x_k}{\partial x_i} \right) \\
+&= -z_j \left( \frac{\partial x_{j-1}}{\partial x_i} - \frac{1}{z_{j-1}} \frac{\partial
+x_{j-1}}{\partial x_i} \right) \\
+&= -z_j \left( 1 - \frac{1}{z_{j-1}} \right) \frac{\partial x_{j-1}}{\partial
+x_i} \\
+&= -z_j ( 1 - z_{j-1} ) \prod_{k=i+1}^{j-2} (1-x_k) \\
+&= -z_j \prod_{k=i+1}^{j-1} (1-x_k) \\
+\end{align*}
+
+Therefore, by induction, the theorem is true for all $i < j < n$.
+
+\end{proof}
+
+From here, we can get the desired gradient in form that's clearly computable in
+$O(n)$.
+\begin{equation} \label{eq:1}
+\frac{\partial x_j}{\partial y_i}
+= \frac{\partial x_i}{\partial y_i} \frac{\partial x_j}{\partial x_i}
+= - z_i z_j (1 - z_i) \left(1 - \sum_{k=1}^{i-1} x_k \right) \prod_{k=i+1}^{j-1} (1 - z_k)
+\end{equation}
+
+
+
+
+
+\subsubsection{$i = n$}
+
+Since $x_n$ is a special case, consisting of whatever is leftover of the stick
+after $n-1$ breaks, it has its own gradient.
+
+$$\frac{\partial x_n}{\partial y_i}
+= \frac{\partial}{\partial y_i} \left( 1 - \sum_{k=1}^{n-1} x_k \right)
+= - \sum_{k=i}^{n-1} \frac{\partial x_k}{\partial y_i}
+$$
+
+Dividing both sides of Equation \ref{eq:1} by $-z_j$ we see that
+$$\sum_{k=i}^{j-1} \frac{\partial x_k}{\partial x_i} = \prod_{k=i+1}^{j-1} (1 - z_k)$$
+
+Using this fact, we can simplify our gradient,
+\begin{align}
+\frac{\partial x_n}{\partial y_i}
+&= - \frac{\partial x_i}{\partial y_i} \sum_{k=i}^{n-1} \frac{\partial
+x_k}{\partial x_i} \\
+&= - \frac{\partial x_i}{\partial y_i} \prod_{k=i+1}^{n-1} (1 - z_k) \\
+&= - z_i (1 - z_i) \left( 1 - \sum_{k=1}^{i-1} x_k \right) \prod_{k=i+1}^{n-1} (1 - z_k)
+\end{align}
+
+
+\subsection{Computing Efficiently}
+
+At this point we've seen that $\frac{\partial x_j}{\partial y_i}$ can be
+computed in worst case $O(n)$. However, to compute the gradients of an objective
+function $f(x)$ (e.g. likelihood).
+
+Fortunately by pre-computing some vectors, $\nabla_y f(x) = \left( \sum_{j=1}^{n-1}
+\frac{\partial x_j}{\partial y_i} \frac{\partial f(x)}{\partial x_j} \right)_i$
+itself is computable in $O(n)$, though a naive implementation would be $O(n^3)$
+even after transforming the recurrence relations to products.
+
+Put another way, the goal should be to compute the following in constant time,
+given some vectors that can be pre-computed in $O(n)$, and assuming we are given
+$\nabla_x f(x)$ (that is, that the untransformed gradients are already
+computed).
+
+$$\left( \nabla_y f(x) \right)_i = \sum_{j=1}^{n} \frac{\partial x_j}{\partial
+y_i} \frac{\partial f(x)}{\partial x_j}$$
+
+Since $\frac{\partial x_j}{\partial x_i} = 0$ for $j < i$.
+
+$$\left( \nabla_y f(x) \right)_i = \sum_{j=i}^{n} \frac{\partial x_j}{\partial
+y_i} \frac{\partial f(x)}{\partial x_j}$$
+
+Now, pulling out the $j=i$ and $j=n$ cases gives us:
+\begin{align*}
+\left( \nabla_y f(x) \right)_i &=
+\frac{\partial x_i}{\partial y_i} \frac{\partial f(x)}{\partial x_i} +
+\frac{\partial x_n}{\partial y_i} \frac{\partial f(x)}{\partial x_n} +
+\sum_{j=i+1}^{n-1} \frac{\partial x_j}{\partial
+y_i} \frac{\partial f(x)}{\partial x_j} \\
+&=
+\frac{\partial x_i}{\partial y_i} \left(
+\frac{\partial f(x)}{\partial x_i} +
+\frac{\partial x_n}{\partial x_i} \frac{\partial f(x)}{\partial x_n} +
+\sum_{j=i+1}^{n-1} \frac{\partial x_j}{\partial
+x_i} \frac{\partial f(x)}{\partial x_j} \right) \\
+&=
+\frac{\partial x_i}{\partial y_i} \left(
+\frac{\partial f(x)}{\partial x_i} -
+\frac{\partial f(x)}{\partial x_n} \prod_{k=i+1}^{n-1} (1 - z_k)
+- \sum_{j=i+1}^{n-1} \frac{\partial f(x)}{\partial x_j}
+z_j \prod_{k=i+1}^{j-1} (1 - z_k) \right) \\
+\end{align*}
+
+To simplify this further we define two vectors of length $n$, $u$ and $v$.
+$$u_i \defeq \prod_{k=1}^{i} (1 - z_k)$$
+$$v_i \defeq
+\sum_{j=1}^{i} \frac{\partial f(x)}{\partial x_j} z_j \prod_{k=1}^{j-1} (1 - z_k)
+= \sum_{j=1}^{i} \frac{\partial f(x)}{\partial x_j} z_j u_{j-1}
+$$
+
+Note that both of these can be computed in $O(n)$. This lets us reduce the
+gradient further:
+\begin{align*}
+\left( \nabla_y f(x) \right)_i
+&=
+\frac{\partial x_i}{\partial y_i} \left(
+\frac{\partial f(x)}{\partial x_i}
+- \frac{\partial f(x)}{\partial x_n} (u_{n-1} / u_i)
+- \sum_{j=i+1}^{n-1} \frac{\partial f(x)}{\partial x_j}
+z_j (u_{j-1} / u_{i}) \right) \\
+&=
+\frac{\partial x_i}{\partial y_i} \left(
+\frac{\partial f(x)}{\partial x_i}
+- \frac{\partial f(x)}{\partial x_n} (u_{n-1} / u_i)
+- \frac{v_{n-1} - v_i}{u_i} \right) \\
+\end{align*}
+
+Now assume we have also computed a cumulative sum of $x$ in $O(n)$ time:
+
+$$w_i \defeq \sum_{k=1}^i x_k$$
+
+\begin{align}
+&\left( \nabla_y f(x) \right)_i \\
+&=
+z_i (1 - z_i) \left(1 - \sum_{k=1}^{i-1} \right) \left(
+\frac{\partial f(x)}{\partial x_i}
+- \frac{\partial f(x)}{\partial x_n} (u_{n-1} / u_i)
+- \frac{v_{n-1} - v_i}{u_i} \right) \\
+&=
+z_i (1 - z_i) (1 - w_{i-1} ) \left(
+\frac{\partial f(x)}{\partial x_i}
+- \frac{\partial f(x)}{\partial x_n} (u_{n-1} / u_i)
+- \frac{v_{n-1} - v_i}{u_i} \right) \\
+\end{align}
+
+Finally, we see that $\left( \nabla_y f(x) \right)_i$ is computable in $O(1)$
+given $\nabla_x f(x)$ as well as $u$, $v$, and $w$, each of which is computed in
+$O(n)$ and does not depend on $i$. Therefore we can compute $\nabla_y f(x)$ in
+$O(n)$.
+
+
+\subsection{Gradients of $\log |\det J_{S}|$}
+
+
+\end{document}
+

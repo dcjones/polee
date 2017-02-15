@@ -18,7 +18,6 @@ function approximate_likelihood_from_isolator(input_filename, output_filename)
     input = open(input_filename)
 
     n = parse(Int, readline(input))
-    #n = 3 # XXX
 
     m = parse(Int, readline(input))
     @show (m, n)
@@ -31,44 +30,56 @@ function approximate_likelihood_from_isolator(input_filename, output_filename)
         j = 1 + parse(Int, j_)
         v = parse(Float32, j_)
 
-        # XXX
-        #if j == 72281
-            #push!(I, i)
-            #push!(J, 1)
-            #push!(V, v)
-
-            #push!(I, i)
-            #push!(J, 2)
-            #push!(V, v)
-        #else
-            #continue
-        #end
-
-        #if j == 72281
-            #j = 1
-        #elseif j == 72283
-            #j = 3
-        #else
-            #continue
-        #end
-
         push!(I, i)
         push!(J, j)
         push!(V, v)
     end
     X = sparse(I, J, V, m, n)
-    #mklX = MKLSparseMatrixCSC(X)
     rsbX = RSBMatrix(X)
     sample = RNASeqSample(m, n, rsbX)
+
+    # measure and dump connectivity info
+    #=
+    p = sortperm(I)
+    I = I[p]
+    J = J[p]
+    v = V[p]
+    edge_count = Dict{Tuple{Int, Int}, Int}()
+    a = 1
+    while a <= length(I)
+        if I[a] % 1000 == 0
+            @show I[a]
+        end
+
+        b = a
+        while b <= length(I) && I[a] == I[b]
+            b += 1
+        end
+
+        for k in a:b-1
+            for l in k+1:b-1
+                key = J[k] < J[l] ? (J[k], J[l]) : (J[l], J[k])
+                if haskey(edge_count, key)
+                    edge_count[key] += 1
+                else
+                    edge_count[key] = 1
+                end
+            end
+        end
+        a = b
+    end
+    =#
+
+    open("connectivity.csv", "w") do out
+        for ((u,v), c) in edge_count
+            println(out, u, ",", v, ",", c)
+        end
+    end
 
     #@profile μ, σ = approximate_likelihood(sample)
     #Profile.print()
 
     @time μ, σ = approximate_likelihood(sample)
-
-    #wt = @code_warntype approximate_likelihood(sample)
-    #println(wt)
-    #exit()
 
     h5open(output_filename, "w") do out
         n = sample.n
@@ -90,25 +101,6 @@ function normal_entropy!(grad, σ, n)
     vs = reinterpret(FloatVec, σ)
     vs_sumlogs = sum(mapreduce(log, +, zero(FloatVec), vs))
     entropy = 0.5 * n * log(2 * π * e) + vs_sumlogs
-
-    #gradv = reinterpret(FloatVec, grad)
-    #hlfv = fill(FloatVec, 0.5f0)
-    #for i in 1:length(vs)
-        #gradv[i] += hlfv
-    #end
-
-    # Note: This is the gradient for σ, not ω
-    #gradv = reinterpret(FloatVec, grad)
-    #twov = fill(FloatVec, 2.0f0)
-    #for i in 1:length(vs)
-        #gradv[i] +=  inv(vs[i] .* twov)
-    #end
-
-    #vs_sumlogs = sum(mapreduce(log, +, 0.0, σ))
-    #entropy = n * log(2 * π * e) + vs_sumlogs
-    #for i in 1:length(σ)
-        #grad[i] += inv(σ[i])
-    #end
 
     return entropy
 end
@@ -204,7 +196,7 @@ function approximate_likelihood(s::RNASeqSample)
     max_fruitless_steps = 20
     max_steps = 200
 
-    output_idx = 16
+    output_idx = 72281
 
     println("Optimizing ELBO: ", -Inf)
 
@@ -278,17 +270,6 @@ function approximate_likelihood(s::RNASeqSample)
     end
 
     println("Finished in ", step_num, " steps")
-
-
-    #idx = searchsorted(ordinalrank(μ), 9 * div(length(μ), 10))
-    #@show idx.start
-
-    #samples, weights = diagnostic_samples(model, mklX, μ, σ, idx.start)
-    #out = open("diagnostic_samples.csv", "w")
-    #for (s, w) in zip(samples, weights)
-        #@printf(out, "%.12e,%.12e\n", Float64(s), Float64(w))
-    #end
-    #close(out)
 
     map!(exp, σv, ωv)
     return μ, σ

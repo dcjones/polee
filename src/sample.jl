@@ -40,8 +40,8 @@ function RNASeqSample(transcripts_filename::String,
     println("intersecting reads and transcripts...")
 
     # sparse matrix indexes and values
-    I = UInt32[]
-    J = UInt32[]
+    I = Int32[]
+    J = Int32[]
     V = Float32[]
     intersection_count = 0
     intersection_candidate_count = 0
@@ -80,6 +80,13 @@ function RNASeqSample(transcripts_filename::String,
         end
     end
 
+    # Write transcript out with corresponding indexes
+    open("transcripts.txt", "w") do out
+        for t in ts
+            println(out, t.metadata.id, ",", t.metadata.name)
+        end
+    end
+
     # conditional probability of observing a fragment given it belongs to some
     # other unknown transcript or something else. TODO: come up with some
     # principled number of this.
@@ -91,10 +98,11 @@ function RNASeqSample(transcripts_filename::String,
     #end
     toc()
 
-    m, n = length(I), length(J)
+    m = maximum(I)
+    n = length(ts)
 
     if !isnull(output)
-        M = sparse(I, J, V)
+        M = sparse(I, J, V, m, n)
         h5open(get(output), "w") do out
             out["m"] = M.m
             out["n"] = M.n
@@ -104,7 +112,7 @@ function RNASeqSample(transcripts_filename::String,
         end
     end
 
-    return RNASeqSample(m, n, RSBMatrix(I, J, V))
+    return RNASeqSample(m, n, RSBMatrix(I, J, V, m, n))
 end
 
 

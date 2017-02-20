@@ -81,8 +81,7 @@ function RSBMatrix(A::SparseMatrixCSC)
 end
 
 
-function RSBMatrix(I, J, V)
-    m, n = length(I), length(J)
+function RSBMatrix(I::Vector{Int32}, J::Vector{Int32}, V::Vector{Float32}, m, n)
     nnz = length(V)
 
     # make zero-based temporarily

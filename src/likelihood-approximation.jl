@@ -275,6 +275,14 @@ function approximate_likelihood(s::RNASeqSample)
 
     println("Finished in ", step_num, " steps")
 
+    # Write out point estimates for convenience
+    log_likelihood(model, s.X, μ, π_grad)
+    open("point-estimates.csv", "w") do out
+        for i in 1:n
+            @printf(out, "%e\n", model.π_simplex[i])
+        end
+    end
+
     map!(exp, σv, ωv)
     return μ, σ
 end

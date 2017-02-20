@@ -92,6 +92,9 @@ function train_model(foreground, background, k)
     TF = TensorFlow
 
     sess = TF.Session(TF.Graph())
+
+
+    #=
     n0, n1 = length(background), length(foreground)
     n = n0 + n1
 
@@ -122,6 +125,7 @@ function train_model(foreground, background, k)
                                    cross_entropy)
 
     run(sess, train_step, Dict(x=>examples, y_=>labels))
+    =#
 
     # TODO:
     #   - how do I get a weight out of this given a sequence context

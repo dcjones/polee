@@ -13,13 +13,13 @@ type Model
     raw_grad::Vector{Float32}
 
     # intermediate values used in simplex calculation
-    xs_sum::Vector{Float32}
-    zs::Vector{Float32}
+    xs_sum::Vector{Float64}
+    zs::Vector{Float64}
 
     # intermediate values in gradient computation
-    log1mz_sum::Vector{Float32}
-    onemz_prod::Vector{Float32}
-    work::Vector{Float32}
+    log1mz_sum::Vector{Float64}
+    onemz_prod::Vector{Float64}
+    work::Vector{Float64}
 end
 
 function Model(m, n)
@@ -27,11 +27,11 @@ function Model(m, n)
                  fillpadded(FloatVec, 0.0, n),
                  fillpadded(FloatVec, 0.0, m),
                  fillpadded(FloatVec, 0.0, n),
-                 fillpadded(FloatVec, 0.0, n),
-                 fillpadded(FloatVec, 0.0, n),
-                 fillpadded(FloatVec, 0.0, n),
-                 fillpadded(FloatVec, 0.0, n),
-                 fillpadded(FloatVec, 0.0, n))
+                 fill(0.0, n),
+                 fill(0.0, n),
+                 fill(0.0, n),
+                 fill(0.0, n),
+                 fill(0.0, n))
 end
 
 
@@ -76,8 +76,8 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
     @assert length(work) >= k
     @assert length(zs) >= k
 
-    ladj = 0.0f0
-    xsum = 0.0f0
+    ladj = 0.0
+    xsum = 0.0
     xs_sum[1] = 0.0
 
     # reusing these vectors as temporary storage
@@ -87,7 +87,7 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
     simplex!_loop1(k, xs, work1, work2, zs, ys)
 
     log1mz_sum[1] = work2[2]
-    onemz_prod[1] = 1.0f0 - zs[1]
+    onemz_prod[1] = 1.0 - zs[1]
     for i in 2:k-1
         log1mz_sum[i] = log1mz_sum[i-1] + work2[i+1]
     end
@@ -96,10 +96,10 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
     for i in 1:k-1
         log_z = work1[i+1]
         log_one_minus_z = work2[i+1]
+        log_one_minus_xsum = log1p(-xsum)
+        ladj += log_z + log_one_minus_z + log_one_minus_xsum
 
-        ladj += log_z + log_one_minus_z + log1p(-xsum)
         xs[i] = (1 - xsum) * zs[i]
-
         xsum += xs[i]
         xs_sum[i+1] = xsum
         @assert xs_sum[i+1] <= 1.0
@@ -202,6 +202,10 @@ function log_likelihood(model::Model, X, π, grad)
         # sum_{j=i+1}^{n-1} (dp(x) / dyi)_j
         df_dy_mid = -dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
         grad[i] += df_dy_mid
+        #if !isfinite(grad[i])
+            #@show (dxi_dyi, us[n-1], us[i], onemz_prod[i])
+            #exit()
+        #end
     end
     #log_likelihood_loop2(n, xs_sum, zs, raw_grad, onemz_prod, us, grad)
 
@@ -218,6 +222,10 @@ function log_likelihood(model::Model, X, π, grad)
         # d/dy_i sum_{k=i+1}^{n-1} log(dx_k / dy_i)
         dxi_dyi = (1.0 - xs_sum[i]) * zs[i] * (1.0 - zs[i])
         grad[i] += dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
+        #if !isfinite(grad[i])
+            #@show (dxi_dyi, us[n-1], us[i], onemz_prod[i])
+            #exit()
+        #end
     end
 
     @assert isfinite(lp)

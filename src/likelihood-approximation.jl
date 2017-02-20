@@ -211,18 +211,6 @@ function approximate_likelihood(s::RNASeqSample)
         fill!(ω_grad, 0.0f0)
         map!(exp, σv, ωv)
 
-        @show (minimum(σ[1:n-1]), maximum(σ[1:n-1]))
-        @show (minimum(μ[1:n-1]), maximum(μ[1:n-1]))
-        tmp = model.π_simplex[1:n-1]
-        @show (minimum(tmp), maximum(tmp))
-
-        mσ = maximum(σ)
-        for i in 1:n-1
-            if σ[i] == mσ
-                @show (i, n, μ[i], σ[i], tmp[i])
-            end
-        end
-
         for _ in 1:num_mc_samples
             for i in 1:n-1
                 η[i] = _randn()
@@ -232,7 +220,6 @@ function approximate_likelihood(s::RNASeqSample)
             for i in 1:length(ζv)
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
-            @show (minimum(ζ), maximum(ζ))
 
             lp = log_likelihood(model, s.X, ζ, π_grad)
             @assert isfinite(lp)
@@ -254,8 +241,8 @@ function approximate_likelihood(s::RNASeqSample)
         elbo += normal_entropy!(ω_grad, σ, n-1)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        #@printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
-        @printf("Optimizing ELBO: %.4e\n", elbo)
+        @printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
+        #@printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2
@@ -267,28 +254,12 @@ function approximate_likelihood(s::RNASeqSample)
             s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_μ[i]))
             μ[i] += clamp(ρ * μ_grad[i], -ss_max_μ_step, ss_max_μ_step)
-
-            # very high range of values here can cause NaNs due lack of
-            # precision, so we clamp the range of these.
-            #μ[i] = min(max(-4.0, μ[i]), 4.0)
-            μ[i] = min(μ[i], 4.0)
-            # TODO: I can't really do this. It actually does make a big
-            # difference in the abundance of the most highly expressed
-            # transcript. What are my options?:
-            #
-            # - 64bit math
-            #   What would have to be 64bt?
-            #
-            # - work in log-space somehow
-            #
-            #
         end
 
         for i in 1:n-1
             s_ω[i] = (1 - ss_ω_α) * s_ω[i] + ss_ω_α * ω_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_ω[i]))
             ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
-            #ω[i] = min(ω[i], 2.5)
         end
 
         if elbo < max_elbo

@@ -81,6 +81,44 @@ function RSBMatrix(A::SparseMatrixCSC)
 end
 
 
+function RSBMatrix(I, J, V)
+    m, n = length(I), length(J)
+    nnz = length(V)
+
+    # make zero-based temporarily
+    I .-= 1
+    J .-= 1
+
+    ptr = ccall((:BLAS_suscr_begin, librsb), BLASSparseMatrix, (Cint, Cint), m, n)
+    if ptr == blas_invalid_handle
+        error("BLAS_suscr_begin failed")
+    end
+
+    # params: A, nnz, val, indx, jndx
+    err = ccall((:BLAS_suscr_insert_entries, librsb), RSBErr,
+                (BLASSparseMatrix, Cint, Ptr{Float32}, Ptr{Cint}, Ptr{Cint}),
+                ptr, nnz, V, I, J)
+
+    if err != 0
+        error("BLAS_suscr_insert_entries failed with code $(err)")
+    end
+
+    err = ccall((:BLAS_suscr_end, librsb), Cint, (BLASSparseMatrix,), ptr)
+    if err != 0
+        error("BLAS_suscr_end failed with code $(err)")
+    end
+
+    ret = RSBMatrix(ptr)
+    finalizer(ret, destroy)
+
+    # make one-based again
+    I .+= 1
+    J .+= 1
+
+    return ret
+end
+
+
 function Base.A_mul_B!(y::Vector{Float32}, A::RSBMatrix, x::Vector{Float32})
     fill!(y, 0.0f0)
     err = ccall((:BLAS_susmv, librsb), Cint,

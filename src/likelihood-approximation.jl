@@ -1,10 +1,14 @@
 
 include("randn.jl")
 
-function approximate_likelihood(input_filename, output_filename)
+function approximate_likelihood(input_filename::String, output_filename::String)
     sample = read(input_filename, RNASeqSample)
-    μ, σ = approximate_likelihood(sample)
+    approximate_likelihood(sample, output_filename)
+end
 
+
+function approximate_likelihood(sample::RNASeqSample, output_filename::String)
+    μ, σ = approximate_likelihood(sample)
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
@@ -12,7 +16,6 @@ function approximate_likelihood(input_filename, output_filename)
         out["sigma", "compress", 1] = σ[1:n]
     end
 end
-
 
 function approximate_likelihood_from_isolator(input_filename, output_filename)
     input = open(input_filename)
@@ -150,27 +153,27 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ω_α = 0.1
     ss_μ_α = 0.01
     ss_η = 1.0
-    ss_max_μ_step = 5e-1
+    ss_max_μ_step = 1e-1
     ss_max_ω_step = 1e-1
     srand(4324)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
     num_mc_samples = 2
-    η = fillpadded(FloatVec, 0.0f0, n)
-    ζ = fillpadded(FloatVec, 0.0f0, n)
+    η = fillpadded(FloatVec, 0.0f0, n-1)
+    ζ = fillpadded(FloatVec, 0.0f0, n-1)
 
-    μ = fillpadded(FloatVec, 0.0f0, n)
-    σ = fillpadded(FloatVec, 1.0f0, n, 1.f0)
-    ω = fillpadded(FloatVec, -3.0f0, n) # log transformed σ
+    μ = fillpadded(FloatVec, 0.0f0, n-1)
+    σ = fillpadded(FloatVec, 1.0f0, n-1, 1.f0)
+    ω = fillpadded(FloatVec, -3.0f0, n-1) # log transformed σ
 
-    π_grad = fillpadded(FloatVec, 0.0f0, n)
-    μ_grad = fillpadded(FloatVec, 0.0f0, n)
-    ω_grad = fillpadded(FloatVec, 0.0f0, n)
+    π_grad = fillpadded(FloatVec, 0.0f0, n-1)
+    μ_grad = fillpadded(FloatVec, 0.0f0, n-1)
+    ω_grad = fillpadded(FloatVec, 0.0f0, n-1)
 
     # step-size
-    s_μ = fillpadded(FloatVec, 1e-6, n)
-    s_ω = fillpadded(FloatVec, 1e-6, n)
+    s_μ = fillpadded(FloatVec, 1e-6, n-1)
+    s_ω = fillpadded(FloatVec, 1e-6, n-1)
 
     # simd vectors
     ηv = reinterpret(FloatVec, η)
@@ -208,8 +211,20 @@ function approximate_likelihood(s::RNASeqSample)
         fill!(ω_grad, 0.0f0)
         map!(exp, σv, ωv)
 
+        @show (minimum(σ[1:n-1]), maximum(σ[1:n-1]))
+        @show (minimum(μ[1:n-1]), maximum(μ[1:n-1]))
+        tmp = model.π_simplex[1:n-1]
+        @show (minimum(tmp), maximum(tmp))
+
+        mσ = maximum(σ)
+        for i in 1:n-1
+            if σ[i] == mσ
+                @show (i, n, μ[i], σ[i], tmp[i])
+            end
+        end
+
         for _ in 1:num_mc_samples
-            for i in 1:n
+            for i in 1:n-1
                 η[i] = _randn()
             end
 
@@ -217,28 +232,30 @@ function approximate_likelihood(s::RNASeqSample)
             for i in 1:length(ζv)
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
+            @show (minimum(ζ), maximum(ζ))
 
             lp = log_likelihood(model, s.X, ζ, π_grad)
             @assert isfinite(lp)
             elbo += lp
 
-            @inbounds for i in 1:n
+            @inbounds for i in 1:n-1
                 μ_grad[i] += π_grad[i]
                 ω_grad[i] += π_grad[i] * η[i] * σ[i]
             end
         end
 
-        for i in 1:n
+        for i in 1:n-1
             μ_grad[i] /= num_mc_samples
             ω_grad[i] /= num_mc_samples
             ω_grad[i] += 1 # normal distribution entropy gradient
         end
 
         elbo /= num_mc_samples
-        elbo += normal_entropy!(ω_grad, σ, n)::Float64
+        elbo += normal_entropy!(ω_grad, σ, n-1)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        @printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
+        #@printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
+        @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2
@@ -246,16 +263,32 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
-        for i in 1:length(μ)
+        for i in 1:n-1
             s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_μ[i]))
             μ[i] += clamp(ρ * μ_grad[i], -ss_max_μ_step, ss_max_μ_step)
+
+            # very high range of values here can cause NaNs due lack of
+            # precision, so we clamp the range of these.
+            #μ[i] = min(max(-4.0, μ[i]), 4.0)
+            μ[i] = min(μ[i], 4.0)
+            # TODO: I can't really do this. It actually does make a big
+            # difference in the abundance of the most highly expressed
+            # transcript. What are my options?:
+            #
+            # - 64bit math
+            #   What would have to be 64bt?
+            #
+            # - work in log-space somehow
+            #
+            #
         end
 
-        for i in 1:length(ω)
+        for i in 1:n-1
             s_ω[i] = (1 - ss_ω_α) * s_ω[i] + ss_ω_α * ω_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_ω[i]))
             ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
+            #ω[i] = min(ω[i], 2.5)
         end
 
         if elbo < max_elbo

@@ -18,6 +18,17 @@
 
 \section{Simplex transform $S$}
 
+%% TODO: actually describe this
+
+For $i < n$,
+$$z_i = \text{logit}^{-1}\left(y_i + \frac{1}{n - i}\right)$$
+
+For $i < n$,
+$$x_i = z_i \left(1 - \sum_{k=1}^{i-1} x_k \right)$$
+
+And for $x_n$,
+$$x_n = \left(1 - \sum_{k=1}^{i-1} x_k \right)$$
+
 
 \subsection{Gradients of $S$}
 
@@ -232,6 +243,97 @@ $O(n)$.
 
 
 \subsection{Gradients of $\log |\det J_{S}|$}
+
+
+\section{Scaled simplex transformation}
+
+Longer transcripts have more oppourtunities to observe reads. Expression must be
+scaled to account for this effect, which is usually done by dividing by a
+``effective length'' $\ell_i$ value for each transcript $i$. We define the
+following transform $L: \Delta^{n-1} \mapsto \Delta^{n-1}$, where $\Delta^{n-1}$
+is the $(n-1)$-simplex as,
+
+$$
+x'_i \defeq L(x)_i = \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
+$$
+
+Note that this is not an invertable transformation when applied to real numbers,
+but is invertable over a simplex. The inverse is simply $$L^{-1}(x)_i =
+\frac{(1/\ell_i) x_i}{\sum_{k=1}^{n} (1/\ell_k) x_k}$$
+
+\subsection{Gradients}
+
+The gradients of an objective function applied to transformed values ($\nabla_x
+f(L(x))$) can be computed in $O(n)$.
+
+
+The partial derivatives of $L$ are for all $i$,
+$$\frac{\partial}{\partial x_i} \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
+= \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
+- \frac{\ell_{i}^2 x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
+and for $i, j$ where $i \neq j$,
+$$\frac{\partial}{\partial x_i} \frac{\ell_j x_j}{\sum_{k=1}^{n} \ell_k x_k}
+= - \frac{\ell_i \ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
+
+
+The partial derivatives of $f(L(x))$, where $x'_j = (L(x))_j$, are,
+\begin{align*}
+\frac{\partial}{\partial x_i} f(L(x)) &=
+    \sum_{j=1}^{n} \frac{\partial x'_j}{\partial x_i} \frac{\partial}{\partial x'_j} f(x') \\
+&=
+\frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
+- \frac{\ell_{i}^2 x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2} -
+    \sum_{\substack{j=1 \\ j \neq i}}^{n} 
+\frac{\ell_i \ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}
+    \frac{\partial}{\partial x'_j} f(x') \\
+    &=
+\frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
+- \ell_i \sum_{j=1}^{n}
+\frac{\ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}
+    \frac{\partial}{\partial x'_j} f(x') \\
+\end{align*}
+
+Note that both sums that appear do not depend on $i$, so they can be computed
+once and reused for each $i$ in $O(n)$, and only an constant amount of
+additional work is needed for each $i$, therefore the gradient is computable in
+linear time.
+
+\subsection{Jacobian}
+
+The determinant of the Jacobian matrix of the $L$ transform is 0, which we prove
+here.
+
+The diagonal entries of the Jacobian matrix are, for $1 \le i \le n$,
+
+$$J_{ii} = \frac{\partial}{\partial x_i} \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
+= \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
+- \frac{\ell_{i}^2 x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
+
+Every off-diagonal entry, for $i, j$ where $i \neq j$ is,
+$$J_{ij} = \frac{\partial}{\partial x_i} \frac{\ell_j x_j}{\sum_{k=1}^{n} \ell_k x_k}
+= - \frac{\ell_i \ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
+
+Note that $J$ can be factored as $J = u v^{T} + I u$ where for each $1 \le i
+\le n$,
+
+$$ u_i = \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} $$
+
+$$ v_i = \frac{-\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k} $$
+
+Now the Matrix Determinant Lemma can be applied, giving us,
+\begin{align*}
+\det(J) &= \det(u v^{T} + I u) \\
+        &= (1 + v^T (Iu)^{-1} u) \det(Iu) \\
+        &= \left(1 + \sum_{i=1}^{n} u_i v_i (1/u_i) \right) \det(Iu) \\
+        &= \left(1 + \sum_{i=1}^{n} v_i \right) \det(Iu) \\
+        &= \left(1 - \sum_{i=1}^{n} \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
+        \right) \det(Iu) \\
+        &= 0
+\end{align*}
+
+The final step follows because $\sum_{i=1}^{n} \frac{\ell_i x_i}{\sum_{k=1}^{n}
+\ell_k x_k} = 1$.
+
 
 
 \end{document}

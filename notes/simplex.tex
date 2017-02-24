@@ -281,13 +281,14 @@ The partial derivatives of $f(L(x))$, where $x'_j = (L(x))_j$, are,
 \frac{\partial}{\partial x_i} f(L(x)) &=
     \sum_{j=1}^{n} \frac{\partial x'_j}{\partial x_i} \frac{\partial}{\partial x'_j} f(x') \\
 &=
-\frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
-- \frac{\ell_{i}^2 x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2} -
-    \sum_{\substack{j=1 \\ j \neq i}}^{n} 
+    \left(\frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
+    - \frac{\ell_{i}^2 x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}\right)
+    \frac{\partial}{\partial x'_i} f(x')
+    - \sum_{\substack{j=1 \\ j \neq i}}^{n}
 \frac{\ell_i \ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}
     \frac{\partial}{\partial x'_j} f(x') \\
     &=
-\frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
+\frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}  \frac{\partial}{\partial x'_i} f(x')
 - \ell_i \sum_{j=1}^{n}
 \frac{\ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}
     \frac{\partial}{\partial x'_j} f(x') \\

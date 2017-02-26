@@ -3,6 +3,7 @@ type RNASeqSample
     m::Int
     n::Int
     X::RSBMatrix
+    effective_lengths::Vector{Float32}
 end
 
 
@@ -19,8 +20,9 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     rowval = read(input["rowval"])
     nzval = read(input["nzval"])
     X = RSBMatrix(SparseMatrixCSC(m, n, colptr, rowval, nzval))
+    effective_lengths = read(input["effective_lengths"])
 
-    return RNASeqSample(m, n, X)
+    return RNASeqSample(m, n, X, effective_lengths)
 end
 
 
@@ -46,7 +48,7 @@ function RNASeqSample(transcripts_filename::String,
     intersection_count = 0
     intersection_candidate_count = 0
 
-    MIN_FRAG_PROB = 1e-8
+    MIN_FRAG_PROB = 1e-10
 
     # reassign indexes to alignments to group by position
     aln_idx_map = Dict{Int, Int}()
@@ -65,11 +67,17 @@ function RNASeqSample(transcripts_filename::String,
         t.metadata.id = tid
     end
 
+    counts = Dict{Int, Int}()
+
     tic()
+    tidoi_naive_intersection_count = 0
     for (t, alnpr) in intersect(ts, rs.alignment_pairs)
         intersection_candidate_count += 1
         fragpr = condfragprob(fm, t, rs, alnpr)
-        if fragpr > MIN_FRAG_PROB
+        if t.metadata.id == 146713
+            tidoi_naive_intersection_count += 1
+        end
+        if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
             i = alnpr.metadata.mate1_idx > 0 ?
                     rs.alignments[alnpr.metadata.mate1_idx].id :
                     rs.alignments[alnpr.metadata.mate2_idx].id
@@ -77,8 +85,26 @@ function RNASeqSample(transcripts_filename::String,
             #push!(J, t.metadata.id + 1) # +1 to make room for pseudotranscript
             push!(J, t.metadata.id)
             push!(V, fragpr)
+
+            if haskey(counts, t.metadata.id)
+                counts[t.metadata.id] += 1
+            else
+                counts[t.metadata.id] = 1
+            end
         end
     end
+
+    sorted_counts = sort(collect(values(counts)))
+    @show sorted_counts[end-10:end]
+    #for (k, v) in counts
+        #if v == 639950
+            #@show k
+        #end
+    #end
+
+    effective_lengths = Float32[effective_length(fm, t) for t in ts]
+
+    @show tidoi_naive_intersection_count
 
     # Write transcript out with corresponding indexes
     open("transcripts.txt", "w") do out
@@ -101,6 +127,11 @@ function RNASeqSample(transcripts_filename::String,
     m = maximum(I)
     n = length(ts)
 
+    @show length(Set(J))
+    @show length(Set(I))
+    @show length(V)
+    @show sum(J .== 146713)
+
     if !isnull(output)
         M = sparse(I, J, V, m, n)
         h5open(get(output), "w") do out
@@ -109,10 +140,11 @@ function RNASeqSample(transcripts_filename::String,
             out["colptr", "compress", 1] = M.colptr
             out["rowval", "compress", 1] = M.rowval
             out["nzval", "compress", 1] = M.nzval
+            out["effective_lengths", "compress", 1] = effective_lengths
         end
     end
 
-    return RNASeqSample(m, n, RSBMatrix(I, J, V, m, n))
+    return RNASeqSample(m, n, RSBMatrix(I, J, V, m, n), effective_lengths)
 end
 
 

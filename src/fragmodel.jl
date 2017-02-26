@@ -19,7 +19,9 @@ function sample_training_examples(rs::Reads, n::Int)
     # simplicity
     starts = IntSet()
     for alnpr in rs.alignment_pairs
-        push!(starts, alnpr.first)
+        if alnpr.first > 0
+            push!(starts, alnpr.first)
+        end
     end
 
     starts_subset = IntSet()
@@ -33,7 +35,7 @@ function sample_training_examples(rs::Reads, n::Int)
     last_start = 0
     for alnpr in rs.alignment_pairs
         if alnpr.first != last_start
-            if alnpr.first in starts_subset
+            if alnpr.first > 0 && alnpr.first in starts_subset
                 push!(examples, alnpr)
             end
             last_start = alnpr.first
@@ -145,6 +147,9 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
                       alnpr::AlignmentPair)
     fraglen_ = fragmentlength(t, rs, alnpr)
     if isnull(fraglen_)
+        #if t.metadata.id == 146713
+            #println("1")
+        #end
         return 0.0
     end
     fraglen = get(fraglen_)
@@ -163,7 +168,27 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
     tlen = exonic_length(t)
     fragpr /= tlen <= length(fm.fraglen_cdf) ? fm.fraglen_cdf[tlen] : 1.0
 
+    # XXX: let's to super simple probabilities until we can figure out what's
+    # going on
+    fraglenpr = fraglen <= MAX_FRAG_LEN ? fm.fraglen_pmf[fraglen] : 0.0f0
+    fragpr = fraglenpr / (tlen - fraglen)
+
+    #if (fragpr == 0.0 || !isfinite(fragpr) || fragpr < 1e-12) && t.metadata.id == 146713
+        #println("0")
+        #@show (fraglenpr, tlen, fraglen)
+    #end
+
     return fragpr
+end
+
+
+function effective_length(fm::FragModel, t::Transcript)
+    tlen = exonic_length(t)
+    el = 0.0f0
+    for l in 1:min(tlen, MAX_FRAG_LEN)
+        el += fm.fraglen_pmf[l] * (tlen - l + 1)
+    end
+    return max(el, 0.01f0)
 end
 
 

@@ -145,12 +145,15 @@ function main()
         @add_arg_table arg_settings begin
             "--output", "-o"
                 default = "sample-data.h5"
-            "isolator_data"
+            "isolator_matrix"
+                required = true
+            "isolator_effective_lengths"
                 required = true
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
         approximate_likelihood_from_isolator(
-                               parsed_args["isolator_data"],
+                               parsed_args["isolator_matrix"],
+                               parsed_args["isolator_effective_lengths"],
                                parsed_args["output"])
         return
     else

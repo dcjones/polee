@@ -146,7 +146,7 @@ end
 
 
 # assumes a flat prior on π
-function log_likelihood(model::Model, X, π, grad)
+function log_likelihood(model::Model, X, effective_lengths, π, grad)
     frag_probs = model.frag_probs
     fill!(grad, 0.0)
     m, n = model.m, model.n
@@ -157,6 +157,17 @@ function log_likelihood(model::Model, X, π, grad)
     # transform π to simplex
     ladj = simplex!(model.n, model.π_simplex, model.xs_sum,
                     model.work, model.zs, log1mz_sum, onemz_prod, π)
+
+    # transform to effect length adjusted simplex
+    scaled_simplex_sum = 0.0
+    for i in 1:n
+        scaled_simplex_sum += effective_lengths[i] * model.π_simplex[i]
+    end
+
+    for i in 1:n
+        model.π_simplex[i] =
+            effective_lengths[i] * model.π_simplex[i] / scaled_simplex_sum
+    end
 
     # conditional fragment probabilities
     A_mul_B!(frag_probs, X, model.π_simplex)
@@ -174,6 +185,17 @@ function log_likelihood(model::Model, X, π, grad)
     # computed untransformed gradient in raw_grad
     raw_grad = model.raw_grad
     At_mul_B!(raw_grad, X, frag_probs)
+
+    # Gradients with respect to simplex(x)
+    c = 0.0
+    for i in 1:model.n
+        c += (model.π_simplex[i] / scaled_simplex_sum) * raw_grad[i]
+    end
+
+    for i in 1:model.n
+        raw_grad[i] =
+            effective_lengths[i] * (raw_grad[i] / scaled_simplex_sum - c);
+    end
 
     # compute gradient of simplex transform
     zs = model.zs

@@ -17,7 +17,10 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
     end
 end
 
-function approximate_likelihood_from_isolator(input_filename, output_filename)
+# TODO: I also need to pass in effective lengths now
+function approximate_likelihood_from_isolator(input_filename,
+                                              effective_lengths_filename,
+                                              output_filename)
     input = open(input_filename)
 
     n = parse(Int, readline(input))
@@ -39,7 +42,15 @@ function approximate_likelihood_from_isolator(input_filename, output_filename)
     end
     X = sparse(I, J, V, m, n)
     rsbX = RSBMatrix(X)
-    sample = RNASeqSample(m, n, rsbX)
+
+    effective_lengths = Float32[]
+    open(effective_lengths_filename) do input
+        for line in eachline(input)
+            push!(effective_lengths, parse(Float32, line))
+        end
+    end
+
+    sample = RNASeqSample(m, n, rsbX, effective_lengths)
 
     # measure and dump connectivity info
     #=
@@ -71,13 +82,13 @@ function approximate_likelihood_from_isolator(input_filename, output_filename)
         end
         a = b
     end
-    =#
 
     open("connectivity.csv", "w") do out
         for ((u,v), c) in edge_count
             println(out, u, ",", v, ",", c)
         end
     end
+    =#
 
     #@profile μ, σ = approximate_likelihood(sample)
     #Profile.print()
@@ -153,8 +164,10 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ω_α = 0.1
     ss_μ_α = 0.01
     ss_η = 1.0
-    ss_max_μ_step = 1e-1
-    ss_max_ω_step = 1e-1
+    #ss_max_μ_step = 1e-1
+    #ss_max_ω_step = 1e-1
+    ss_max_μ_step = 1e-2
+    ss_max_ω_step = 1e-2
     srand(4324)
 
     # number of monte carlo samples to estimate gradients an elbo at each
@@ -221,7 +234,7 @@ function approximate_likelihood(s::RNASeqSample)
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
 
-            lp = log_likelihood(model, s.X, ζ, π_grad)
+            lp = log_likelihood(model, s.X, s.effective_lengths, ζ, π_grad)
             @assert isfinite(lp)
             elbo += lp
 
@@ -241,8 +254,8 @@ function approximate_likelihood(s::RNASeqSample)
         elbo += normal_entropy!(ω_grad, σ, n-1)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        @printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
-        #@printf("Optimizing ELBO: %.4e\n", elbo)
+        #@printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
+        @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2
@@ -262,13 +275,17 @@ function approximate_likelihood(s::RNASeqSample)
             ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
         end
 
+        #if step_num > 600
+            #break
+        #end
+
         if elbo < max_elbo
             fruitless_step_count += 1
         else
             fruitless_step_count = 0
         end
 
-        if fruitless_step_count > 5
+        if fruitless_step_count > 10
             break
         end
     end
@@ -276,7 +293,7 @@ function approximate_likelihood(s::RNASeqSample)
     println("Finished in ", step_num, " steps")
 
     # Write out point estimates for convenience
-    log_likelihood(model, s.X, μ, π_grad)
+    log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
     open("point-estimates.csv", "w") do out
         for i in 1:n
             @printf(out, "%e\n", model.π_simplex[i])

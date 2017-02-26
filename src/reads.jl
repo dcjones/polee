@@ -11,6 +11,43 @@ immutable Alignment
 end
 
 
+# SAM/BAM spec says pos should be the first matching position, which is hugely
+# inconvenient. We compute the actual start position here.
+function _leftposition(rec::BAMRecord)
+    pos = leftposition(rec)
+    offset = Align.seqname_length(rec)
+    for i in offset+1:4:offset+Align.n_cigar_op(rec)*4
+        x = unsafe_load(Ptr{UInt32}(pointer(rec.data, i)))
+        op = Operation(x & 0x0f)
+        if op != OP_MATCH
+            pos -= x >> 4
+        else
+            break
+        end
+    end
+    return pos
+end
+
+
+function _alignment_length(rec::BAMRecord)
+    offset = Align.seqname_length(rec)
+    length::Int = 0
+    for i in offset+1:4:offset+Align.n_cigar_op(rec)*4
+        x = unsafe_load(Ptr{UInt32}(pointer(rec.data, i)))
+        op = Operation(x & 0x0f)
+        if ismatchop(op) || isdeleteop(op) || op == OP_SOFT_CLIP
+            length += x >> 4
+        end
+    end
+    return length
+end
+
+
+function _rightposition(rec::BAMRecord)
+    return Int32(_leftposition(rec) + _alignment_length(rec) - 1)
+end
+
+
 immutable AlignmentPairMetadata
     mate1_idx::UInt32
     mate2_idx::UInt32
@@ -84,12 +121,14 @@ function Reads(filename::String)
         end
 
         id = get!(readnames, seqname(entry), length(readnames) + 1)
-        # TODO: I think I need to compute rightposition *with* soft clipping
         push!(alignments, Alignment(id, hitnum, entry.refid + 1,
-                                    leftposition(entry), rightposition(entry),
+                                    _leftposition(entry), _rightposition(entry),
                                     flag(entry), cigaridx))
     end
     finish!(prog)
+
+    @show length(readnames)
+    @show length(alignments)
 
     @printf("Read %9d reads\nwith %9d alignments\n",
             length(readnames), length(alignments))
@@ -98,6 +137,7 @@ function Reads(filename::String)
 
     # group alignments into alignment pair intervals
     sort!(alignments)
+
     i, j = 1, 1
     prog = Progress(1 + div(length(alignments), prog_step), 0.25,
                     "Indexing alignments ", 60)
@@ -143,11 +183,12 @@ function Reads(filename::String)
         if m1 > 0
             strand = alignments[m1].flag & SAM_FLAG_REVERSE != 0 ?
                 STRAND_NEG : STRAND_POS
-         elseif m2 > 2
+        elseif m2 > 2
             strand = alignments[m2].flag & SAM_FLAG_REVERSE != 0 ?
                 STRAND_POS : STRAND_NEG
-         end
+        end
 
+        # Try excluding unpaired reads
         alnpr = AlignmentPair(
             seqname, minpos, maxpos, strand,
             AlignmentPairMetadata(m1, m2))
@@ -184,8 +225,13 @@ immutable CigarIter
 end
 
 
+function Base.length(ci::CigarIter)
+    return cigar_len(ci.aln)
+end
+
+
 function Base.start(ci::CigarIter)
-    return 1, ci.aln.leftpos
+    return 1, Int32(ci.aln.leftpos)
 end
 
 
@@ -193,14 +239,14 @@ function Base.next(ci::CigarIter, state::Tuple{Int, Int32})
     i, pos = state
     if i == 1 && length(ci.aln.cigaridx) <= 0
         return (CigarInterval(ci.aln.leftpos, ci.aln.rightpos, OP_MATCH),
-                (i + 1, ci.aln.rightpos + 1))
+                (i + 1, Int32(ci.aln.rightpos + 1)))
     else
         x = ci.rs.cigardata[ci.aln.cigaridx.start + i - 1]
         op = Operation(x & 0x0f)
         len = Int32(x >> 4)
         first = pos
         last = first + len - 1
-        return (CigarInterval(pos, pos+len-1, op), (i + 1, pos+len))
+        return (CigarInterval(pos, pos+len-1, op), (i + 1, Int32(pos+len)))
     end
 end
 
@@ -216,11 +262,11 @@ Provide a convenient way to work with iterators.
 """
 macro next!(T, x, it, state)
     quote
-        if done($it, $state)
-            $x = Nullable{$T}()
+        if done($(esc(it)), $(esc(state)))
+            $(esc(x)) = Nullable{$T}()
         else
-            x_, state = next($it, $state)
-            $x = Nullable{$T}(x_)
+            x_, $(esc(state)) = next($(esc(it)), $(esc(state)))
+            $(esc(x)) = Nullable{$T}(x_)
         end
     end
 end
@@ -249,6 +295,7 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 
     # rule out obviously incompatible alignments
     if alnpr.first < t.first || alnpr.last > t.last
+        t.metadata.id == 146713 && println("A")
         return Nullable{Int}()
     end
 
@@ -298,10 +345,18 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
             if e.isexon
                 if !is_exon_compatible(c.op)
+                    if t.metadata.id == 146713
+                        @show c
+                        @show e
+                        cigar1 = collect(CigarIter(rs, get(a1)))
+                        @show cigar1
+                    end
+                    t.metadata.id == 146713 && println("B")
                     return Nullable{Int}()
                 end
             else
                 if !is_intron_compatible(c.op)
+                    t.metadata.id == 146713 && println("C")
                     return Nullable{Int}()
                 end
                 intronlen += length(e)
@@ -321,27 +376,35 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                    e.last - c.first < max_allowable_encroachment
                 c1 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
             else
+                t.metadata.id == 146713 && println("D")
                 return Nullable{Int}()
             end
 
         # case 5: c precedes and partially overlaps e
         else
+            if t.metadata.id == 146713
+                @show c
+                @show e
+            end
+            t.metadata.id == 146713 && println("F")
             return Nullable{Int}()
         end
     end
 
     if !isnull(c1)
+        t.metadata.id == 146713 && println("G")
         return Nullable{Int}()
     end
 
     # alignment is compatible, but single-ended
     if isnull(a2)
+        t.metadata.id == 146713 && println("H")
         return Nullable{Int}()
     end
 
     e2_sup_e1 = false # marks with e2 > e1
 
-    c2_iter = CigarIter(rs, get(a1))
+    c2_iter = CigarIter(rs, get(a2))
     c2_state = start(c2_iter)
     c2 = Nullable{CigarInterval}()
     @next!(CigarInterval, c2, c2_iter, c2_state)
@@ -351,12 +414,14 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     e2 = Nullable{ExonIntron}()
     @next!(ExonIntron, e2, e2_iter, e2_state)
 
+
     while !isnull(e2) && !isnull(c2)
         c = get(c2)
         e = get(e2)
 
         # case 1: e entirely precedes c
         if e.last < c.first
+            #@show (e.isexon, e2_sup_e1, e, !isnull(e1) ? get(e1) : nothing)
             if !e.isexon && e2_sup_e1
                 intronlen += length(e)
             end
@@ -371,10 +436,12 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
             if e.isexon
                 if !is_exon_compatible(c.op)
+                    t.metadata.id == 146713 && println("I")
                     return Nullable{Int}()
                 end
             else
                 if !is_intron_compatible(c.op)
+                    t.metadata.id == 146713 && println("J")
                     return Nullable{Int}()
                 end
                 # TODO: why not increment e2 here?
@@ -382,7 +449,7 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
             @next!(CigarInterval, c2, c2_iter, c2_state)
 
         # case 3: soft clipping partially overlapping an exon or intron
-        elseif c.op == OP_MATCH
+        elseif c.op == OP_SOFT_CLIP
             @next!(CigarInterval, c2, c2_iter, c2_state)
 
         # case 4: match op overhangs into an intron a little
@@ -390,14 +457,20 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
             if e.isexon && c.last - e.last <= max_allowable_encroachment
                 c2 = Nullable(CigarInterval(c.first, e.last, c.op))
             elseif !e.isexon && e.last >= c.first &&
-                   e.last - c.first < max_allowable_encroachment
-                   c2 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
+                e.last - c.first < max_allowable_encroachment
+                c2 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
             else
+                t.metadata.id == 146713 && println("K")
                 return Nullable{Int}()
             end
 
         # case 5: c precedes and partially overlaps e
         else
+            if t.metadata.id == 146713
+                @show c
+                @show e
+            end
+            t.metadata.id == 146713 && println("L")
             return Nullable{Int}()
         end
     end
@@ -408,6 +481,7 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     end
 
     if !isnull(c2)
+        t.metadata.id == 146713 && println("M")
         return Nullable{Int}()
     end
 
@@ -415,9 +489,32 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     fraglen = max(a1_.rightpos, a2_.rightpos) -
               min(a1_.leftpos, a2_.leftpos) + 1 - intronlen
 
+    if t.metadata.id == 146713 && fraglen > 2000
+
+        @show (intronlen, e2_sup_e1, max(a1_.rightpos, a2_.rightpos), min(a1_.leftpos, a2_.leftpos))
+
+        cigar1 = collect(CigarIter(rs, a1_))
+        cigar2 = collect(CigarIter(rs, a2_))
+        @show cigar1
+        @show cigar2
+        @show e1
+        @show e2
+    end
+
     if fraglen > 0
+        #if t.metadata.id == 146713
+            #@show (fraglen, intronlen, e2_sup_e1, max(a1_.rightpos, a2_.rightpos), min(a1_.leftpos, a2_.leftpos))
+            #cigar1 = collect(CigarIter(rs, a1_))
+            #cigar2 = collect(CigarIter(rs, a2_))
+            #@show cigar1
+            #@show cigar2
+            #@show e1
+            #@show e2
+        #end
+        #t.metadata.id == 146713 && println("N")
         return Nullable{Int}(fraglen)
     else
+        t.metadata.id == 146713 && println("O")
         return Nullable{Int}()
     end
 end

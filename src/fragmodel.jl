@@ -147,9 +147,6 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
                       alnpr::AlignmentPair)
     fraglen_ = fragmentlength(t, rs, alnpr)
     if isnull(fraglen_)
-        #if t.metadata.id == 146713
-            #println("1")
-        #end
         return 0.0
     end
     fraglen = get(fraglen_)
@@ -168,15 +165,9 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
     tlen = exonic_length(t)
     fragpr /= tlen <= length(fm.fraglen_cdf) ? fm.fraglen_cdf[tlen] : 1.0
 
-    # XXX: let's to super simple probabilities until we can figure out what's
-    # going on
+    # TODO: use simplistic probabilities for the time being
     fraglenpr = fraglen <= MAX_FRAG_LEN ? fm.fraglen_pmf[fraglen] : 0.0f0
     fragpr = fraglenpr / (tlen - fraglen)
-
-    #if (fragpr == 0.0 || !isfinite(fragpr) || fragpr < 1e-12) && t.metadata.id == 146713
-        #println("0")
-        #@show (fraglenpr, tlen, fraglen)
-    #end
 
     return fragpr
 end

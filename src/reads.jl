@@ -127,9 +127,6 @@ function Reads(filename::String)
     end
     finish!(prog)
 
-    @show length(readnames)
-    @show length(alignments)
-
     @printf("Read %9d reads\nwith %9d alignments\n",
             length(readnames), length(alignments))
 
@@ -295,7 +292,6 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 
     # rule out obviously incompatible alignments
     if alnpr.first < t.first || alnpr.last > t.last
-        t.metadata.id == 146713 && println("A")
         return Nullable{Int}()
     end
 
@@ -345,18 +341,10 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
             if e.isexon
                 if !is_exon_compatible(c.op)
-                    if t.metadata.id == 146713
-                        @show c
-                        @show e
-                        cigar1 = collect(CigarIter(rs, get(a1)))
-                        @show cigar1
-                    end
-                    t.metadata.id == 146713 && println("B")
                     return Nullable{Int}()
                 end
             else
                 if !is_intron_compatible(c.op)
-                    t.metadata.id == 146713 && println("C")
                     return Nullable{Int}()
                 end
                 intronlen += length(e)
@@ -376,29 +364,21 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                    e.last - c.first < max_allowable_encroachment
                 c1 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
             else
-                t.metadata.id == 146713 && println("D")
                 return Nullable{Int}()
             end
 
         # case 5: c precedes and partially overlaps e
         else
-            if t.metadata.id == 146713
-                @show c
-                @show e
-            end
-            t.metadata.id == 146713 && println("F")
             return Nullable{Int}()
         end
     end
 
     if !isnull(c1)
-        t.metadata.id == 146713 && println("G")
         return Nullable{Int}()
     end
 
     # alignment is compatible, but single-ended
     if isnull(a2)
-        t.metadata.id == 146713 && println("H")
         return Nullable{Int}()
     end
 
@@ -421,7 +401,6 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 
         # case 1: e entirely precedes c
         if e.last < c.first
-            #@show (e.isexon, e2_sup_e1, e, !isnull(e1) ? get(e1) : nothing)
             if !e.isexon && e2_sup_e1
                 intronlen += length(e)
             end
@@ -436,12 +415,10 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
             if e.isexon
                 if !is_exon_compatible(c.op)
-                    t.metadata.id == 146713 && println("I")
                     return Nullable{Int}()
                 end
             else
                 if !is_intron_compatible(c.op)
-                    t.metadata.id == 146713 && println("J")
                     return Nullable{Int}()
                 end
                 # TODO: why not increment e2 here?
@@ -460,17 +437,11 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                 e.last - c.first < max_allowable_encroachment
                 c2 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
             else
-                t.metadata.id == 146713 && println("K")
                 return Nullable{Int}()
             end
 
         # case 5: c precedes and partially overlaps e
         else
-            if t.metadata.id == 146713
-                @show c
-                @show e
-            end
-            t.metadata.id == 146713 && println("L")
             return Nullable{Int}()
         end
     end
@@ -481,7 +452,6 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     end
 
     if !isnull(c2)
-        t.metadata.id == 146713 && println("M")
         return Nullable{Int}()
     end
 
@@ -489,32 +459,9 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     fraglen = max(a1_.rightpos, a2_.rightpos) -
               min(a1_.leftpos, a2_.leftpos) + 1 - intronlen
 
-    if t.metadata.id == 146713 && fraglen > 2000
-
-        @show (intronlen, e2_sup_e1, max(a1_.rightpos, a2_.rightpos), min(a1_.leftpos, a2_.leftpos))
-
-        cigar1 = collect(CigarIter(rs, a1_))
-        cigar2 = collect(CigarIter(rs, a2_))
-        @show cigar1
-        @show cigar2
-        @show e1
-        @show e2
-    end
-
     if fraglen > 0
-        #if t.metadata.id == 146713
-            #@show (fraglen, intronlen, e2_sup_e1, max(a1_.rightpos, a2_.rightpos), min(a1_.leftpos, a2_.leftpos))
-            #cigar1 = collect(CigarIter(rs, a1_))
-            #cigar2 = collect(CigarIter(rs, a2_))
-            #@show cigar1
-            #@show cigar2
-            #@show e1
-            #@show e2
-        #end
-        #t.metadata.id == 146713 && println("N")
         return Nullable{Int}(fraglen)
     else
-        t.metadata.id == 146713 && println("O")
         return Nullable{Int}()
     end
 end

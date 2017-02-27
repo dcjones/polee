@@ -17,7 +17,6 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
     end
 end
 
-# TODO: I also need to pass in effective lengths now
 function approximate_likelihood_from_isolator(input_filename,
                                               effective_lengths_filename,
                                               output_filename)
@@ -164,10 +163,8 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ω_α = 0.1
     ss_μ_α = 0.01
     ss_η = 1.0
-    #ss_max_μ_step = 1e-1
-    #ss_max_ω_step = 1e-1
-    ss_max_μ_step = 1e-2
-    ss_max_ω_step = 1e-2
+    ss_max_μ_step = 1e-1
+    ss_max_ω_step = 1e-1
     srand(4324)
 
     # number of monte carlo samples to estimate gradients an elbo at each
@@ -254,8 +251,8 @@ function approximate_likelihood(s::RNASeqSample)
         elbo += normal_entropy!(ω_grad, σ, n-1)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        #@printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
-        @printf("Optimizing ELBO: %.4e\n", elbo)
+        @printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
+        #@printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2

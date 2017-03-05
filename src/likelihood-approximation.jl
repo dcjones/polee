@@ -12,8 +12,8 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
-        out["mu", "compress", 1] = μ[1:n]
-        out["sigma", "compress", 1] = σ[1:n]
+        out["mu", "compress", 1] = μ[1:n-1]
+        out["sigma", "compress", 1] = σ[1:n-1]
     end
 end
 
@@ -97,8 +97,8 @@ function approximate_likelihood_from_isolator(input_filename,
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
-        out["mu", "compress", 1] = μ[1:n]
-        out["sigma", "compress", 1] = σ[1:n]
+        out["mu", "compress", 1] = μ[1:n-1]
+        out["sigma", "compress", 1] = σ[1:n-1]
     end
 end
 

@@ -35,6 +35,15 @@ include("estimate.jl")
 
 
 function read_transcript_sequences!(ts, filename)
+    if endswith(filename, ".2bit")
+        read_transcript_sequences_from_twobit!(ts, filename)
+    else
+        read_transcript_sequences_from_fasta!(ts, filename)
+    end
+end
+
+
+function read_transcript_sequences_from_fasta!(ts, filename)
     prog = Progress(filesize(filename), 0.25, "Reading sequences ", 60)
     reader = open(FASTAReader, filename)
     entry = eltype(reader)()
@@ -57,6 +66,31 @@ function read_transcript_sequences!(ts, filename)
         end
     end
     finish!(prog)
+end
+
+
+function read_transcript_sequences_from_twobit!(ts, filename)
+    reader = open(TwoBitReader, filename)
+    prog = Progress(length(ts.trees), 0.25, "Reading sequences ", 60)
+
+    for (i, (name, tree)) in enumerate(ts.trees)
+        update!(prog, i)
+        local refseq
+        try
+            refseq = reader[name].seq
+        catch
+            continue
+        end
+
+        for t in tree
+            seq = t.metadata.seq
+            for exon in t.metadata.exons
+                if exon.last <= length(refseq)
+                    append!(seq, DNASequence(refseq[exon.first:exon.last]))
+                end
+            end
+        end
+    end
 end
 
 

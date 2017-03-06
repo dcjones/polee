@@ -15,6 +15,7 @@ function estimate(input_filename, output_filename)
     @pyimport edward as ed
     @pyimport edward.models as edmodels
     @pyimport rnaseq_approx_likelihood
+    @pyimport hmc2
 
     input = h5open(input_filename, "r")
     scale_σ = 1.0 # TODO: I honestly have no idea what this should be
@@ -35,7 +36,7 @@ function estimate(input_filename, output_filename)
             scale_sigma=scale_σ,
             value=tf.zeros([n]))
 
-    # choose initial values
+    # choose initial values by transforming means
     initial_values = zeros(Float32, n)
     work1 = Array(Float32, n)
     work2 = Array(Float32, n)
@@ -46,13 +47,13 @@ function estimate(input_filename, output_filename)
     simplex!(n, initial_values, work1, work2, work3, work4, work5, μ)
     map!(log, initial_values)
 
-    num_samples = 50
+    num_samples = 1000
+    #num_samples = 200
     samples = tf.concat([tf.expand_dims(initial_values, 0),
                          tf.zeros([num_samples, n])], axis=0)
     qpi = edmodels.Empirical(params=tf.Variable(samples))
 
-    inference = ed.HMC(PyDict(Dict(pi => qpi)))
-    inference[:run](step_size=0.0001)
-    #inference[:run](step_size=0.000001)
+    inference = hmc2.HMC2(PyDict(Dict(pi => qpi)))
+    inference[:run](step_size=0.00005, n_steps=2)
 end
 

@@ -59,7 +59,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         ll = self._expr_dist.log_pdf(x)
         scale_lp = self._scale_dist.log_pdf(scale)
 
-        ll = tf.Print(ll, [ll], message="log-likelihood")
+        # ll = tf.Print(ll, [ll], message="log-likelihood")
         # scale_lp = tf.Print(scale_lp, [scale_lp], message="scale_lp")
 
         # return self._expr_dist.log_pdf(y[:-1])

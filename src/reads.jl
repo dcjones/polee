@@ -77,8 +77,15 @@ end
 
 function Reads(filename::String)
     prog_step = 1000
-    prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
-    reader = open(BAMReader, filename)
+    if filename == "-"
+        prog = Progress(0, 0.25, "Reading BAM file ", 60)
+        reader = BAMReader(STDIN)
+        from_file = false
+    else
+        prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
+        reader = open(BAMReader, filename)
+        from_file = true
+    end
     entry = eltype(reader)()
     readnames = HatTrie()
     alignments = Alignment[]
@@ -88,7 +95,7 @@ function Reads(filename::String)
 
     i = 0
     while !isnull(tryread!(reader, entry))
-        if (i += 1) % prog_step == 0
+        if from_file && (i += 1) % prog_step == 0
             update!(prog, position(reader.stream.io))
         end
 

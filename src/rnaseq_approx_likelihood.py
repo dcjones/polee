@@ -4,7 +4,6 @@ from tensorflow.contrib import distributions
 from tensorflow.contrib import framework
 import edward
 
-# TODO: Ok, I guess this really dose have to be written with batching in mind.
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
     def __init__(self, mu, sigma, scale_sigma,
@@ -34,7 +33,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
               graph_parents=[self._mu, self._sigma, self._scale_sigma])
 
     def _get_event_shape(self):
-        return tf.TensorShape(self._mu.get_shape()[0] + 1)
+        return tf.TensorShape(self._mu.get_shape()[-1] + 1)
 
     def _get_batch_shape(self):
         return self._mu.get_shape()[:-1]
@@ -42,15 +41,11 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
     def _log_prob(self, y):
         n = self._mu.get_shape()[-1] + 1
         expy = tf.exp(y)
-        # expy = tf.Print(expy, [tf.reduce_min(expy), tf.reduce_max(expy)],
-                        # message="EXPY", first_n=-1, summarize=10)
-
-        scale = tf.reduce_sum(expy, axis=[-1])
-        # scale = tf.Print(scale, [scale], message="SCALE", first_n=5)
+        scale = tf.reduce_sum(expy, axis=-1)
 
         # expy_trailing_sum[i] = sum_{k=i}^{n} expy[k]
-        expy_trailing_sum = tf.cumsum(expy, axis=-1, reverse=True)[:-1]
-        scaled_expy = tf.divide(expy[:-1], expy_trailing_sum)
+        expy_trailing_sum = tf.cumsum(expy, axis=-1, reverse=True)[...,:-1]
+        scaled_expy = tf.divide(expy[...,:-1], expy_trailing_sum)
 
         # centering = 1 / (n - i)
         centering = tf.divide(1.0, tf.to_float(tf.range(n - 1, 0, -1)))
@@ -59,11 +54,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         ll = self._expr_dist.log_pdf(x)
         scale_lp = self._scale_dist.log_pdf(scale)
 
-        # ll = tf.Print(ll, [ll], message="log-likelihood")
-        # scale_lp = tf.Print(scale_lp, [scale_lp], message="scale_lp")
-
-        # return self._expr_dist.log_pdf(y[:-1])
-        # return self._expr_dist.log_pdf(x)
         return ll + scale_lp
 
 

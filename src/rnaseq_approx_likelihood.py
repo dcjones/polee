@@ -6,41 +6,36 @@ import edward
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, mu, sigma, scale_sigma,
+    def __init__(self, y,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
 
-        with tf.name_scope(name, values=[mu, sigma, scale_sigma]) as ns:
-            self._mu = tf.identity(mu, name="mu")
-            self._sigma = tf.identity(sigma, name="sigma")
-            self._scale_sigma = tf.identity(scale_sigma, name="scale_sigma")
-            framework.assert_same_float_dtype([self._mu, self._sigma,
-                                               self._scale_sigma])
+        with tf.name_scope(name, values=[y]) as ns:
+            self.y = tf.identity(y, name="y")
+            framework.assert_same_float_dtype([self.y])
         parameters = locals()
 
-        # TODO: Should scale_mu really be 0?
-        self._scale_dist = distributions.Normal(0.0, self._scale_sigma)
-        self._expr_dist = distributions.MultivariateNormalDiag(self._mu, self._sigma)
-
         super(RNASeqApproxLikelihoodDist, self).__init__(
-              dtype=self._mu.dtype,
+              dtype=self.y.dtype,
               validate_args=validate_args,
               allow_nan_stats=allow_nan_stats,
               is_continuous=True,
               is_reparameterized=False,
               parameters=parameters,
-              graph_parents=[self._mu, self._sigma, self._scale_sigma])
+              graph_parents=[self.y,])
 
     def _get_event_shape(self):
-        return tf.TensorShape(self._mu.get_shape()[-1] + 1)
+        return tf.TensorShape([2, self.y.get_shape()[-1] - 1])
 
     def _get_batch_shape(self):
-        return self._mu.get_shape()[:-1]
+        return self.y.get_shape()[:-1]
 
-    def _log_prob(self, y):
-        n = self._mu.get_shape()[-1] + 1
-        expy = tf.exp(y)
+    def _log_prob(self, musigma):
+        # Fuck, we gotta make this a [m, 2, n-1]
+
+        n = self.y.get_shape()[-1]
+        expy = tf.exp(self.y)
         scale = tf.reduce_sum(expy, axis=-1)
 
         # expy_trailing_sum[i] = sum_{k=i}^{n} expy[k]
@@ -51,10 +46,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         centering = tf.divide(1.0, tf.to_float(tf.range(n - 1, 0, -1)))
         x = tf.log(scaled_expy) - tf.log(1 - scaled_expy) - centering
 
-        ll = self._expr_dist.log_pdf(x)
-        scale_lp = self._scale_dist.log_pdf(scale)
-
-        return ll + scale_lp
+        mu    = musigma[...,0,:]
+        sigma = musigma[...,1,:]
+        return distributions.MultivariateNormalDiag(mu, sigma).log_pdf(x)
 
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):

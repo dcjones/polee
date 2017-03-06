@@ -169,7 +169,7 @@ function Reads(filename::String)
         m1 = m2 = 0
         strand = STRAND_BOTH
         if i == j
-            if alignments[i].flag & SAM_FLAG_READ2
+            if alignments[i].flag & SAM_FLAG_READ2 != 0
                 m2 = i
             else
                 m1 = i

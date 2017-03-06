@@ -1,59 +1,87 @@
+# TODO: use Pkg.dir when we make this an actual package
+unshift!(PyVector(pyimport("sys")["path"]), "/home/dcjones/prj/extruder/src")
+@pyimport tensorflow as tf
+@pyimport edward as ed
+@pyimport edward.models as edmodels
+@pyimport rnaseq_approx_likelihood
+@pyimport hmc2
 
+function load_samples(filenames)
+    n = nothing
 
-function load_sample(filename)
-    # TODO:
-    # Read yaml file.
-    # Generate a MultivariateNormalDiag models along with metadata used for
-    # model design.
+    musigma_tensors = []
+    y0_tensors = []
+
+    # work vectors for simplex!
+    work1 = Array(Float32, 0)
+    work2 = Array(Float32, 0)
+    work3 = Array(Float32, 0)
+    work4 = Array(Float32, 0)
+    work5 = Array(Float32, 0)
+
+    for filename in filenames
+        input = h5open(filename, "r")
+
+        n_ = read(input["n"])
+        if n == nothing
+            n = n_
+            work1 = Array(Float32, n)
+            work2 = Array(Float32, n)
+            work3 = Array(Float32, n)
+            work4 = Array(Float32, n)
+            work5 = Array(Float32, n)
+        elseif n != n_
+            error("Prepare sample was run with different transcript annotations on some samples.")
+        end
+
+        μ = read(input["mu"])
+        σ = read(input["sigma"])
+
+        close(input)
+
+        @assert length(μ) == n - 1
+        @assert length(σ) == n - 1
+
+        push!(musigma_tensors,
+              tf.stack([tf.constant(PyVector(μ)), tf.constant(PyVector(σ))]))
+
+        # choose mean to be the initial values for y
+        initial_values = Array(Float32, n)
+        simplex!(n, initial_values, work1, work2, work3, work4, work5, μ)
+        map!(log, initial_values)
+        push!(y0_tensors, initial_values)
+
+    end
+
+    musigma = tf.stack(musigma_tensors)
+    y0 = tf.stack(y0_tensors)
+
+    return (n, musigma, y0)
 end
 
 
 function estimate(input_filename, output_filename)
-    # TODO: use Pkg.dir when we make this an actual package
-    unshift!(PyVector(pyimport("sys")["path"]), "/home/dcjones/prj/extruder/src")
-    @pyimport tensorflow as tf
-    @pyimport edward as ed
-    @pyimport edward.models as edmodels
-    @pyimport rnaseq_approx_likelihood
-    @pyimport hmc2
 
-    input = h5open(input_filename, "r")
-    scale_σ = 1.0 # TODO: I honestly have no idea what this should be
-    n = read(input["n"])
-    μ = read(input["mu"])
-    σ = read(input["sigma"])
-    @assert length(μ) == n - 1
-    @assert length(σ) == n - 1
+    # TODO: multiple samples
+    num_samples = 1
+    n, musigma_data, y0 = load_samples([input_filename])
 
-    @show minimum(μ)
-    @show maximum(μ)
-    @show μ[1]
-    @show μ[end]
+    # TODO: actually interesting model
+    mu0 = 0.0
+    sigma0 = 10.0
+    y = edmodels.MultivariateNormalDiag(tf.fill([num_samples, n], mu0),
+                                        tf.fill([num_samples, n], sigma0))
+    musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(y=y,
+                                                              value=musigma_data)
 
-    pi = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-            mu=tf.constant(PyVector(μ)),
-            sigma=tf.constant(PyVector(σ)),
-            scale_sigma=scale_σ,
-            value=tf.zeros([n]))
+    #iterations = 1000
+    iterations = 50
+    samples = tf.concat([tf.expand_dims(y0, 0),
+                         tf.zeros([iterations, num_samples, n])], axis=0)
+    qy = edmodels.Empirical(params=tf.Variable(samples))
 
-    # choose initial values by transforming means
-    initial_values = zeros(Float32, n)
-    work1 = Array(Float32, n)
-    work2 = Array(Float32, n)
-    work3 = Array(Float32, n)
-    work4 = Array(Float32, n)
-    work5 = Array(Float32, n)
-
-    simplex!(n, initial_values, work1, work2, work3, work4, work5, μ)
-    map!(log, initial_values)
-
-    num_samples = 1000
-    #num_samples = 200
-    samples = tf.concat([tf.expand_dims(initial_values, 0),
-                         tf.zeros([num_samples, n])], axis=0)
-    qpi = edmodels.Empirical(params=tf.Variable(samples))
-
-    inference = hmc2.HMC2(PyDict(Dict(pi => qpi)))
+    inference = hmc2.HMC2(PyDict(Dict(y => qy)),
+                          data=PyDict(Dict(musigma => musigma_data)))
     inference[:run](step_size=0.00005, n_steps=2)
 end
 

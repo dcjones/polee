@@ -6,10 +6,13 @@ import edward
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, y,
+    def __init__(self, y, scale_mu0, scale_sigma0,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
+
+        self.scale_mu0 = scale_mu0
+        self.scale_sigma0 = scale_sigma0
 
         with tf.name_scope(name, values=[y]) as ns:
             self.y = tf.identity(y, name="y")
@@ -48,7 +51,11 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         mu    = musigma[...,0,:]
         sigma = musigma[...,1,:]
-        return distributions.MultivariateNormalDiag(mu, sigma).log_pdf(x)
+
+        ll = distributions.MultivariateNormalDiag(mu, sigma).log_pdf(x)
+        scale_lp = distributions.Normal(self.scale_mu0, self.scale_sigma0).log_pdf(scale)
+
+        return ll + scale_lp
 
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):

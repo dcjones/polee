@@ -168,11 +168,11 @@ function main()
         @add_arg_table arg_settings begin
             "--output", "-o"
                 default = "results.h5"
-            "prepared_sample"
+            "experiment"
                 required = true
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
-        estimate(parsed_args["prepared_sample"],
+        estimate(parsed_args["experiment"],
                  parsed_args["output"])
         return
     elseif subcmd == "likelihood-approx-from-isolator"

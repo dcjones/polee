@@ -58,7 +58,7 @@ class HMC2(MonteCarlo):
     self.log_adapted_step_size = tf.Variable(math.log(step_size), trainable=False)
     self.n_steps = n_steps
     self.target_accept_rate = 0.8
-    self.step_size_adapt_iterations = 50
+    self.step_size_adapt_iterations = 100
     self.step_size_stabization = 10.0
     self.step_size_shrinkage_point = math.log(10*step_size)
     self.step_size_shrinkage_rate = 0.05

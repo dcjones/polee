@@ -60,28 +60,35 @@ function load_samples(filenames)
 end
 
 
-function estimate(input_filename, output_filename)
+function estimate(experiment_spec_filename, output_filename)
 
-    # TODO: multiple samples
-    num_samples = 1
-    n, musigma_data, y0 = load_samples([input_filename])
+    experiment_spec = YAML.load_file(experiment_spec_filename)
+    filenames = [entry["filename"] for entry in experiment_spec]
+    num_samples = length(filenames)
+
+    n, musigma_data, y0 = load_samples(filenames)
+
+    scale_mu0 = 0.0
+    scale_sigma0 = 1.5
 
     # TODO: actually interesting model
     mu0 = 0.0
     sigma0 = 10.0
-    y = edmodels.MultivariateNormalDiag(tf.fill([num_samples, n], mu0),
-                                        tf.fill([num_samples, n], sigma0))
-    musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(y=y,
-                                                              value=musigma_data)
+    y = edmodels.MultivariateNormalDiag(tf.constant(mu0, shape=[num_samples, n]),
+                                        tf.constant(sigma0, shape=[num_samples, n]))
+
+    musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+                y=y, scale_mu0=scale_mu0, scale_sigma0=scale_sigma0,
+                value=musigma_data)
 
     #iterations = 1000
-    iterations = 50
+    iterations = 100
     samples = tf.concat([tf.expand_dims(y0, 0),
                          tf.zeros([iterations, num_samples, n])], axis=0)
-    qy = edmodels.Empirical(params=tf.Variable(samples))
+    qy = edmodels.Empirical(params=tf.Variable(samples, trainable=false))
 
     inference = hmc2.HMC2(PyDict(Dict(y => qy)),
                           data=PyDict(Dict(musigma => musigma_data)))
-    inference[:run](step_size=0.00005, n_steps=2)
+    inference[:run](step_size=0.00005, n_steps=2, logdir="logs")
 end
 

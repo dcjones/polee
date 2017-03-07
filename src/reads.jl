@@ -1,7 +1,10 @@
 
+
+# Don't consider read pairs more than this far apart
+const MAX_PAIR_DISTANCE = 500000
+
 immutable Alignment
     id::UInt32
-    hitnum::Int32
     refidx::Int32
     leftpos::Int32
     rightpos::Int32
@@ -56,7 +59,8 @@ typealias AlignmentPair Interval{AlignmentPairMetadata}
 
 
 function Base.isless(a::Alignment, b::Alignment)
-    return a.id < b.id || (a.id == b.id && a.hitnum < b.hitnum)
+    return a.id < b.id ||
+        (a.id == b.id && (a.flag & SAM_FLAG_READ2) < (b.flag & SAM_FLAG_READ2))
 end
 
 
@@ -117,18 +121,8 @@ function Reads(filename::String)
                          cigarptr, cigarlen)
         end
 
-        hitnum = 0
-        aux = Align.optional_fields(entry)
-        try
-            hitnum = aux["HI"]
-        catch ex
-            if !isa(ex, KeyError)
-                rethrow()
-            end
-        end
-
         id = get!(readnames, seqname(entry), length(readnames) + 1)
-        push!(alignments, Alignment(id, hitnum, entry.refid + 1,
+        push!(alignments, Alignment(id, entry.refid + 1,
                                     _leftposition(entry), _rightposition(entry),
                                     flag(entry), cigaridx))
     end
@@ -151,54 +145,63 @@ function Reads(filename::String)
             next!(prog)
         end
 
-        j = i
-        while j + 1 <= length(alignments) &&
-                alignments[i].id == alignments[j+1].id &&
-                alignments[i].hitnum == alignments[j+1].hitnum
-            j += 1
+        j1 = i
+        while j1 + 1 <= length(alignments) &&
+              alignments[i].id == alignments[j1+1].id &&
+              (alignments[j1+1].flag & SAM_FLAG_READ2) == 0
+            j1 += 1
         end
 
-        if j > i + 1
-            error("Alignment with more than two mates found.")
+        j2 = j1
+        while j2 + 1 <= length(alignments) &&
+              alignments[i].id == alignments[j2+1].id
+            j2 += 1
         end
+
+        # now i:j1 are mate1 alignments, and j1+1:j2 are mate2 alignments
 
         seqname = seqnames[alignments[i].refidx]
-        minpos = min(alignments[i].leftpos, alignments[j].leftpos)
-        maxpos = max(alignments[i].rightpos, alignments[j].rightpos)
 
-        m1 = m2 = 0
-        strand = STRAND_BOTH
-        if i == j
-            if alignments[i].flag & SAM_FLAG_READ2 != 0
-                m2 = i
-            else
-                m1 = i
+        # examine every potential mate1, mate2 pair
+        for k1 in i:j1
+            m1 = alignments[k1]
+            for k2 in j1+1:j2
+                m2 = alignments[k2]
+
+                if m1.refidx != m2.refidx ||
+                   (m1.flag & SAM_FLAG_REVERSE) == (m2.flag & SAM_FLAG_REVERSE)
+                    continue
+                end
+
+                minpos = min(m1.leftpos, m2.leftpos)
+                maxpos = max(m1.rightpos, m2.rightpos)
+
+                if maxpos - minpos > MAX_PAIR_DISTANCE
+                    continue
+                end
+
+                strand = m1.flag & SAM_FLAG_REVERSE != 0 ? STRAND_NEG : STRAND_POS
+
+                alnpr = AlignmentPair(
+                    seqname, minpos, maxpos, strand,
+                    AlignmentPairMetadata(k1, k2))
+                push!(alignment_pairs, alnpr)
             end
-        elseif alignments[i].flag & SAM_FLAG_READ1 != 0 &&
-               alignments[j].flag & SAM_FLAG_READ2 != 0
-            m1, m2 = i, j
-        elseif alignments[i].flag & SAM_FLAG_READ2 != 0 &&
-               alignments[j].flag & SAM_FLAG_READ1 != 0
-            m1, m2 = j, i
-        else
-            error("Alignment pair has incorrect flags set.")
         end
 
-        if m1 > 0
-            strand = alignments[m1].flag & SAM_FLAG_REVERSE != 0 ?
-                STRAND_NEG : STRAND_POS
-        elseif m2 > 2
-            strand = alignments[m2].flag & SAM_FLAG_REVERSE != 0 ?
-                STRAND_POS : STRAND_NEG
+        # handle single-end reads
+        if isempty(j1+1:j2)
+            for k in i:j1
+                m = alignments[k]
+                if m.flag & SAM_FLAG_READ1 != 0
+                    continue
+                end
+
+                # TODO
+            end
         end
 
-        # Try excluding unpaired reads
-        alnpr = AlignmentPair(
-            seqname, minpos, maxpos, strand,
-            AlignmentPairMetadata(m1, m2))
-        push!(alignment_pairs, alnpr)
-
-        i = j + 1
+        i = j2 + 1
     end
     finish!(prog)
 

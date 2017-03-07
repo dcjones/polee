@@ -104,6 +104,8 @@ class HMC2(MonteCarlo):
                             for r in six.itervalues(new_r_sample)])
     ratio += self._log_joint(new_sample)
     ratio -= self._log_joint(old_sample)
+
+    ratio = tf.where(tf.is_nan(ratio), -math.inf, ratio)
     ratio = tf.minimum(0.0, ratio)
 
     # Accept or reject sample.
@@ -150,6 +152,7 @@ class HMC2(MonteCarlo):
     log_adapted_step_size_update = \
             step_size_delta * log_step_size_update + \
             (1.0 - step_size_delta) * self.log_adapted_step_size
+
     # log_adapted_step_size_update = tf.Print(log_adapted_step_size_update, [tf.exp(log_adapted_step_size_update)], message="Adapted Step Size")
 
     assign_ops.append(tf.assign(self.accept_rate_fit, accept_rate_fit_update))

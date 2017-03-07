@@ -89,6 +89,6 @@ function estimate(experiment_spec_filename, output_filename)
 
     inference = hmc2.HMC2(PyDict(Dict(y => qy)),
                           data=PyDict(Dict(musigma => musigma_data)))
-    inference[:run](step_size=0.00005, n_steps=2, logdir="logs")
+    inference[:run](step_size=0.00001, n_steps=2, logdir="logs")
 end
 

@@ -81,8 +81,10 @@ function estimate(experiment_spec_filename, output_filename)
                 y=y, scale_mu0=scale_mu0, scale_sigma0=scale_sigma0,
                 value=musigma_data)
 
-    #iterations = 1000
-    iterations = 100
+    iterations = 1000
+
+    # Sampling
+    #=
     samples = tf.concat([tf.expand_dims(y0, 0),
                          tf.zeros([iterations, num_samples, n])], axis=0)
     qy = edmodels.Empirical(params=tf.Variable(samples, trainable=false))
@@ -90,5 +92,13 @@ function estimate(experiment_spec_filename, output_filename)
     inference = hmc2.HMC2(PyDict(Dict(y => qy)),
                           data=PyDict(Dict(musigma => musigma_data)))
     inference[:run](step_size=0.00001, n_steps=2, logdir="logs")
+    =#
+
+    # VI
+    qy_mu = tf.Variable(tf.random_normal([num_samples, n]))
+    qy_sigma = tf.nn[:softplus](tf.Variable(tf.random_normal([num_samples, n])))
+    qy = edmodels.MultivariateNormalDiag(qy_mu, qy_sigma)
+    inference = ed.KLqp(Dict(y=> qy), data=PyDict(Dict(musigma => musigma_data)))
+    inference[:run](n_iter=iterations)
 end
 

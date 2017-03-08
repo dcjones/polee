@@ -63,7 +63,8 @@ end
 function estimate(experiment_spec_filename, output_filename)
 
     experiment_spec = YAML.load_file(experiment_spec_filename)
-    filenames = [entry["filename"] for entry in experiment_spec]
+    names = [entry["name"] for entry in experiment_spec]
+    filenames = [entry["file"] for entry in experiment_spec]
     num_samples = length(filenames)
 
     n, musigma_data, y0 = load_samples(filenames)
@@ -82,6 +83,7 @@ function estimate(experiment_spec_filename, output_filename)
                 value=musigma_data)
 
     iterations = 1000
+    #iterations = 50
 
     # Sampling
     #=
@@ -98,7 +100,22 @@ function estimate(experiment_spec_filename, output_filename)
     qy_mu = tf.Variable(tf.random_normal([num_samples, n]))
     qy_sigma = tf.nn[:softplus](tf.Variable(tf.random_normal([num_samples, n])))
     qy = edmodels.MultivariateNormalDiag(qy_mu, qy_sigma)
-    inference = ed.KLqp(Dict(y=> qy), data=PyDict(Dict(musigma => musigma_data)))
+    datadict = PyDict(Dict(musigma => musigma_data))
+    inference = ed.KLqp(Dict(y=> qy), data=datadict)
     inference[:run](n_iter=iterations)
+
+    # Evaluate posterior means
+    sess = ed.get_session()
+    post_mean = sess[:run](tf.nn[:softmax](qy_mu, dim=-1))
+
+    open("post_mean.csv", "w") do output
+        # TODO: where do we get the transcript names from?
+        println(output, "name,id,tpm")
+        for (i, name) in enumerate(names)
+            for j in 1:n
+                println(output, name, ",", j, ",", 1e6 * post_mean[i, j])
+            end
+        end
+    end
 end
 

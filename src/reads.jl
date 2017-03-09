@@ -312,6 +312,8 @@ macro fragmentlength_next_exonintron!(exons, idx, is_exon, first, last)
             if $(esc(idx)) + 1 <= length(exons)
                 $(esc(first)) = $(esc(exons))[$(esc(idx))].last + 1
                 $(esc(last)) = $(esc(exons))[$(esc(idx))+1].first - 1
+            else
+                $(esc(idx)) += 1
             end
         else
             $(esc(idx)) += 1

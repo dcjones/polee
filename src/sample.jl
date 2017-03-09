@@ -34,8 +34,8 @@ function RNASeqSample(transcripts_filename::String,
                       reads_filename::String,
                       output=Nullable{String}())
 
-    rs = Reads(reads_filename)
     ts = Transcripts(transcripts_filename)
+    rs = Reads(reads_filename, ts)
     read_transcript_sequences!(ts, genome_filename)
     fm = FragModel(rs, ts)
 

@@ -79,7 +79,7 @@ function cigar_from_ptr(data::Ptr{UInt32}, i)
 end
 
 
-function Reads(filename::String)
+function Reads(filename::String, ts::Transcripts)
     if filename == "-"
         reader = BAMReader(STDIN)
         prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
@@ -89,17 +89,25 @@ function Reads(filename::String)
         prog = Progress(0, 0.25, "Reading BAM file ", 60)
         from_file = true
     end
-    return Reads(reader, prog, from_file)
+    return Reads(reader, prog, from_file, ts)
 end
 
 
-function Reads(reader::BAMReader, prog::Progress, from_file::Bool)
+function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
+               ts::Transcripts)
     prog_step = 1000
     entry = eltype(reader)()
     readnames = HatTrie()
     alignments = Alignment[]
     cigardata = UInt32[]
-    # intern sequence names
+
+    # don't bother with reads from sequences with no transcripts
+    nonvacant_seqs = IntSet()
+    for (refidx, seqname) in enumerate(reader.refseqnames)
+        if haskey(ts.trees, seqname)
+            push!(nonvacant_seqs, refidx)
+        end
+    end
 
     i = 0
     while !isnull(tryread!(reader, entry))
@@ -108,6 +116,10 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool)
         end
 
         if !ismapped(entry)
+            continue
+        end
+
+        if !(entry.refid + 1 in nonvacant_seqs)
             continue
         end
 

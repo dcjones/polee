@@ -31,7 +31,7 @@ Build an RNASeqSample from scratch.
 """
 function RNASeqSample(transcripts_filename::String,
                       genome_filename::String,
-                      reads_filename::String;
+                      reads_filename::String,
                       output=Nullable{String}())
 
     rs = Reads(reads_filename)
@@ -51,6 +51,7 @@ function RNASeqSample(transcripts_filename::String,
     MIN_FRAG_PROB = 1e-10
 
     # reassign indexes to alignments to group by position
+    tic()
     aln_idx_map = Dict{Int, Int}()
     for alnpr in rs.alignment_pairs
         if alnpr.metadata.mate1_idx > 0
@@ -66,6 +67,7 @@ function RNASeqSample(transcripts_filename::String,
     for (tid, t) in enumerate(ts)
         t.metadata.id = tid
     end
+    toc()
 
     tic()
     for (t, alnpr) in intersect(ts, rs.alignment_pairs)

@@ -16,6 +16,11 @@ function Base.isless(a::Exon, b::Exon)
 end
 
 
+function Base.isless(a::Interval, b::Exon)
+    return a.first < b.first
+end
+
+
 type TranscriptMetadata
     name::StringField
     id::Int
@@ -124,7 +129,7 @@ function Base.start(it::ExonIntronIter)
 end
 
 
-function Base.next(it::ExonIntronIter, state::Tuple{Int, Bool})
+@inline function Base.next(it::ExonIntronIter, state::Tuple{Int, Bool})
     i, isexon = state
     if isexon
         ex = it.t.metadata.exons[i]
@@ -136,7 +141,7 @@ function Base.next(it::ExonIntronIter, state::Tuple{Int, Bool})
 end
 
 
-function Base.done(it::ExonIntronIter, state::Tuple{Int, Bool})
+@inline function Base.done(it::ExonIntronIter, state::Tuple{Int, Bool})
     return state[1] == length(it.t.metadata.exons) && !state[2]
 end
 

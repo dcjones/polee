@@ -80,22 +80,26 @@ end
 
 
 function Reads(filename::String)
-    prog_step = 1000
     if filename == "-"
-        prog = Progress(0, 0.25, "Reading BAM file ", 60)
         reader = BAMReader(STDIN)
+        prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
         from_file = false
     else
-        prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
         reader = open(BAMReader, filename)
+        prog = Progress(0, 0.25, "Reading BAM file ", 60)
         from_file = true
     end
+    return Reads(reader, prog, from_file)
+end
+
+
+function Reads(reader::BAMReader, prog::Progress, from_file::Bool)
+    prog_step = 1000
     entry = eltype(reader)()
     readnames = HatTrie()
     alignments = Alignment[]
     cigardata = UInt32[]
     # intern sequence names
-    seqnames = Dict{String, String}()
 
     i = 0
     while !isnull(tryread!(reader, entry))
@@ -242,7 +246,7 @@ function Base.start(ci::CigarIter)
 end
 
 
-function Base.next(ci::CigarIter, state::Tuple{Int, Int32})
+@inline function Base.next(ci::CigarIter, state::Tuple{Int, Int32})
     i, pos = state
     if i == 1 && length(ci.aln.cigaridx) <= 0
         return (CigarInterval(ci.aln.leftpos, ci.aln.rightpos, OP_MATCH),
@@ -258,7 +262,7 @@ function Base.next(ci::CigarIter, state::Tuple{Int, Int32})
 end
 
 
-function Base.done(ci::CigarIter, state::Tuple{Int, Int32})
+@inline function Base.done(ci::CigarIter, state::Tuple{Int, Int32})
     i, pos = state
     return i > cigar_len(ci.aln)
 end
@@ -287,6 +291,23 @@ end
 
 function is_intron_compatible(op::Operation)
     return op == OP_SKIP || op == OP_SOFT_CLIP
+end
+
+
+macro fragmentlength_next_exonintron!(exons, idx, is_exon, first, last)
+    quote
+        if $(esc(is_exon))
+            if $(esc(idx)) + 1 <= length(exons)
+                $(esc(first)) = $(esc(exons))[$(esc(idx))].last + 1
+                $(esc(last)) = $(esc(exons))[$(esc(idx))+1].first - 1
+            end
+        else
+            $(esc(idx)) += 1
+            $(esc(first)) = $(esc(exons))[$(esc(idx))].first
+            $(esc(last)) = $(esc(exons))[$(esc(idx))].last
+        end
+        $(esc(is_exon)) = !$(esc(is_exon))
+    end
 end
 
 
@@ -327,11 +348,13 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     c1 = Nullable{CigarInterval}()
     @next!(CigarInterval, c1, c1_iter, c1_state)
 
-    e1_iter = ExonIntronIter(t)
-    e1_state = start(e1_iter)
-    e1 = Nullable{ExonIntron}()
-    @next!(ExonIntron, e1, e1_iter, e1_state)
+    exons = t.metadata.exons
+    first_exon_idx = searchsortedlast(exons, alnpr)
+    e1_idx = first_exon_idx
+    e1_isexon = true
+    e1_first, e1_last = exons[e1_idx].first, exons[e1_idx].last
 
+    # amount of intronic dna spanned by the fragment
     intronlen = 0
 
     # skip any leading soft clipping
@@ -339,17 +362,17 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         @next!(CigarInterval, c1, c1_iter, c1_state)
     end
 
-    while !isnull(e1) && !isnull(c1)
+    while e1_idx <= length(exons) && !isnull(c1)
         c = get(c1)
-        e = get(e1)
 
         # case 1: e entirely precedes
-        if e.last < c.first
-            @next!(ExonIntron, e1, e1_iter, e1_state)
+        if e1_last < c.first
+            @fragmentlength_next_exonintron!(exons, e1_idx, e1_isexon,
+                                             e1_first, e1_last)
 
         # case 2: c is contained within e
-        elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
-            if e.isexon
+        elseif c.last >= e1_first && c.last <= e1_last && c.first >= e1_first
+            if e1_isexon
                 if !is_exon_compatible(c.op)
                     return Nullable{Int}()
                 end
@@ -357,8 +380,7 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                 if !is_intron_compatible(c.op)
                     return Nullable{Int}()
                 end
-                intronlen += length(e)
-                @next!(ExonIntron, e1, e1_iter, e1_state)
+                intronlen += e1_last - e1_first + 1
             end
             @next!(CigarInterval, c1, c1_iter, c1_state)
 
@@ -367,12 +389,12 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
             @next!(CigarInterval, c1, c1_iter, c1_state)
 
         # case 4: match op overhangs into an intron a little
-        elseif c.last > e.last && c.op == OP_MATCH
-            if e.isexon && c.last - e.last <= max_allowable_encroachment
-                c1 = Nullable(CigarInterval(c.first, e.last, c.op))
-            elseif !e.isexon && e.last >= c.first &&
-                   e.last - c.first < max_allowable_encroachment
-                c1 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
+        elseif c.last > e1_last && c.op == OP_MATCH
+            if e1_isexon && c.last - e1_last <= max_allowable_encroachment
+                c1 = Nullable(CigarInterval(c.first, e1_last, c.op))
+            elseif !e1_isexon && e1_last >= c.first &&
+                   e1_last - c.first < max_allowable_encroachment
+                c1 = Nullable(CigarInterval(e1_last + 1, c.last, c.op))
             else
                 return Nullable{Int}()
             end
@@ -399,31 +421,31 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     c2 = Nullable{CigarInterval}()
     @next!(CigarInterval, c2, c2_iter, c2_state)
 
-    e2_iter = ExonIntronIter(t)
-    e2_state = start(e2_iter)
-    e2 = Nullable{ExonIntron}()
-    @next!(ExonIntron, e2, e2_iter, e2_state)
+    e2_idx = first_exon_idx
+    e2_isexon = true
+    e2_first, e2_last = exons[e2_idx].first, exons[e2_idx].last
 
-
-    while !isnull(e2) && !isnull(c2)
+    while e2_idx <= length(exons) && !isnull(c2)
         c = get(c2)
-        e = get(e2)
 
         # case 1: e entirely precedes c
-        if e.last < c.first
-            if !e.isexon && e2_sup_e1
-                intronlen += length(e)
+        if e2_last < c.first
+            if !e2_isexon && e2_sup_e1
+                intronlen += e2_last - e2_first + 1
             end
 
-            if !isnull(e1) && e == get(e1)
+            if e1_idx <= length(exons) &&
+               e1_first == e2_first &&
+               e1_last == e2_last
                 e2_sup_e1 = true
             end
 
-            @next!(ExonIntron, e2, e2_iter, e2_state)
+            @fragmentlength_next_exonintron!(exons, e2_idx, e2_isexon,
+                                             e2_first, e2_last)
 
         # case 2: c is contained within e
-        elseif c.last >= e.first && c.last <= e.last && c.first >= e.first
-            if e.isexon
+        elseif c.last >= e2_first && c.last <= e2_last && c.first >= e2_first
+            if e2_isexon
                 if !is_exon_compatible(c.op)
                     return Nullable{Int}()
                 end
@@ -431,7 +453,6 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
                 if !is_intron_compatible(c.op)
                     return Nullable{Int}()
                 end
-                # TODO: why not increment e2 here?
             end
             @next!(CigarInterval, c2, c2_iter, c2_state)
 
@@ -440,12 +461,12 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
             @next!(CigarInterval, c2, c2_iter, c2_state)
 
         # case 4: match op overhangs into an intron a little
-        elseif c.last > e.last && c.op == OP_MATCH
-            if e.isexon && c.last - e.last <= max_allowable_encroachment
-                c2 = Nullable(CigarInterval(c.first, e.last, c.op))
-            elseif !e.isexon && e.last >= c.first &&
-                e.last - c.first < max_allowable_encroachment
-                c2 = Nullable(CigarInterval(e.last + 1, c.last, c.op))
+        elseif c.last > e2_last && c.op == OP_MATCH
+            if e2_isexon && c.last - e2_last <= max_allowable_encroachment
+                c2 = Nullable(CigarInterval(c.first, e2_last, c.op))
+            elseif !e2_isexon && e2_last >= c.first &&
+                e2_last - c.first < max_allowable_encroachment
+                c2 = Nullable(CigarInterval(e2_last + 1, c.last, c.op))
             else
                 return Nullable{Int}()
             end

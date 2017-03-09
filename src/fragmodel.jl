@@ -1,9 +1,9 @@
 
 
 type FragModel
-    fraglen_pmf::Vector{Float64}
-    fraglen_cdf::Vector{Float64}
-    strand_specificity::Float64
+    fraglen_pmf::Vector{Float32}
+    fraglen_cdf::Vector{Float32}
+    strand_specificity::Float32
     bm::BiasModel
 end
 
@@ -147,7 +147,7 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
                       alnpr::AlignmentPair)
     fraglen_ = fragmentlength(t, rs, alnpr)
     if isnull(fraglen_)
-        return 0.0
+        return 0.0f0
     end
     fraglen = get(fraglen_)
 
@@ -159,11 +159,11 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
     # TODO: look at FragWeightEstimationThread::fragment_weight for how to
     # handle all this shit
 
-    fragpr = 1.0
-    fragpr *= fraglen <= length(fm.fraglen_pmf) ? fm.fraglen_pmf[fraglen] : 0.0
+    fragpr = 1.0f0
+    fragpr *= fraglen <= length(fm.fraglen_pmf) ? fm.fraglen_pmf[fraglen] : 0.0f0
 
     tlen = exonic_length(t)
-    fragpr /= tlen <= length(fm.fraglen_cdf) ? fm.fraglen_cdf[tlen] : 1.0
+    fragpr /= tlen <= length(fm.fraglen_cdf) ? fm.fraglen_cdf[tlen] : 1.0f0
 
     # TODO: use simplistic probabilities for the time being
     fraglenpr = fraglen <= MAX_FRAG_LEN ? fm.fraglen_pmf[fraglen] : 0.0f0

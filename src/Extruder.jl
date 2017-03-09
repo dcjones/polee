@@ -130,7 +130,7 @@ function main()
         sample = RNASeqSample(parsed_args["transcripts_filename"],
                               parsed_args["genome_filename"],
                               parsed_args["reads_filename"],
-                              output=Nullable(parsed_args["output"]))
+                              Nullable(parsed_args["output"]))
         return
 
     elseif subcmd == "likelihood-approx"

@@ -79,7 +79,7 @@ function cigar_from_ptr(data::Ptr{UInt32}, i)
 end
 
 
-function Reads(filename::String, ts::Transcripts)
+function Reads(filename::String, excluded_seqs::Set{String})
     if filename == "-"
         reader = BAMReader(STDIN)
         prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
@@ -89,12 +89,12 @@ function Reads(filename::String, ts::Transcripts)
         prog = Progress(0, 0.25, "Reading BAM file ", 60)
         from_file = true
     end
-    return Reads(reader, prog, from_file, ts)
+    return Reads(reader, prog, from_file, excluded_seqs)
 end
 
 
 function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
-               ts::Transcripts)
+               excluded_seqs::Set{String})
     prog_step = 1000
     entry = eltype(reader)()
     readnames = HatTrie()
@@ -102,10 +102,10 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
     cigardata = UInt32[]
 
     # don't bother with reads from sequences with no transcripts
-    nonvacant_seqs = IntSet()
+    excluded_refidxs = IntSet()
     for (refidx, seqname) in enumerate(reader.refseqnames)
-        if haskey(ts.trees, seqname)
-            push!(nonvacant_seqs, refidx)
+        if seqname in excluded_seqs
+            push!(excluded_refidxs, refidx)
         end
     end
 
@@ -119,7 +119,7 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
             continue
         end
 
-        if !(entry.refid + 1 in nonvacant_seqs)
+        if entry.refid + 1 in excluded_refidxs
             continue
         end
 

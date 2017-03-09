@@ -32,10 +32,11 @@ Build an RNASeqSample from scratch.
 function RNASeqSample(transcripts_filename::String,
                       genome_filename::String,
                       reads_filename::String,
+                      excluded_seqs::Set{String},
                       output=Nullable{String}())
 
     ts = Transcripts(transcripts_filename)
-    rs = Reads(reads_filename, ts)
+    rs = Reads(reads_filename, excluded_seqs)
     read_transcript_sequences!(ts, genome_filename)
     fm = FragModel(rs, ts)
 

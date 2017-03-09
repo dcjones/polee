@@ -124,12 +124,24 @@ function main()
                 required = true
             "reads_filename"
                 required = true
+            "--excluded-seqs"
+                required = false
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
+
+        excluded_seqs = Set{String}()
+        if parsed_args["excluded-seqs"] != nothing
+            open(parsed_args["excluded-seqs"]) do input
+                for line in eachline(input)
+                    push!(excluded_seqs, chop(line))
+                end
+            end
+        end
 
         sample = RNASeqSample(parsed_args["transcripts_filename"],
                               parsed_args["genome_filename"],
                               parsed_args["reads_filename"],
+                              excluded_seqs,
                               Nullable(parsed_args["output"]))
         return
 
@@ -155,12 +167,24 @@ function main()
                 required = true
             "reads_filename"
                 required = true
+            "--excluded-seqs"
+                required = false
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
 
+        excluded_seqs = Set{String}()
+        if parsed_args["excluded-seqs"] != nothing
+            open(parsed_args["excluded-seqs"]) do input
+                for line in eachline(input)
+                    push!(excluded_seqs, chop(line))
+                end
+            end
+        end
+
         sample = RNASeqSample(parsed_args["transcripts_filename"],
                               parsed_args["genome_filename"],
-                              parsed_args["reads_filename"])
+                              parsed_args["reads_filename"],
+                              excluded_seqs)
         approximate_likelihood(sample, parsed_args["output"])
         return
 

@@ -53,14 +53,21 @@ function RNASeqSample(transcripts_filename::String,
 
     # reassign indexes to alignments to group by position
     tic()
-    aln_idx_map = Dict{Int, Int}()
+    aln_idx_map = zeros(Int, length(rs.alignments))
+    nextidx = 1
     for alnpr in rs.alignment_pairs
         if alnpr.metadata.mate1_idx > 0
-            get!(aln_idx_map, rs.alignments[alnpr.metadata.mate1_idx].id,
-                 length(aln_idx_map) + 1)
+            id = rs.alignments[alnpr.metadata.mate1_idx].id
+            if aln_idx_map[id] == 0
+                aln_idx_map[id] = nextidx
+                nextidx += 1
+            end
         else
-            get!(aln_idx_map, rs.alignments[alnpr.metadata.mate2_idx].id,
-                 length(aln_idx_map) + 1)
+            id = rs.alignments[alnpr.metadata.mate2_idx].id
+            if aln_idx_map[id] == 0
+                aln_idx_map[id] = nextidx
+                nextidx += 1
+            end
         end
     end
 

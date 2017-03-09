@@ -282,7 +282,7 @@ function approximate_likelihood(s::RNASeqSample)
             fruitless_step_count = 0
         end
 
-        if fruitless_step_count > 10
+        if fruitless_step_count > 5
             break
         end
     end

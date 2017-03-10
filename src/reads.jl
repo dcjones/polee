@@ -160,6 +160,7 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
     # group alignments into alignment pair intervals
     @time sort!(alignments)
 
+    tic()
     # first partition alignments by reference sequence
     blocks = Array(UnitRange{Int}, 0)
     i = 1
@@ -176,9 +177,9 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
 
     trees = Array(Intervals.IntervalCollectionTree{AlignmentPairMetadata},
                   length(blocks))
-    @show length(blocks)
 
     alignment_pairs = make_interval_collection(alignments, seqnames, blocks, trees)
+    toc()
 
     return Reads(alignments, alignment_pairs, cigardata)
 end
@@ -260,6 +261,7 @@ function make_interval_collection(alignments, seqnames, blocks, trees)
 
     alignment_pairs.trees = treemap
     alignment_pairs.length = iclength
+    alignment_pairs.ordered_trees_outdated = true
     Intervals.update_ordered_trees!(alignment_pairs)
 
     return alignment_pairs

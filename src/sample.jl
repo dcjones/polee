@@ -26,6 +26,44 @@ function Base.read(filename::String, ::Type{RNASeqSample})
 end
 
 
+function parallel_intersection_loop(ts, rs, fm, aln_idx_map, I, J, V)
+    MIN_FRAG_PROB = 1e-10
+
+    # join matching trees from ts and rs
+    T = Tuple{Intervals.IntervalCollectionTree{TranscriptMetadata},
+              Intervals.IntervalCollectionTree{AlignmentPairMetadata}}
+    treepairs = Array(T, 0)
+    for (seqname, ts_tree) in ts.trees
+        if haskey(rs.alignment_pairs.trees, seqname)
+            push!(treepairs, (ts_tree, rs.alignment_pairs.trees[seqname]))
+        end
+    end
+
+    @show length(treepairs)
+
+    # process pairs of trees in parallel
+    mut = Threads.Mutex()
+    Threads.@threads for treepair_idx in 1:length(treepairs)
+        ts_tree, rs_tree = treepairs[treepair_idx]
+        for (t, alnpr) in intersect(ts_tree, rs_tree)
+            fragpr = condfragprob(fm, t, rs, alnpr)
+            if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
+                i_ = alnpr.metadata.mate1_idx > 0 ?
+                        rs.alignments[alnpr.metadata.mate1_idx].id :
+                        rs.alignments[alnpr.metadata.mate2_idx].id
+                i = aln_idx_map[i_]
+
+                lock(mut)
+                push!(I, i)
+                push!(J, t.metadata.id)
+                push!(V, fragpr)
+                unlock(mut)
+            end
+        end
+    end
+end
+
+
 """
 Build an RNASeqSample from scratch.
 """
@@ -46,10 +84,6 @@ function RNASeqSample(transcripts_filename::String,
     I = Int32[]
     J = Int32[]
     V = Float32[]
-    intersection_count = 0
-    intersection_candidate_count = 0
-
-    MIN_FRAG_PROB = 1e-10
 
     # reassign indexes to alignments to group by position
     tic()
@@ -78,38 +112,18 @@ function RNASeqSample(transcripts_filename::String,
     toc()
 
     tic()
-    for (t, alnpr) in intersect(ts, rs.alignment_pairs)
-        intersection_candidate_count += 1
-        fragpr = condfragprob(fm, t, rs, alnpr)
-        if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
-            i = alnpr.metadata.mate1_idx > 0 ?
-                    rs.alignments[alnpr.metadata.mate1_idx].id :
-                    rs.alignments[alnpr.metadata.mate2_idx].id
-            push!(I, aln_idx_map[i])
-            #push!(J, t.metadata.id + 1) # +1 to make room for pseudotranscript
-            push!(J, t.metadata.id)
-            push!(V, fragpr)
-        end
-    end
+    parallel_intersection_loop(ts, rs, fm, aln_idx_map, I, J, V)
 
     effective_lengths = Float32[effective_length(fm, t) for t in ts]
 
     # Write transcript out with corresponding indexes
+    # TODO: this should probably be dumped into the output somehow
     open("transcripts.txt", "w") do out
         for t in ts
             println(out, t.metadata.id, ",", t.metadata.name)
         end
     end
 
-    # conditional probability of observing a fragment given it belongs to some
-    # other unknown transcript or something else. TODO: come up with some
-    # principled number of this.
-    #const SPURIOSITY_PROB = MIN_FRAG_PROB
-    #for i in 1:maximum(I)
-        #push!(I, i)
-        #push!(J, 1)
-        #push!(V, SPURIOSITY_PROB)
-    #end
     toc()
 
     m = maximum(I)

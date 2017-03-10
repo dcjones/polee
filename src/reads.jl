@@ -59,8 +59,16 @@ typealias AlignmentPair Interval{AlignmentPairMetadata}
 
 
 function Base.isless(a::Alignment, b::Alignment)
-    return a.id < b.id ||
-        (a.id == b.id && (a.flag & SAM_FLAG_READ2) < (b.flag & SAM_FLAG_READ2))
+    if a.refidx < b.refidx
+        return true
+    elseif a.refidx == b.refidx
+        if a.id < b.id
+            return true
+        elseif a.id == b.id
+            return (a.flag & SAM_FLAG_READ2) < (b.flag & SAM_FLAG_READ2)
+        end
+    end
+    return false
 end
 
 
@@ -150,78 +158,111 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
     seqnames = [StringField(s) for s in reader.refseqnames]
 
     # group alignments into alignment pair intervals
-    sort!(alignments)
+    @time sort!(alignments)
 
-    i, j = 1, 1
-    prog = Progress(1 + div(length(alignments), prog_step), 0.25,
-                    "Indexing alignments ", 60)
-    alignment_pairs = IntervalCollection{AlignmentPairMetadata}()
+    # first partition alignments by reference sequence
+    blocks = Array(UnitRange{Int}, 0)
+    i = 1
     while i <= length(alignments)
-        if i % prog_step == 0
-            next!(prog)
+        j = i
+        while j + 1 <= length(alignments) &&
+              alignments[i].refidx == alignments[j].refidx
+             j += 1
         end
 
-        j1 = i
-        while j1 + 1 <= length(alignments) &&
-              alignments[i].id == alignments[j1+1].id &&
-              (alignments[j1+1].flag & SAM_FLAG_READ2) == 0
-            j1 += 1
-        end
-
-        j2 = j1
-        while j2 + 1 <= length(alignments) &&
-              alignments[i].id == alignments[j2+1].id
-            j2 += 1
-        end
-
-        # now i:j1 are mate1 alignments, and j1+1:j2 are mate2 alignments
-
-        seqname = seqnames[alignments[i].refidx]
-
-        # examine every potential mate1, mate2 pair
-        for k1 in i:j1
-            m1 = alignments[k1]
-            for k2 in j1+1:j2
-                m2 = alignments[k2]
-
-                if m1.refidx != m2.refidx ||
-                   (m1.flag & SAM_FLAG_REVERSE) == (m2.flag & SAM_FLAG_REVERSE)
-                    continue
-                end
-
-                minpos = min(m1.leftpos, m2.leftpos)
-                maxpos = max(m1.rightpos, m2.rightpos)
-
-                if maxpos - minpos > MAX_PAIR_DISTANCE
-                    continue
-                end
-
-                strand = m1.flag & SAM_FLAG_REVERSE != 0 ? STRAND_NEG : STRAND_POS
-
-                alnpr = AlignmentPair(
-                    seqname, minpos, maxpos, strand,
-                    AlignmentPairMetadata(k1, k2))
-                push!(alignment_pairs, alnpr)
-            end
-        end
-
-        # handle single-end reads
-        if isempty(j1+1:j2)
-            for k in i:j1
-                m = alignments[k]
-                if m.flag & SAM_FLAG_READ1 != 0
-                    continue
-                end
-
-                # TODO
-            end
-        end
-
-        i = j2 + 1
+        push!(blocks, i:j)
+        i = j + 1
     end
-    finish!(prog)
+
+    trees = Array(Intervals.IntervalCollectionTree{AlignmentPairMetadata},
+                  length(blocks))
+    @show length(blocks)
+
+    alignment_pairs = make_interval_collection(alignments, seqnames, blocks, trees)
 
     return Reads(alignments, alignment_pairs, cigardata)
+end
+
+
+function make_interval_collection(alignments, seqnames, blocks, trees)
+    Threads.@threads for blockidx in 1:length(blocks)
+        block = blocks[blockidx]
+        seqname = seqnames[alignments[block.start].refidx]
+        tree = Intervals.IntervalCollectionTree{AlignmentPairMetadata}()
+
+        i, j = block.start, block.start
+        while i <= block.stop
+            j1 = i
+            while j1 + 1 <= block.stop &&
+                  alignments[i].id == alignments[j1+1].id &&
+                  (alignments[j1+1].flag & SAM_FLAG_READ2) == 0
+                j1 += 1
+            end
+
+            j2 = j1
+            while j2 + 1 <= block.stop &&
+                  alignments[i].id == alignments[j2+1].id
+                j2 += 1
+            end
+
+            # now i:j1 are mate1 alignments, and j1+1:j2 are mate2 alignments
+
+            # examine every potential mate1, mate2 pair
+            for k1 in i:j1
+                m1 = alignments[k1]
+                for k2 in j1+1:j2
+                    m2 = alignments[k2]
+
+                    minpos = min(m1.leftpos, m2.leftpos)
+                    maxpos = max(m1.rightpos, m2.rightpos)
+
+                    if maxpos - minpos > MAX_PAIR_DISTANCE
+                        continue
+                    end
+
+                    strand = m1.flag & SAM_FLAG_REVERSE != 0 ?
+                                STRAND_NEG : STRAND_POS
+
+                    alnpr = AlignmentPair(
+                        seqname, minpos, maxpos, strand,
+                        AlignmentPairMetadata(k1, k2))
+                    push!(tree, alnpr)
+                end
+            end
+
+            # handle single-end reads
+            if isempty(j1+1:j2)
+                for k in i:j1
+                    m = alignments[k]
+                    if m.flag & SAM_FLAG_READ1 != 0
+                        continue
+                    end
+
+                    # TODO
+                end
+            end
+
+            i = j2 + 1
+        end
+
+        trees[blockidx] = tree
+    end
+
+    # piece together the interval collection
+    alignment_pairs = IntervalCollection{AlignmentPairMetadata}()
+    treemap = Dict{StringField, Intervals.IntervalCollectionTree{AlignmentPairMetadata}}()
+    iclength = 0
+    for (block, tree) in zip(blocks, trees)
+        seqname = seqnames[alignments[block.start].refidx]
+        treemap[seqname] = tree
+        iclength += length(tree)
+    end
+
+    alignment_pairs.trees = treemap
+    alignment_pairs.length = iclength
+    Intervals.update_ordered_trees!(alignment_pairs)
+
+    return alignment_pairs
 end
 
 

@@ -35,8 +35,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         return self.y.get_shape()[:-1]
 
     def _log_prob(self, musigma):
-        # Fuck, we gotta make this a [m, 2, n-1]
-
         n = self.y.get_shape()[-1]
         expy = tf.exp(self.y)
         scale = tf.reduce_sum(expy, axis=-1)
@@ -45,17 +43,22 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         expy_trailing_sum = tf.cumsum(expy, axis=-1, reverse=True)[...,:-1]
         scaled_expy = tf.divide(expy[...,:-1], expy_trailing_sum)
 
-        # centering = 1 / (n - i)
-        centering = tf.divide(1.0, tf.to_float(tf.range(n - 1, 0, -1)))
+        # centering = log(1 / (n - i))
+        centering = tf.log(tf.divide(1.0, tf.to_float(tf.range(n - 1, 0, -1))))
         x = tf.log(scaled_expy) - tf.log(1 - scaled_expy) - centering
 
         mu    = musigma[...,0,:]
         sigma = musigma[...,1,:]
 
         ll = distributions.MultivariateNormalDiag(mu, sigma).log_pdf(x)
-        scale_lp = distributions.Normal(self.scale_mu0, self.scale_sigma0).log_pdf(scale)
 
-        return ll + scale_lp
+        # scale is always positive, so shouldn't thisk be log-normal?
+        scale_dist = distributions.Normal(self.scale_mu0, self.scale_sigma0)
+        # scale_lp = scale_dist.log_pdf(tf.log(scale))
+        scale_lp = scale_dist.log_pdf(scale)
+
+        return ll
+        # return ll + scale_lp
 
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):

@@ -6,13 +6,10 @@ import edward
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, y, scale_mu0, scale_sigma0,
+    def __init__(self, y,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
-
-        self.scale_mu0 = scale_mu0
-        self.scale_sigma0 = scale_sigma0
 
         with tf.name_scope(name, values=[y]) as ns:
             self.y = tf.identity(y, name="y")
@@ -37,7 +34,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
     def _log_prob(self, musigma):
         n = self.y.get_shape()[-1]
         expy = tf.exp(self.y)
-        scale = tf.reduce_sum(expy, axis=-1)
 
         # expy_trailing_sum[i] = sum_{k=i}^{n} expy[k]
         expy_trailing_sum = tf.cumsum(expy, axis=-1, reverse=True)[...,:-1]
@@ -52,13 +48,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         ll = distributions.MultivariateNormalDiag(mu, sigma).log_pdf(x)
 
-        # scale is always positive, so shouldn't thisk be log-normal?
-        scale_dist = distributions.Normal(self.scale_mu0, self.scale_sigma0)
-        # scale_lp = scale_dist.log_pdf(tf.log(scale))
-        scale_lp = scale_dist.log_pdf(scale)
-
         return ll
-        # return ll + scale_lp
 
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):

@@ -63,23 +63,56 @@ end
 
 function estimate(experiment_spec_filename, output_filename)
 
+    # read info from experiment specification
     experiment_spec = YAML.load_file(experiment_spec_filename)
     names = [entry["name"] for entry in experiment_spec]
     filenames = [entry["file"] for entry in experiment_spec]
+    sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
     num_samples = length(filenames)
 
+    # build design matrix
+    factoridx = Dict{String, Int}()
+    for factors in sample_factors
+        for factor in factors
+            get!(factoridx, factor, length(factoridx) + 1)
+        end
+    end
+
+    num_factors = length(factoridx)
+    X_ = zeros(Float32, (num_samples, num_factors))
+    for i in 1:num_samples
+        for factor in sample_factors[i]
+            j = factoridx[factor]
+            X_[i, j] = 1
+        end
+    end
+    @show X_
+    X = tf.constant(X_)
+
+    # read likelihood approximations and choose initial values
     n, musigma_data, y0 = load_samples(filenames)
 
-    mu0 = log(1/n)
-    sigma0 = 10.0
-    y = edmodels.MultivariateNormalDiag(tf.constant(mu0, shape=[num_samples, n]),
-                                        tf.constant(sigma0, shape=[num_samples, n]))
+    w_mu0 = 0.0
+    w_sigma0 = 1.0
+
+    b_mu0 = log(1/n)
+    b_sigma0 = 10.0
+
+    W = edmodels.MultivariateNormalDiag(
+            tf.constant(w_mu0, shape=[num_factors, n]),
+            tf.constant(w_sigma0, shape=[num_factors, n]))
+
+    B = edmodels.MultivariateNormalDiag(
+            tf.constant(b_mu0, shape=[num_samples, n]),
+            tf.constant(b_sigma0, shape=[num_samples, n]))
+
+    y = tf.add(tf.matmul(X, W), B)
 
     musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                 y=y, value=musigma_data)
 
-    #iterations = 5000
-    iterations = 50
+    iterations = 5000
+    #iterations = 50
     datadict = PyDict(Dict(musigma => musigma_data))
     #sess_config = tf.ConfigProto(intra_op_parallelism_threads=16,
                                  #inter_op_parallelism_threads=16)
@@ -101,16 +134,20 @@ function estimate(experiment_spec_filename, output_filename)
 
     # VI
     # --
-    qy_mu = tf.Variable(y0)
-    qy_sigma = tf.nn[:softplus](tf.Variable(tf.random_normal([num_samples, n])))
-    qy = edmodels.MultivariateNormalDiag(qy_mu, qy_sigma)
-    inference = ed.KLqp(Dict(y => qy), data=datadict)
+    qw_mu = tf.Variable(tf.zeros([num_factors, n]))
+    qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 1.0)))
+    qw = edmodels.MultivariateNormalDiag(name="qw", qw_mu, qw_sigma)
+
+    qb_mu = tf.Variable(y0)
+    qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 1.0)))
+    qb = edmodels.MultivariateNormalDiag(name="qb", qb_mu, qb_sigma)
+
+    inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
+    #inference = ed.KLqp(Dict(B => qb), data=datadict)
     #inference[:run](n_iter=iterations)
 
     inference[:run](n_iter=iterations,
                     optimizer=tf.train[:MomentumOptimizer](1e-7, 0.6))
-
-    # see: http://stackoverflow.com/questions/34293714/can-i-measure-the-execution-time-of-individual-operations-with-tensorflow
 
     # Trace
     #=
@@ -139,7 +176,16 @@ function estimate(experiment_spec_filename, output_filename)
     =#
 
     # Evaluate posterior means
-    post_mean = sess[:run](tf.nn[:softmax](qy_mu, dim=-1))
+
+    @show sess[:run](tf.reduce_min(qw_mu))
+    @show sess[:run](tf.reduce_max(qw_mu))
+
+    y = tf.add(tf.matmul(X, qw_mu), qb_mu)
+    post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
+    #post_mean = sess[:run](tf.nn[:softmax](qy_mu, dim=-1))
+
+    # TODO: some way of computing values after subtracting out particular
+    # effects
 
     open("post_mean.csv", "w") do output
         # TODO: where do we get the transcript names from?

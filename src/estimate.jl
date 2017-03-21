@@ -111,7 +111,7 @@ function estimate(experiment_spec_filename, output_filename)
     musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                 y=y, value=musigma_data)
 
-    iterations = 5000
+    iterations = 1000
     #iterations = 50
     datadict = PyDict(Dict(musigma => musigma_data))
     #sess_config = tf.ConfigProto(intra_op_parallelism_threads=16,
@@ -145,12 +145,15 @@ function estimate(experiment_spec_filename, output_filename)
     inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
     #inference = ed.KLqp(Dict(B => qb), data=datadict)
     #inference[:run](n_iter=iterations)
-
-    inference[:run](n_iter=iterations,
-                    optimizer=tf.train[:MomentumOptimizer](1e-7, 0.6))
+    #inference[:run](n_iter=iterations,
+    #                optimizer=tf.train[:MomentumOptimizer](1e-7, 0.6))
+    learning_rate = 1e-2
+    beta1 = 0.7
+    beta2 = 0.999
+    optimizer = tf.train[:AdamOptimizer](learning_rate, beta1, beta2)
+    inference[:run](n_iter=iterations, optimizer=optimizer)
 
     # Trace
-    #=
     run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
     run_metadata = tf.RunMetadata()
     sess[:run](inference[:train], options=run_options,
@@ -163,7 +166,6 @@ function estimate(experiment_spec_filename, output_filename)
     trace_out = pybuiltin(:open)("timeline.json", "w")
     trace_out[:write](ctf)
     trace_out[:close]()
-    =#
 
     # MAP
     # ---
@@ -185,7 +187,10 @@ function estimate(experiment_spec_filename, output_filename)
     #post_mean = sess[:run](tf.nn[:softmax](qy_mu, dim=-1))
 
     # TODO: some way of computing values after subtracting out particular
-    # effects
+    # effects. This is really a broader issue: how do I make it easy to
+    # implement models, and how do make the results available.
+    #
+    # Maybe I can hack things together for the time being.
 
     open("post_mean.csv", "w") do output
         # TODO: where do we get the transcript names from?

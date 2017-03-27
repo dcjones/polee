@@ -26,9 +26,13 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
               graph_parents=[self.y,])
 
     def _get_event_shape(self):
+        print("y.get_shape()")
+        print(self.y.get_shape())
         return tf.TensorShape([2, self.y.get_shape()[-1] - 1])
 
     def _get_batch_shape(self):
+        print("y.get_shape()")
+        print(self.y.get_shape())
         return self.y.get_shape()[:-1]
 
     def _log_prob(self, musigma):

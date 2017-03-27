@@ -93,26 +93,51 @@ function estimate(experiment_spec_filename, output_filename)
     n, musigma_data, y0 = load_samples(filenames)
 
     w_mu0 = 0.0
-    w_sigma0 = 1.0
+    w_sigma0 = 10.0
 
     b_mu0 = log(1/n)
-    b_sigma0 = 10.0
+
+    # TODO: This is really perplexing. It seems to do the right thing if we
+    # exclude B, but I thought it should converge to the same thing as b_sigma0
+    # approaches 0.
+    #
+    # No, b_sigma0 is not the same as excluding B, because b_mu0 is non-zero.
+    # So this has something to do with how we're centering?
+
+    # Things I could try:
+    #
+    # I've established that adding a fixed bias still leads to correct W being
+    # trained. Let's put B back in the mix in addition to the fixed bias,
+    # centered at zero with extremely small sigma. If inference is working
+    # correctly I should end up with something very close to what I was getting.
+
+
+    b_sigma0 = 0.1
+
+    b_mu = edmodels.MultivariateNormalDiag(
+            tf.constant(b_mu0, shape=[1, n]),
+            tf.constant(10.0, shape=[1, n]))
+
+    B = edmodels.MultivariateNormalDiag(
+            #tf.matmul(tf.ones([num_samples, 1]), b_mu),
+            tf.zeros([num_samples, n]),
+            tf.constant(1.0, shape=[num_samples, n]))
 
     W = edmodels.MultivariateNormalDiag(
             tf.constant(w_mu0, shape=[num_factors, n]),
             tf.constant(w_sigma0, shape=[num_factors, n]))
 
-    B = edmodels.MultivariateNormalDiag(
-            tf.constant(b_mu0, shape=[num_samples, n]),
-            tf.constant(b_sigma0, shape=[num_samples, n]))
 
-    y = tf.add(tf.matmul(X, W), B)
+    # XXX
+    #y = tf.add(tf.matmul(X, W), B)
+    y = tf.add(tf.add(tf.matmul(X, W), b_mu0), B)
+    @show y
+    #y = tf.matmul(X, W)
 
     musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                 y=y, value=musigma_data)
 
-    iterations = 1000
-    #iterations = 50
+    iterations = 500
     datadict = PyDict(Dict(musigma => musigma_data))
     #sess_config = tf.ConfigProto(intra_op_parallelism_threads=16,
                                  #inter_op_parallelism_threads=16)
@@ -138,11 +163,14 @@ function estimate(experiment_spec_filename, output_filename)
     qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 1.0)))
     qw = edmodels.MultivariateNormalDiag(name="qw", qw_mu, qw_sigma)
 
-    qb_mu = tf.Variable(y0)
+    #qb_mu = tf.Variable(y0)
+    qb_mu = tf.Variable(tf.zeros([num_samples, n]))
     qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 1.0)))
     qb = edmodels.MultivariateNormalDiag(name="qb", qb_mu, qb_sigma)
 
+    #inference = ed.KLqp(Dict(W => qw), data=datadict)
     inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
+
     #inference = ed.KLqp(Dict(B => qb), data=datadict)
     #inference[:run](n_iter=iterations)
     #inference[:run](n_iter=iterations,
@@ -179,27 +207,64 @@ function estimate(experiment_spec_filename, output_filename)
 
     # Evaluate posterior means
 
-    @show sess[:run](tf.reduce_min(qw_mu))
-    @show sess[:run](tf.reduce_max(qw_mu))
+    @show factoridx
+    @show sess[:run](tf.reduce_min(qw_mu, axis=-1))
+    @show sess[:run](tf.reduce_max(qw_mu, axis=-1))
 
-    y = tf.add(tf.matmul(X, qw_mu), qb_mu)
-    post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
-    #post_mean = sess[:run](tf.nn[:softmax](qy_mu, dim=-1))
+    # XXX
+    #y = tf.add(tf.matmul(X, qw_mu), qb_mu)
+    y = tf.add(tf.add(tf.matmul(X, qw_mu), b_mu0), B)
 
-    # TODO: some way of computing values after subtracting out particular
-    # effects. This is really a broader issue: how do I make it easy to
-    # implement models, and how do make the results available.
-    #
-    # Maybe I can hack things together for the time being.
+    #post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
+    post_mean = sess[:run](y)
+    write_estimates("post_mean.csv", names, post_mean)
 
-    open("post_mean.csv", "w") do output
-        # TODO: where do we get the transcript names from?
-        println(output, "name,id,tpm")
-        for (i, name) in enumerate(names)
+    # E-GEUV specific code: remove batch effects by zeroing out that part of the
+    # design matrix.
+    batch_effect_factor_pattern = r"LAB_"
+    for (factor, idx) in factoridx
+        if match(batch_effect_factor_pattern, factor) != nothing
+            @show factor
+            X_[:, idx] = 0
+        end
+    end
+    Z = tf.constant(X_)
+
+    #y = tf.add(tf.matmul(Z, qw_mu), qb_mu)
+    y = tf.add(tf.add(tf.matmul(Z, qw_mu), b_mu0), B)
+
+    #post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
+    post_mean = sess[:run](y)
+    write_estimates("post_mean_nobatch.csv", names, post_mean)
+
+    write_effects("effects.csv", factoridx, sess[:run](qw_mu))
+end
+
+
+function write_effects(filename, factoridx, W)
+    n = size(W, 2)
+    open(filename, "w") do output
+        println(output, "factor,id,w")
+        for factor = sort(collect(keys(factoridx)))
+            idx = factoridx[factor]
             for j in 1:n
-                println(output, name, ",", j, ",", 1e6 * post_mean[i, j])
+                println(output, factor, ",", j, ",", W[idx, j])
             end
         end
     end
 end
 
+
+function write_estimates(filename, names, est)
+    n = size(est, 2)
+    open(filename, "w") do output
+        # TODO: where do we get the transcript names from?
+        println(output, "name,id,tpm")
+        for (i, name) in enumerate(names)
+            for j in 1:n
+                #println(output, name, ",", j, ",", 1e6 * est[i, j])
+                println(output, name, ",", j, ",", est[i, j])
+            end
+        end
+    end
+end

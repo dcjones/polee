@@ -72,6 +72,7 @@ function estimate(experiment_spec_filename, output_filename)
 
     # build design matrix
     factoridx = Dict{String, Int}()
+    factoridx["bias"] = 1
     for factors in sample_factors
         for factor in factors
             get!(factoridx, factor, length(factoridx) + 1)
@@ -86,62 +87,71 @@ function estimate(experiment_spec_filename, output_filename)
             X_[i, j] = 1
         end
     end
-    @show X_
+    X_[:, factoridx["bias"]] = 1
     X = tf.constant(X_)
 
     # read likelihood approximations and choose initial values
     n, musigma_data, y0 = load_samples(filenames)
 
     w_mu0 = 0.0
-    w_sigma0 = 10.0
+    #w_sigma0 = 0.1
+    w_sigma0 = 0.001
 
-    b_mu0 = log(1/n)
+    b_sigma_alpha0 = 0.1
+    b_sigma_beta0 = 0.1
 
-    # TODO: This is really perplexing. It seems to do the right thing if we
-    # exclude B, but I thought it should converge to the same thing as b_sigma0
-    # approaches 0.
+    # TODO
+    # Here's after 2000 iterations
+    # 7×4 DataFrames.DataFrame
+    # │ Row │ factor  │ id     │ w       │ transcript_id     │
+    # ├─────┼─────────┼────────┼─────────┼───────────────────┤
+    # │ 1   │ "LAB_1" │ 184426 │ 2.78063 │ "ENST00000625598" │
+    # │ 2   │ "LAB_2" │ 184426 │ 1.52607 │ "ENST00000625598" │
+    # │ 3   │ "LAB_3" │ 184426 │ 1.57313 │ "ENST00000625598" │
+    # │ 4   │ "LAB_4" │ 184426 │ 1.63165 │ "ENST00000625598" │
+    # │ 5   │ "LAB_5" │ 184426 │ 1.58936 │ "ENST00000625598" │
+    # │ 6   │ "LAB_7" │ 184426 │ 2.59445 │ "ENST00000625598" │
+    # │ 7   │ "bias"  │ 184426 │ 2.77634 │ "ENST00000625598" │
     #
-    # No, b_sigma0 is not the same as excluding B, because b_mu0 is non-zero.
-    # So this has something to do with how we're centering?
+    # Why are these all positive? Wouldn't a more likely solution just bias
+    # larger and some of the lab biases negative, or at least closer to zero?
 
-    # Things I could try:
+    # IT IS MORE LIKELY CENTERED at ZERO!!! But the MAP optimization always goes
+    # away from it. So either optimization is fucked, or there is some other
+    # probability that does change somewhere somehow.
     #
-    # I've established that adding a fixed bias still leads to correct W being
-    # trained. Let's put B back in the mix in addition to the fixed bias,
-    # centered at zero with extremely small sigma. If inference is working
-    # correctly I should end up with something very close to what I was getting.
+    # So, things to try:
+    # - See if musigma probability changes when I adjust w
+    # - Try different optimization methods.
+    #
 
-
-    b_sigma0 = 0.1
-
-    b_mu = edmodels.MultivariateNormalDiag(
-            tf.constant(b_mu0, shape=[1, n]),
-            tf.constant(10.0, shape=[1, n]))
+    b_sigma = edmodels.InverseGamma(
+            tf.constant(b_sigma_alpha0, shape=[1, n]),
+            tf.constant(b_sigma_beta0, shape=[1, n]))
 
     B = edmodels.MultivariateNormalDiag(
-            #tf.matmul(tf.ones([num_samples, 1]), b_mu),
+            name="B",
             tf.zeros([num_samples, n]),
-            tf.constant(1.0, shape=[num_samples, n]))
+            tf.matmul(tf.ones([num_samples, 1]), b_sigma))
 
     W = edmodels.MultivariateNormalDiag(
+            name="W",
             tf.constant(w_mu0, shape=[num_factors, n]),
-            tf.constant(w_sigma0, shape=[num_factors, n]))
+            tf.concat(
+                  [tf.constant(100.0, shape=[1, n]),
+                   tf.constant(0.01, shape=[num_factors-1, n])], 0))
+            #tf.constant(w_sigma0, shape=[num_factors, n]))
+    #W = edmodels.Uniform(
+            #tf.constant(-10.0, shape=[num_factors, n]),
+            #tf.constant(10.0, shape=[num_factors, n]))
 
-
-    # XXX
     #y = tf.add(tf.matmul(X, W), B)
-    y = tf.add(tf.add(tf.matmul(X, W), b_mu0), B)
-    @show y
-    #y = tf.matmul(X, W)
+    y = tf.matmul(X, W)
 
     musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                 y=y, value=musigma_data)
 
-    iterations = 500
     datadict = PyDict(Dict(musigma => musigma_data))
-    #sess_config = tf.ConfigProto(intra_op_parallelism_threads=16,
-                                 #inter_op_parallelism_threads=16)
-    #sess = tf.InteractiveSession(config=sess_config)
     sess = ed.get_session()
 
     # Sampling
@@ -159,41 +169,101 @@ function estimate(experiment_spec_filename, output_filename)
 
     # VI
     # --
-    qw_mu = tf.Variable(tf.zeros([num_factors, n]))
-    qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 1.0)))
+
+    # Optimize MAP for a few iterations to find a good starting point for VI
+    qw_map_param = tf.Variable(tf.random_normal([num_factors, n]))
+    qw_map = edmodels.PointMass(params=qw_map_param)
+
+    qb_map_param = tf.Variable(tf.random_normal([num_samples, n]))
+    qb_map = edmodels.PointMass(params=qb_map_param)
+
+    #inference = ed.MAP(Dict(W => qw_map, B => qb_map), data=datadict)
+    inference = ed.MAP(Dict(W => qw_map), data=datadict)
+
+    inference[:run](n_iter=100)
+
+    #optimizer = tf.train[:GradientDescentOptimizer](1e-8)
+    #inference[:run](n_iter=200, optimizer=optimizer)
+
+    qw_mu_ = sess[:run](qw_map_param)
+    #@show qw_mu_[:,184426]
+    #@show sess[:run](W[:log_prob](qw_map_param))
+    lp0 = sum(sess[:run](W[:log_prob](qw_map_param)))
+    musigma_ = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+                y=tf.matmul(X, qw_map_param), value=musigma_data)
+    ms_lp0 = sum(sess[:run](musigma_[:log_prob](musigma_data)))
+
+    gs = tf.gradients(musigma_[:log_prob](musigma_data), [qw_map_param])
+    @show qw_mu_[:,184426]
+    @show sess[:run](gs[1])[:,184426]
+    gs = tf.gradients(W[:log_prob](qw_map_param), [qw_map_param])
+    @show sess[:run](gs[1])[:,184426]
+
+    offset = minimum(qw_mu_[:,184426])
+    qw_mu_[:,184426] -= offset
+    qw_mu_[factoridx["bias"],184426] += 2 * offset
+    qw_map_param_ = tf.constant(qw_mu_)
+    #@show qw_mu_[:,184426]
+    #@show sess[:run](W[:log_prob](tf.constant(qw_mu_)))
+    lp1 = sum(sess[:run](W[:log_prob](qw_map_param_)))
+    musigma_ = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+                y=tf.matmul(X, qw_map_param_), value=musigma_data)
+    ms_lp1 = sum(sess[:run](musigma_[:log_prob](musigma_data)))
+
+    gs = tf.gradients(musigma_[:log_prob](musigma_data), [qw_map_param_])
+    @show sess[:run](gs[1])[:,184426]
+    gs = tf.gradients(W[:log_prob](qw_map_param_), [qw_map_param_])
+    @show sess[:run](gs[1])[:,184426]
+
+
+    @show (lp0, lp1, lp0 < lp1)
+    @show (ms_lp0, ms_lp1, ms_lp0 < ms_lp1)
+    @show (-(lp0 + ms_lp0), -(lp1 + ms_lp1), lp0 + ms_lp0 < lp1 + ms_lp1)
+
+    # TODO: It seems like the gradients for y wrt to qw_map_param will always
+    # push it above the actual maximum posterior. How could this be? I think
+    # there is something to do with the overparameterization that we're still
+    # missing.
+    #
+    # Is it possible that there are multiple modes and it's getting stuck in
+    # one? Not in this case because bias + ε, w - ε will lead to strictly
+    # improved, so there should be a smooth upward gradient, it's just negative
+    # in any single direction.
+
+    # I'm completely at a loss.
+
+    iterations = 200
+
+    qw_mu = tf.Variable(sess[:run](qw_map_param))
+    qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 0.1)))
     qw = edmodels.MultivariateNormalDiag(name="qw", qw_mu, qw_sigma)
 
-    #qb_mu = tf.Variable(y0)
-    qb_mu = tf.Variable(tf.zeros([num_samples, n]))
-    qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 1.0)))
+    qb_mu = tf.Variable(sess[:run](qb_map_param))
+    qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.1)))
     qb = edmodels.MultivariateNormalDiag(name="qb", qb_mu, qb_sigma)
 
-    #inference = ed.KLqp(Dict(W => qw), data=datadict)
     inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
 
-    #inference = ed.KLqp(Dict(B => qb), data=datadict)
-    #inference[:run](n_iter=iterations)
-    #inference[:run](n_iter=iterations,
-    #                optimizer=tf.train[:MomentumOptimizer](1e-7, 0.6))
+    # TODO: experiment with making this more aggressive
     learning_rate = 1e-2
     beta1 = 0.7
-    beta2 = 0.999
+    beta2 = 0.99
     optimizer = tf.train[:AdamOptimizer](learning_rate, beta1, beta2)
     inference[:run](n_iter=iterations, optimizer=optimizer)
 
     # Trace
-    run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
-    run_metadata = tf.RunMetadata()
-    sess[:run](inference[:train], options=run_options,
-               run_metadata=run_metadata)
+    #run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    #run_metadata = tf.RunMetadata()
+    #sess[:run](inference[:train], options=run_options,
+               #run_metadata=run_metadata)
     #sess[:run](inference[:loss], options=run_options,
                #run_metadata=run_metadata)
 
-    tl = tftl.Timeline(run_metadata[:step_stats])
-    ctf = tl[:generate_chrome_trace_format]()
-    trace_out = pybuiltin(:open)("timeline.json", "w")
-    trace_out[:write](ctf)
-    trace_out[:close]()
+    #tl = tftl.Timeline(run_metadata[:step_stats])
+    #ctf = tl[:generate_chrome_trace_format]()
+    #trace_out = pybuiltin(:open)("timeline.json", "w")
+    #trace_out[:write](ctf)
+    #trace_out[:close]()
 
     # MAP
     # ---
@@ -206,17 +276,11 @@ function estimate(experiment_spec_filename, output_filename)
     =#
 
     # Evaluate posterior means
-
-    @show factoridx
-    @show sess[:run](tf.reduce_min(qw_mu, axis=-1))
-    @show sess[:run](tf.reduce_max(qw_mu, axis=-1))
-
-    # XXX
     #y = tf.add(tf.matmul(X, qw_mu), qb_mu)
-    y = tf.add(tf.add(tf.matmul(X, qw_mu), b_mu0), B)
+    y = tf.matmul(X, qw_mu)
 
-    #post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
-    post_mean = sess[:run](y)
+    post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
+    #post_mean = sess[:run](y)
     write_estimates("post_mean.csv", names, post_mean)
 
     # E-GEUV specific code: remove batch effects by zeroing out that part of the
@@ -224,17 +288,17 @@ function estimate(experiment_spec_filename, output_filename)
     batch_effect_factor_pattern = r"LAB_"
     for (factor, idx) in factoridx
         if match(batch_effect_factor_pattern, factor) != nothing
-            @show factor
             X_[:, idx] = 0
         end
     end
     Z = tf.constant(X_)
-
     #y = tf.add(tf.matmul(Z, qw_mu), qb_mu)
-    y = tf.add(tf.add(tf.matmul(Z, qw_mu), b_mu0), B)
+    y = tf.matmul(Z, qw_mu)
 
-    #post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
-    post_mean = sess[:run](y)
+    @show sess[:run](qb_mu)[184426]
+
+    post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
+    #post_mean = sess[:run](y)
     write_estimates("post_mean_nobatch.csv", names, post_mean)
 
     write_effects("effects.csv", factoridx, sess[:run](qw_mu))
@@ -248,7 +312,7 @@ function write_effects(filename, factoridx, W)
         for factor = sort(collect(keys(factoridx)))
             idx = factoridx[factor]
             for j in 1:n
-                println(output, factor, ",", j, ",", W[idx, j])
+                @printf(output, "%s,%d,%e\n", factor, j, W[idx, j])
             end
         end
     end
@@ -262,8 +326,7 @@ function write_estimates(filename, names, est)
         println(output, "name,id,tpm")
         for (i, name) in enumerate(names)
             for j in 1:n
-                #println(output, name, ",", j, ",", 1e6 * est[i, j])
-                println(output, name, ",", j, ",", est[i, j])
+                @printf(output, "%s,%d,%e\n", name, j, est[i, j])
             end
         end
     end

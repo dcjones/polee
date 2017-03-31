@@ -97,8 +97,8 @@ function estimate(experiment_spec_filename, output_filename)
     w_sigma0 = 0.01
     w_bias_sigma0 = 100.0
 
-    b_sigma_alpha0 = 1.0
-    b_sigma_beta0 = 1.0
+    b_sigma_alpha0 = 2.0
+    b_sigma_beta0 = 2.0
 
     b_sigma_sq = edmodels.InverseGamma(
             tf.constant(b_sigma_alpha0, shape=[1, n]),
@@ -116,8 +116,8 @@ function estimate(experiment_spec_filename, output_filename)
     W = edmodels.MultivariateNormalDiag(
             name="W", tf.constant(0.0, shape=[num_factors, n]), w_sigma)
 
-    #y = tf.add(tf.matmul(X, W), B)
-    y = tf.matmul(X, W)
+    y = tf.add(tf.matmul(X, W), B)
+    #y = tf.matmul(X, W)
 
     musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                 y=y, value=musigma_data)
@@ -150,16 +150,24 @@ function estimate(experiment_spec_filename, output_filename)
     qb_map_param = tf.Variable(tf.random_normal([num_samples, n]))
     qb_map = edmodels.PointMass(params=qb_map_param)
 
-    #inference = ed.MAP(Dict(W => qw_map, B => qb_map), data=datadict)
-    inference = ed.MAP(Dict(W => qw_map), data=datadict)
+    qb_sigma_sq_map_param = tf.Variable(tf.ones([1, n]))
+    qb_sigma_sq_map = edmodels.PointMass(params=qb_sigma_sq_map_param)
+
+    inference = ed.MAP(Dict(W => qw_map, B => qb_map,
+                            b_sigma_sq => qb_sigma_sq_map),
+                       data=datadict)
+    #inference = ed.MAP(Dict(W => qw_map), data=datadict)
     inference[:run](n_iter=opt_iterations)
 
     @show sess[:run](qw_map_param)[:,69693]
+    @show sess[:run](tf.reduce_min(qb_map_param))
+    @show sess[:run](tf.reduce_mean(qb_map_param))
+    @show sess[:run](tf.reduce_max(qb_map_param))
     # TODO: can I initialize in a way that facilitates convergence?
     # E.g. Start off with bias weight high and others low and go from there?
 
     # Now run VI starting from mu set to the MAP estimates
-    vi_iterations = 200
+    vi_iterations = 500
     qw_mu = tf.Variable(sess[:run](qw_map_param))
     qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 0.1)))
     qw = edmodels.MultivariateNormalDiag(name="qw", qw_mu, qw_sigma)
@@ -168,8 +176,8 @@ function estimate(experiment_spec_filename, output_filename)
     qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.1)))
     qb = edmodels.MultivariateNormalDiag(name="qb", qb_mu, qb_sigma)
 
-    #inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
-    inference = ed.KLqp(Dict(W => qw), data=datadict)
+    inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
+    #inference = ed.KLqp(Dict(W => qw), data=datadict)
 
     # TODO: experiment with making this more aggressive
     learning_rate = 1e-3
@@ -183,8 +191,8 @@ function estimate(experiment_spec_filename, output_filename)
     run_metadata = tf.RunMetadata()
     sess[:run](inference[:train], options=run_options,
                run_metadata=run_metadata)
-    sess[:run](inference[:loss], options=run_options,
-               run_metadata=run_metadata)
+    #sess[:run](inference[:loss], options=run_options,
+               #run_metadata=run_metadata)
 
     tl = tftl.Timeline(run_metadata[:step_stats])
     ctf = tl[:generate_chrome_trace_format]()
@@ -193,8 +201,8 @@ function estimate(experiment_spec_filename, output_filename)
     trace_out[:close]()
 
     # Evaluate posterior means
-    #y = tf.add(tf.matmul(X, qw_mu), qb_mu)
-    y = tf.matmul(X, qw_mu)
+    y = tf.add(tf.matmul(X, qw_mu), qb_mu)
+    #y = tf.matmul(X, qw_mu)
 
     post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
     #post_mean = sess[:run](y)

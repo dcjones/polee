@@ -33,6 +33,11 @@ include("sample.jl")
 include("likelihood-approximation.jl")
 include("estimate.jl")
 
+# TODO: automate including everything under models
+EXTRUDER_MODELS = Dict{String, Function}()
+include("models/linear-regression.jl")
+include("models/simple-mode.jl")
+
 
 function read_transcript_sequences!(ts, filename)
     if endswith(filename, ".2bit")
@@ -191,12 +196,16 @@ function main()
     elseif subcmd == "estimate"
         @add_arg_table arg_settings begin
             "--output", "-o"
-                default = "results.h5"
+                default = "output.txt"
+            "model"
+                required = true
             "experiment"
                 required = true
         end
+
         parsed_args = parse_args(subcmd_args, arg_settings)
-        estimate(parsed_args["experiment"],
+        EXTRUDER_MODELS[parsed_args["model"]](
+                 parsed_args["experiment"],
                  parsed_args["output"])
         return
     elseif subcmd == "likelihood-approx-from-isolator"

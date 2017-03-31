@@ -40,7 +40,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         expy = tf.exp(self.y)
 
         # expy_trailing_sum[i] = sum_{k=i}^{n} expy[k]
-
         expy_trailing_sum = tf.cumsum(expy, axis=-1, reverse=True)[...,:-1]
         # expy_trailing_sum = tf.stack([tf.cumsum(expy_i, axis=-1, reverse=True)
                                       # for expy_i in tf.unstack(expy)])[...,:-1]

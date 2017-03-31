@@ -94,56 +94,27 @@ function estimate(experiment_spec_filename, output_filename)
     n, musigma_data, y0 = load_samples(filenames)
 
     w_mu0 = 0.0
-    #w_sigma0 = 0.1
-    w_sigma0 = 0.001
+    w_sigma0 = 0.01
+    w_bias_sigma0 = 100.0
 
-    b_sigma_alpha0 = 0.1
-    b_sigma_beta0 = 0.1
+    b_sigma_alpha0 = 1.0
+    b_sigma_beta0 = 1.0
 
-    # TODO
-    # Here's after 2000 iterations
-    # 7×4 DataFrames.DataFrame
-    # │ Row │ factor  │ id     │ w       │ transcript_id     │
-    # ├─────┼─────────┼────────┼─────────┼───────────────────┤
-    # │ 1   │ "LAB_1" │ 184426 │ 2.78063 │ "ENST00000625598" │
-    # │ 2   │ "LAB_2" │ 184426 │ 1.52607 │ "ENST00000625598" │
-    # │ 3   │ "LAB_3" │ 184426 │ 1.57313 │ "ENST00000625598" │
-    # │ 4   │ "LAB_4" │ 184426 │ 1.63165 │ "ENST00000625598" │
-    # │ 5   │ "LAB_5" │ 184426 │ 1.58936 │ "ENST00000625598" │
-    # │ 6   │ "LAB_7" │ 184426 │ 2.59445 │ "ENST00000625598" │
-    # │ 7   │ "bias"  │ 184426 │ 2.77634 │ "ENST00000625598" │
-    #
-    # Why are these all positive? Wouldn't a more likely solution just bias
-    # larger and some of the lab biases negative, or at least closer to zero?
-
-    # IT IS MORE LIKELY CENTERED at ZERO!!! But the MAP optimization always goes
-    # away from it. So either optimization is fucked, or there is some other
-    # probability that does change somewhere somehow.
-    #
-    # So, things to try:
-    # - See if musigma probability changes when I adjust w
-    # - Try different optimization methods.
-    #
-
-    b_sigma = edmodels.InverseGamma(
+    b_sigma_sq = edmodels.InverseGamma(
             tf.constant(b_sigma_alpha0, shape=[1, n]),
             tf.constant(b_sigma_beta0, shape=[1, n]))
+    b_sigma = tf.sqrt(b_sigma_sq)
 
     B = edmodels.MultivariateNormalDiag(
             name="B",
             tf.zeros([num_samples, n]),
             tf.matmul(tf.ones([num_samples, 1]), b_sigma))
 
+    w_sigma = tf.concat(
+                  [tf.constant(w_bias_sigma0, shape=[1, n]),
+                   tf.constant(w_sigma0, shape=[num_factors-1, n])], 0)
     W = edmodels.MultivariateNormalDiag(
-            name="W",
-            tf.constant(w_mu0, shape=[num_factors, n]),
-            tf.concat(
-                  [tf.constant(100.0, shape=[1, n]),
-                   tf.constant(0.01, shape=[num_factors-1, n])], 0))
-            #tf.constant(w_sigma0, shape=[num_factors, n]))
-    #W = edmodels.Uniform(
-            #tf.constant(-10.0, shape=[num_factors, n]),
-            #tf.constant(10.0, shape=[num_factors, n]))
+            name="W", tf.constant(0.0, shape=[num_factors, n]), w_sigma)
 
     #y = tf.add(tf.matmul(X, W), B)
     y = tf.matmul(X, W)
@@ -171,7 +142,9 @@ function estimate(experiment_spec_filename, output_filename)
     # --
 
     # Optimize MAP for a few iterations to find a good starting point for VI
-    qw_map_param = tf.Variable(tf.random_normal([num_factors, n]))
+    opt_iterations = 500
+    #qw_map_param = tf.Variable(tf.random_normal([num_factors, n]))
+    qw_map_param = tf.Variable(tf.fill([num_factors, n], 5.0))
     qw_map = edmodels.PointMass(params=qw_map_param)
 
     qb_map_param = tf.Variable(tf.random_normal([num_samples, n]))
@@ -179,61 +152,14 @@ function estimate(experiment_spec_filename, output_filename)
 
     #inference = ed.MAP(Dict(W => qw_map, B => qb_map), data=datadict)
     inference = ed.MAP(Dict(W => qw_map), data=datadict)
+    inference[:run](n_iter=opt_iterations)
 
-    inference[:run](n_iter=100)
+    @show sess[:run](qw_map_param)[:,69693]
+    # TODO: can I initialize in a way that facilitates convergence?
+    # E.g. Start off with bias weight high and others low and go from there?
 
-    #optimizer = tf.train[:GradientDescentOptimizer](1e-8)
-    #inference[:run](n_iter=200, optimizer=optimizer)
-
-    qw_mu_ = sess[:run](qw_map_param)
-    #@show qw_mu_[:,184426]
-    #@show sess[:run](W[:log_prob](qw_map_param))
-    lp0 = sum(sess[:run](W[:log_prob](qw_map_param)))
-    musigma_ = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                y=tf.matmul(X, qw_map_param), value=musigma_data)
-    ms_lp0 = sum(sess[:run](musigma_[:log_prob](musigma_data)))
-
-    gs = tf.gradients(musigma_[:log_prob](musigma_data), [qw_map_param])
-    @show qw_mu_[:,184426]
-    @show sess[:run](gs[1])[:,184426]
-    gs = tf.gradients(W[:log_prob](qw_map_param), [qw_map_param])
-    @show sess[:run](gs[1])[:,184426]
-
-    offset = minimum(qw_mu_[:,184426])
-    qw_mu_[:,184426] -= offset
-    qw_mu_[factoridx["bias"],184426] += 2 * offset
-    qw_map_param_ = tf.constant(qw_mu_)
-    #@show qw_mu_[:,184426]
-    #@show sess[:run](W[:log_prob](tf.constant(qw_mu_)))
-    lp1 = sum(sess[:run](W[:log_prob](qw_map_param_)))
-    musigma_ = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                y=tf.matmul(X, qw_map_param_), value=musigma_data)
-    ms_lp1 = sum(sess[:run](musigma_[:log_prob](musigma_data)))
-
-    gs = tf.gradients(musigma_[:log_prob](musigma_data), [qw_map_param_])
-    @show sess[:run](gs[1])[:,184426]
-    gs = tf.gradients(W[:log_prob](qw_map_param_), [qw_map_param_])
-    @show sess[:run](gs[1])[:,184426]
-
-
-    @show (lp0, lp1, lp0 < lp1)
-    @show (ms_lp0, ms_lp1, ms_lp0 < ms_lp1)
-    @show (-(lp0 + ms_lp0), -(lp1 + ms_lp1), lp0 + ms_lp0 < lp1 + ms_lp1)
-
-    # TODO: It seems like the gradients for y wrt to qw_map_param will always
-    # push it above the actual maximum posterior. How could this be? I think
-    # there is something to do with the overparameterization that we're still
-    # missing.
-    #
-    # Is it possible that there are multiple modes and it's getting stuck in
-    # one? Not in this case because bias + ε, w - ε will lead to strictly
-    # improved, so there should be a smooth upward gradient, it's just negative
-    # in any single direction.
-
-    # I'm completely at a loss.
-
-    iterations = 200
-
+    # Now run VI starting from mu set to the MAP estimates
+    vi_iterations = 200
     qw_mu = tf.Variable(sess[:run](qw_map_param))
     qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 0.1)))
     qw = edmodels.MultivariateNormalDiag(name="qw", qw_mu, qw_sigma)
@@ -242,38 +168,29 @@ function estimate(experiment_spec_filename, output_filename)
     qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.1)))
     qb = edmodels.MultivariateNormalDiag(name="qb", qb_mu, qb_sigma)
 
-    inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
+    #inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)
+    inference = ed.KLqp(Dict(W => qw), data=datadict)
 
     # TODO: experiment with making this more aggressive
-    learning_rate = 1e-2
+    learning_rate = 1e-3
     beta1 = 0.7
     beta2 = 0.99
     optimizer = tf.train[:AdamOptimizer](learning_rate, beta1, beta2)
-    inference[:run](n_iter=iterations, optimizer=optimizer)
+    inference[:run](n_iter=vi_iterations, optimizer=optimizer)
 
     # Trace
-    #run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
-    #run_metadata = tf.RunMetadata()
-    #sess[:run](inference[:train], options=run_options,
-               #run_metadata=run_metadata)
-    #sess[:run](inference[:loss], options=run_options,
-               #run_metadata=run_metadata)
+    run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    run_metadata = tf.RunMetadata()
+    sess[:run](inference[:train], options=run_options,
+               run_metadata=run_metadata)
+    sess[:run](inference[:loss], options=run_options,
+               run_metadata=run_metadata)
 
-    #tl = tftl.Timeline(run_metadata[:step_stats])
-    #ctf = tl[:generate_chrome_trace_format]()
-    #trace_out = pybuiltin(:open)("timeline.json", "w")
-    #trace_out[:write](ctf)
-    #trace_out[:close]()
-
-    # MAP
-    # ---
-    #=
-    qy_params = tf.Variable(y0)
-    qy = edmodels.PointMass(params=qy_params)
-    #qy = edmodels.PointMass(params=tf.Variable(tf.zeros([num_samples, n])))
-    inference = ed.MAP(Dict(y => qy), data=datadict)
-    inference[:run](n_iter=iterations)
-    =#
+    tl = tftl.Timeline(run_metadata[:step_stats])
+    ctf = tl[:generate_chrome_trace_format]()
+    trace_out = pybuiltin(:open)("timeline.json", "w")
+    trace_out[:write](ctf)
+    trace_out[:close]()
 
     # Evaluate posterior means
     #y = tf.add(tf.matmul(X, qw_mu), qb_mu)
@@ -292,10 +209,8 @@ function estimate(experiment_spec_filename, output_filename)
         end
     end
     Z = tf.constant(X_)
-    #y = tf.add(tf.matmul(Z, qw_mu), qb_mu)
-    y = tf.matmul(Z, qw_mu)
-
-    @show sess[:run](qb_mu)[184426]
+    y = tf.add(tf.matmul(Z, qw_mu), qb_mu)
+    #y = tf.matmul(Z, qw_mu)
 
     post_mean = sess[:run](tf.nn[:softmax](y, dim=-1))
     #post_mean = sess[:run](y)

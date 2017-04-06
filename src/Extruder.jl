@@ -12,6 +12,7 @@ using HDF5
 using ProgressMeter
 using PyCall
 using StatsBase
+using SQLite
 import YAML
 import TensorFlow
 
@@ -199,14 +200,22 @@ function main()
                 default = "output.txt"
             "model"
                 required = true
+            "transcripts"
+                required = true
             "experiment"
                 required = true
         end
 
         parsed_args = parse_args(subcmd_args, arg_settings)
+
+        # automate generating serialized transcripts when they don't exist
+        ts, metadata = Transcripts(parsed_args["transcripts"])
+        write_transcripts("genes.db", ts, metadata)
+
         EXTRUDER_MODELS[parsed_args["model"]](
                  parsed_args["experiment"],
                  parsed_args["output"])
+
         return
     elseif subcmd == "likelihood-approx-from-isolator"
         @add_arg_table arg_settings begin

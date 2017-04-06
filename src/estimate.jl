@@ -228,7 +228,7 @@ function estimate(experiment_spec_filename, output_filename)
 end
 
 
-function write_effects(filename, factoridx, W)
+function write_effects_csv(filename, factoridx, W)
     n = size(W, 2)
     open(filename, "w") do output
         println(output, "factor,id,w")
@@ -239,6 +239,35 @@ function write_effects(filename, factoridx, W)
             end
         end
     end
+end
+
+
+function write_effects(output_filename, factoridx, W)
+    db = SQLite.DB(output_filename)
+
+    SQLite.execute!(db, "drop table if exists effects")
+
+    SQLite.execute!(db,
+        """
+        create table effects
+        (transcript_num INT, factor TEXT, w REAL)
+        """)
+
+    ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3)")
+    SQLite.execute!(db, "begin transaction")
+
+    n = size(W, 2)
+    for factor = sort(collect(keys(factoridx)))
+        idx = factoridx[factor]
+        for j in 1:n
+            SQLite.bind!(ins_stmt, 1, j)
+            SQLite.bind!(ins_stmt, 2, factor)
+            SQLite.bind!(ins_stmt, 2, W[idx, j])
+            SQLite.execute!(ins_stmt)
+        end
+    end
+
+    SQLite.execute!(db, "end transaction")
 end
 
 

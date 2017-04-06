@@ -38,7 +38,7 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
 
     # TODO: pass these in as parameters
     w_mu0 = 0.0
-    w_sigma0 = 0.01
+    w_sigma0 = 0.1
     w_bias_sigma0 = 100.0
 
     w_sigma = tf.concat(
@@ -59,11 +59,17 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
     sess = ed.get_session()
     datadict = PyDict(Dict(musigma => musigma_data))
 
-    map_iterations = 1000
+    map_iterations = 10
     qw_map_param = tf.Variable(tf.fill([num_factors, n], 5.0))
     qw_map = edmodels.PointMass(params=qw_map_param)
     inference = ed.MAP(Dict(W => qw_map), data=datadict)
-    inference[:run](n_iter=map_iterations)
+
+    #inference[:run](n_iter=map_iterations)
+
+    #optimizer = tf.train[:MomentumOptimizer](1e-7, 0.9)
+    optimizer = tf.train[:AdamOptimizer](0.5)
+    inference[:run](n_iter=map_iterations, optimizer=optimizer)
+
 
     #=
     vi_iterations = 500
@@ -83,7 +89,7 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
 
     qw_mu = qw_map_param
 
-    write_effects(output_filename, factoridx, sess[:run](qw_mu))
+    @time write_effects(output_filename, factoridx, sess[:run](qw_mu))
 end
 
 

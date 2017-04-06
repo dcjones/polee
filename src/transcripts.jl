@@ -56,6 +56,30 @@ end
 typealias Transcripts IntervalCollection{TranscriptMetadata}
 
 
+type TranscriptsMetadata
+    # kind indexed by transcript_id
+    transcript_kind::Dict{String, String}
+
+    # gene_id indexed by transcript_id
+    gene_id::Dict{String, String}
+
+    # gene info indexed by gene_id
+    gene_name::Dict{String, String}
+    gene_biotype::Dict{String, String}
+    gene_description::Dict{String, String}
+end
+
+
+function TranscriptsMetadata()
+    return TranscriptsMetadata(
+        Dict{String, String}(),
+        Dict{String, String}(),
+        Dict{String, String}(),
+        Dict{String, String}(),
+        Dict{String, String}())
+end
+
+
 function Transcripts(filename::String)
     prog_step = 1000
     prog = Progress(filesize(filename), 0.25, "Reading GFF3 file ", 60)
@@ -64,12 +88,32 @@ function Transcripts(filename::String)
 
     transcript_id_by_name = HatTrie()
     transcript_by_id = Transcript[]
+    metadata = TranscriptsMetadata()
 
     i = 0
     while !isnull(tryread!(reader, entry))
         if (i += 1) % prog_step == 0
             update!(prog, position(reader.state.stream.source))
         end
+
+        attr = entry.metadata.attributes
+
+        if entry.metadata.kind == "gene"
+            gene_id = attr["ID"]
+            metadata.gene_name[gene_id] =
+                haskey(attr, "Name") ? attr["Name"] : ""
+            metadata.gene_biotype[gene_id] =
+                haskey(attr, "biotype") ? attr["biotype"] : ""
+            metadata.gene_description[gene_id] =
+                haskey(attr, "description") ? attr["description"] : ""
+            continue
+        end
+
+        if haskey(attr, "Parent") && startswith(attr["Parent"], "gene:")
+            metadata.gene_id[attr["ID"]] = attr["Parent"]
+            metadata.transcript_kind[attr["ID"]] = entry.metadata.kind
+        end
+
         if entry.metadata.kind != "exon"
             continue
         end
@@ -99,7 +143,7 @@ function Transcripts(filename::String)
         sort!(t.metadata.exons)
     end
 
-    return transcripts
+    return transcripts, metadata
 end
 
 
@@ -159,4 +203,108 @@ function genomic_to_transcriptomic(t::Transcript, position::Integer)
         return tpos + position - t.metadata.exons[i].first
     end
 end
+
+
+"""
+Serialize a GFF3 file into sqlite3 database.
+"""
+function write_transcripts(output_filename, transcripts, metadata)
+    db = SQLite.DB(output_filename)
+
+    # Gene Table
+    # ----------
+
+    gene_nums = Dict{String, Int}()
+    for (transcript_id, gene_id) in metadata.gene_id
+        get!(gene_nums, gene_id, length(gene_nums) + 1)
+    end
+
+    SQLite.execute!(db, "drop table if exists genes")
+    SQLite.execute!(db,
+        """
+        create table genes
+        (
+            gene_num INT PRIMARY KEY,
+            gene_id TEXT,
+            gene_name TEXT,
+            gene_biotype TEXT,
+            gene_description TEXT
+        )
+        """)
+
+    ins_stmt = SQLite.Stmt(db, "insert into genes values (?1, ?2, ?3, ?4, ?5)")
+    SQLite.execute!(db, "begin transaction")
+    for (gene_id, gene_num) in gene_nums
+        SQLite.bind!(ins_stmt, 1, gene_num)
+        SQLite.bind!(ins_stmt, 2, gene_id)
+        SQLite.bind!(ins_stmt, 3, get(metadata.gene_name, gene_id, ""))
+        SQLite.bind!(ins_stmt, 4, get(metadata.gene_biotype, gene_id, ""))
+        SQLite.bind!(ins_stmt, 5, get(metadata.gene_description, gene_id, ""))
+        SQLite.execute!(ins_stmt)
+    end
+    SQLite.execute!(db, "end transaction")
+
+    # Transcript Table
+    # ----------------
+
+    SQLite.execute!(db, "drop table if exists transcripts")
+    SQLite.execute!(db,
+        """
+        create table transcripts
+        (
+            transcript_num INT PRIMARY KEY,
+            transcript_id TEXT,
+            kind TEXT,
+            seqname TEXT,
+            strand INT,
+            gene_num INT
+        )
+        """)
+    ins_stmt = SQLite.Stmt(db,
+        "insert into transcripts values (?1, ?2, ?3, ?4, ?5, ?6)")
+    SQLite.execute!(db, "begin transaction")
+    for t in transcripts
+        SQLite.bind!(ins_stmt, 1, t.metadata.id)
+        SQLite.bind!(ins_stmt, 2, String(t.metadata.name))
+        SQLite.bind!(ins_stmt, 3, metadata.transcript_kind[t.metadata.name])
+        SQLite.bind!(ins_stmt, 4, String(t.seqname))
+        SQLite.bind!(ins_stmt, 5,
+            t.strand == STRAND_POS ? 1 :
+            t.strand == STRAND_NEG ? -1 : 0)
+        SQLite.bind!(ins_stmt, 6, gene_nums[metadata.gene_id[t.metadata.name]])
+        SQLite.execute!(ins_stmt)
+    end
+    SQLite.execute!(db, "end transaction")
+
+
+    # Exon Table
+    # ----------
+
+    SQLite.execute!(db, "drop table if exists exons")
+    SQLite.execute!(db,
+        """
+        create table exons
+        (
+            transcript_num INT,
+            first INT,
+            last INT
+        )
+        """)
+
+    ins_stmt = SQLite.Stmt(db, "insert into exons values (?1, ?2, ?3)")
+    SQLite.execute!(db, "begin transaction")
+    for t in transcripts
+        for exon in t.metadata.exons
+            SQLite.bind!(ins_stmt, 1, t.metadata.id)
+            SQLite.bind!(ins_stmt, 2, exon.first)
+            SQLite.bind!(ins_stmt, 3, exon.last)
+            SQLite.execute!(ins_stmt)
+        end
+    end
+    SQLite.execute!(db, "end transaction")
+end
+
+
+# TODO: Read from sqlite3
+
 

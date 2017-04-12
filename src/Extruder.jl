@@ -35,6 +35,7 @@ include("hattrie_stringfield.jl")
 # TODO: automate including everything under models
 EXTRUDER_MODELS = Dict{String, Function}()
 include("models/linear-regression.jl")
+include("models/simple-linear-regression.jl")
 include("models/simple-mode.jl")
 
 

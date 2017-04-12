@@ -1,5 +1,10 @@
 
-function estimate_linear_regression(experiment_spec_filename, output_filename)
+# This is obviously not very DRY, since nearly all of it is from
+# linear-regression, but I don't really give a shit about this model for
+# anything other than comparison.
+
+function estimate_simple_linear_regression(experiment_spec_filename,
+                                           output_filename)
     # read info from experiment specification
     experiment_spec = YAML.load_file(experiment_spec_filename)
     names = [entry["name"] for entry in experiment_spec]
@@ -47,17 +52,16 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
     W = edmodels.MultivariateNormalDiag(
             name="W", tf.constant(0.0, shape=[num_factors, n]), w_sigma)
 
-    y = tf.matmul(X, W)
-
-    musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                y=y, value=musigma_data)
+    mu = tf.matmul(X, W)
+    y = edmodels.MultivariateNormalDiag(
+            mu, tf.constant(1.0, shape=[num_samples, n]))
 
     # inference
     # ---------
 
     println("Estimating...")
     sess = ed.get_session()
-    datadict = PyDict(Dict(musigma => musigma_data))
+    datadict = PyDict(Dict(y => y0))
 
     map_iterations = 500
     qw_map_param = tf.Variable(tf.fill([num_factors, n], 0.0))
@@ -70,29 +74,10 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
     optimizer = tf.train[:AdamOptimizer](0.5)
     inference[:run](n_iter=map_iterations, optimizer=optimizer)
 
-
-    #=
-    vi_iterations = 500
-    qw_mu = tf.Variable(sess[:run](qw_map_param))
-    qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 1.0)))
-    qw = edmodels.MultivariateNormalDiag(name="qw", qw_mu, qw_sigma)
-
-    inference = ed.KLqp(Dict(W => qw), data=datadict)
-
-    learning_rate = 1e-3
-    beta1 = 0.7
-    beta2 = 0.99
-    optimizer = tf.train[:AdamOptimizer](learning_rate, beta1, beta2)
-    inference[:run](n_iter=vi_iterations, optimizer=optimizer)
-    #inference[:run](n_iter=vi_iterations)
-    =#
-
     qw_mu = qw_map_param
 
     @time write_effects(output_filename, factoridx, sess[:run](qw_mu))
 end
 
 
-EXTRUDER_MODELS["linear-regression"] = estimate_linear_regression
-
-
+EXTRUDER_MODELS["simple-linear-regression"] = estimate_simple_linear_regression

@@ -254,19 +254,18 @@ function write_effects(output_filename, factoridx, W)
         """)
 
     ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3)")
-    SQLite.execute!(db, "begin transaction")
 
+    SQLite.execute!(db, "begin transaction")
     n = size(W, 2)
     for factor = sort(collect(keys(factoridx)))
         idx = factoridx[factor]
         for j in 1:n
             SQLite.bind!(ins_stmt, 1, j)
             SQLite.bind!(ins_stmt, 2, factor)
-            SQLite.bind!(ins_stmt, 2, W[idx, j])
+            SQLite.bind!(ins_stmt, 3, W[idx, j])
             SQLite.execute!(ins_stmt)
         end
     end
-
     SQLite.execute!(db, "end transaction")
 end
 

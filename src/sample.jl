@@ -2,7 +2,7 @@
 type RNASeqSample
     m::Int
     n::Int
-    X::RSBMatrix
+    X::SparseMatrixRSB
     effective_lengths::Vector{Float32}
 end
 
@@ -19,7 +19,7 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     colptr = read(input["colptr"])
     rowval = read(input["rowval"])
     nzval = read(input["nzval"])
-    X = RSBMatrix(SparseMatrixCSC(m, n, colptr, rowval, nzval))
+    X = SparseMatrixRSB(SparseMatrixCSC(m, n, colptr, rowval, nzval))
     effective_lengths = read(input["effective_lengths"])
 
     return RNASeqSample(m, n, X, effective_lengths)
@@ -141,7 +141,7 @@ function RNASeqSample(transcripts_filename::String,
         end
     end
 
-    return RNASeqSample(m, n, RSBMatrix(I, J, V, m, n), effective_lengths)
+    return RNASeqSample(m, n, SparseMatrixRSB(I, J, V, m, n), effective_lengths)
 end
 
 

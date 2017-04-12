@@ -40,7 +40,7 @@ function approximate_likelihood_from_isolator(input_filename,
         push!(V, v)
     end
     X = sparse(I, J, V, m, n)
-    rsbX = RSBMatrix(X)
+    rsbX = SparseMatrixRSB(X)
 
     effective_lengths = Float32[]
     open(effective_lengths_filename) do input

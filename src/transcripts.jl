@@ -86,7 +86,7 @@ function Transcripts(filename::String)
     reader = open(GFF3Reader, filename)
     entry = eltype(reader)()
 
-    transcript_id_by_name = HatTrie()
+    transcript_id_by_name = HATTrie()
     transcript_by_id = Transcript[]
     metadata = TranscriptsMetadata()
 

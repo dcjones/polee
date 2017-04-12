@@ -105,7 +105,7 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
                excluded_seqs::Set{String})
     prog_step = 1000
     entry = eltype(reader)()
-    readnames = HatTrie()
+    readnames = HATTrie()
     alignments = Alignment[]
     cigardata = UInt32[]
 

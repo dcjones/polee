@@ -8,23 +8,20 @@ using Bio.Intervals
 using Bio.Seq
 using Bio.StringFields
 using Distributions
+using HATTries
 using HDF5
 using ProgressMeter
 using PyCall
-using StatsBase
+using RecursiveSparseBlocks
 using SQLite
+using StatsBase
 import YAML
 import TensorFlow
 
 include("fastmath.jl")
 using .FastMath
 
-include("rsb.jl")
-using .RSB
-RSB.rsb_init()
-
 include("constants.jl")
-include("hattrie.jl")
 include("transcripts.jl")
 include("reads.jl")
 include("bias.jl")
@@ -33,6 +30,7 @@ include("model.jl")
 include("sample.jl")
 include("likelihood-approximation.jl")
 include("estimate.jl")
+include("hattrie_stringfield.jl")
 
 # TODO: automate including everything under models
 EXTRUDER_MODELS = Dict{String, Function}()

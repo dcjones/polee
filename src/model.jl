@@ -170,7 +170,8 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
     end
 
     # conditional fragment probabilities
-    A_mul_B!(frag_probs, X, model.π_simplex)
+    A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X,
+             unsafe_wrap(Vector{Float32}, pointer(model.π_simplex), n, false))
 
     # log-likelihood
     frag_probs_v = reinterpret(FloatVec, frag_probs)
@@ -184,7 +185,8 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
 
     # computed untransformed gradient in raw_grad
     raw_grad = model.raw_grad
-    At_mul_B!(raw_grad, X, frag_probs)
+    At_mul_B!(unsafe_wrap(Vector{Float32}, pointer(raw_grad), n, false), X,
+              unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
 
     # Gradients with respect to simplex(x)
     c = 0.0

@@ -138,6 +138,12 @@ function Transcripts(filename::String)
     println("Read ", length(transcript_by_id), " transcripts")
     transcripts = IntervalCollection(transcript_by_id, true)
 
+    # reassign transcript indexes to group by position
+    # (since it can give the sparse matrix a somewhat better structure)
+    for (tid, t) in enumerate(transcripts)
+        t.metadata.id = tid
+    end
+
     # make sure all exons arrays are sorted
     for t in transcripts
         sort!(t.metadata.exons)

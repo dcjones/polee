@@ -10,7 +10,7 @@ function estimate_simple_mode(experiment_spec_filename, output_filename)
 
     sess = ed.get_session()
 
-    est = sess[:run](tf.nn[:softmax](y0, dim=-1))
+    est = sess[:run](tf.multiply(1e6, tf.nn[:softmax](y0, dim=-1)))
     write_estimates(output_filename, names, est)
 end
 

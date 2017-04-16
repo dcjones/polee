@@ -144,7 +144,7 @@ end
 
 
 function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
-                      alnpr::AlignmentPair)
+                      alnpr::AlignmentPair, effective_length::Float32)
     fraglen_ = fragmentlength(t, rs, alnpr)
     if isnull(fraglen_)
         return 0.0f0
@@ -159,15 +159,13 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
     # TODO: look at FragWeightEstimationThread::fragment_weight for how to
     # handle all this shit
 
-    fragpr = 1.0f0
-    fragpr *= fraglen <= length(fm.fraglen_pmf) ? fm.fraglen_pmf[fraglen] : 0.0f0
-
     tlen = exonic_length(t)
-    fragpr /= tlen <= length(fm.fraglen_cdf) ? fm.fraglen_cdf[tlen] : 1.0f0
+    fraglenpr = fraglen <= MAX_FRAG_LEN ? fm.fraglen_pmf[fraglen] : 0.0f0
 
     # TODO: use simplistic probabilities for the time being
-    fraglenpr = fraglen <= MAX_FRAG_LEN ? fm.fraglen_pmf[fraglen] : 0.0f0
-    fragpr = fraglenpr / (tlen - fraglen)
+    #fragpr = fraglenpr / (tlen <= MAX_FRAG_LEN ? fm.fraglen_cdf[tlen] : 1.0f0)
+    #fragpr = fraglenpr / (tlen - fraglen)
+    fragpr = fraglenpr / effective_length
 
     return fragpr
 end
@@ -179,7 +177,7 @@ function effective_length(fm::FragModel, t::Transcript)
     for l in 1:min(tlen, MAX_FRAG_LEN)
         el += fm.fraglen_pmf[l] * (tlen - l + 1)
     end
-    return max(el, 0.01f0)
+    return Float32(max(el, MIN_EFFECTIVE_LENGTH))
 end
 
 

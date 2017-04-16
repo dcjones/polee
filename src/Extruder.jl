@@ -15,6 +15,7 @@ using PyCall
 using RecursiveSparseBlocks
 using SQLite
 using StatsBase
+import SHA
 import YAML
 import TensorFlow
 

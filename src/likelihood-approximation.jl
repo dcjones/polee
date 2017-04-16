@@ -14,6 +14,10 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
         out["n"] = sample.n
         out["mu", "compress", 1] = μ[1:n-1]
         out["sigma", "compress", 1] = σ[1:n-1]
+        g = g_create(out, "metadata")
+        attrs(g)["gfffilename"] = sample.transcript_metadata.filename
+        attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
+        attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
     end
 end
 
@@ -290,12 +294,12 @@ function approximate_likelihood(s::RNASeqSample)
     println("Finished in ", step_num, " steps")
 
     # Write out point estimates for convenience
-    log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
-    open("point-estimates.csv", "w") do out
-        for i in 1:n
-            @printf(out, "%e\n", model.π_simplex[i])
-        end
-    end
+    #log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
+    #open("point-estimates.csv", "w") do out
+        #for i in 1:n
+            #@printf(out, "%e\n", model.π_simplex[i])
+        #end
+    #end
 
     map!(exp, σv, ωv)
     return μ, σ

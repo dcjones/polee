@@ -4,6 +4,7 @@ type RNASeqSample
     n::Int
     X::SparseMatrixRSB
     effective_lengths::Vector{Float32}
+    transcript_metadata::TranscriptsMetadata
 end
 
 
@@ -22,13 +23,11 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     X = SparseMatrixRSB(SparseMatrixCSC(m, n, colptr, rowval, nzval))
     effective_lengths = read(input["effective_lengths"])
 
-    return RNASeqSample(m, n, X, effective_lengths)
+    return RNASeqSample(m, n, X, effective_lengths, TranscriptsMetadata())
 end
 
 
-function parallel_intersection_loop(ts, rs, fm, aln_idx_map, I, J, V)
-    MIN_FRAG_PROB = 1e-10
-
+function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
     # join matching trees from ts and rs
     T = Tuple{Intervals.IntervalCollectionTree{TranscriptMetadata},
               Intervals.IntervalCollectionTree{AlignmentPairMetadata}}
@@ -39,14 +38,13 @@ function parallel_intersection_loop(ts, rs, fm, aln_idx_map, I, J, V)
         end
     end
 
-    @show length(treepairs)
-
     # process pairs of trees in parallel
     mut = Threads.Mutex()
     Threads.@threads for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree)
-            fragpr = condfragprob(fm, t, rs, alnpr)
+            fragpr = condfragprob(fm, t, rs, alnpr,
+                                  effective_lengths[t.metadata.id])
             if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
                 i_ = alnpr.metadata.mate1_idx > 0 ?
                         rs.alignments[alnpr.metadata.mate1_idx].id :
@@ -73,7 +71,7 @@ function RNASeqSample(transcripts_filename::String,
                       excluded_seqs::Set{String},
                       output=Nullable{String}())
 
-    ts, _ = Transcripts(transcripts_filename)
+    ts, ts_metadata = Transcripts(transcripts_filename)
     rs = Reads(reads_filename, excluded_seqs)
     read_transcript_sequences!(ts, genome_filename)
     fm = FragModel(rs, ts)
@@ -86,7 +84,6 @@ function RNASeqSample(transcripts_filename::String,
     V = Float32[]
 
     # reassign indexes to alignments to group by position
-    tic()
     aln_idx_map = zeros(Int, length(rs.alignments))
     nextidx = 1
     for alnpr in rs.alignment_pairs
@@ -105,24 +102,10 @@ function RNASeqSample(transcripts_filename::String,
         end
     end
 
-    # reassign transcript indexes to group by position
-    for (tid, t) in enumerate(ts)
-        t.metadata.id = tid
-    end
-    toc()
-
     tic()
-    parallel_intersection_loop(ts, rs, fm, aln_idx_map, I, J, V)
 
     effective_lengths = Float32[effective_length(fm, t) for t in ts]
-
-    # Write transcript out with corresponding indexes
-    # TODO: this should probably be dumped into the output somehow
-    open("transcripts.txt", "w") do out
-        for t in ts
-            println(out, t.metadata.id, ",", t.metadata.name)
-        end
-    end
+    parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
 
     toc()
 
@@ -138,10 +121,15 @@ function RNASeqSample(transcripts_filename::String,
             out["rowval", "compress", 1] = M.rowval
             out["nzval", "compress", 1] = M.nzval
             out["effective_lengths", "compress", 1] = effective_lengths
+            g = g_create(out, "metadata")
+            attrs(g)["gfffilename"] = metadata.gfffilename
+            attrs(g)["gffhash"]     = metadata.gffhash
+            attrs(g)["gffsize"]     = metadata.gffsize
         end
     end
 
-    return RNASeqSample(m, n, SparseMatrixRSB(I, J, V, m, n), effective_lengths)
+    return RNASeqSample(m, n, SparseMatrixRSB(I, J, V, m, n),
+                        effective_lengths, ts_metadata)
 end
 
 

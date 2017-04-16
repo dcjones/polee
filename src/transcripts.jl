@@ -57,6 +57,10 @@ typealias Transcripts IntervalCollection{TranscriptMetadata}
 
 
 type TranscriptsMetadata
+    filename::String
+    gffsize::Int
+    gffhash::Vector{UInt8}
+
     # kind indexed by transcript_id
     transcript_kind::Dict{String, String}
 
@@ -72,6 +76,7 @@ end
 
 function TranscriptsMetadata()
     return TranscriptsMetadata(
+        "", 0, UInt8[],
         Dict{String, String}(),
         Dict{String, String}(),
         Dict{String, String}(),
@@ -83,6 +88,7 @@ end
 function Transcripts(filename::String)
     prog_step = 1000
     prog = Progress(filesize(filename), 0.25, "Reading GFF3 file ", 60)
+
     reader = open(GFF3Reader, filename)
     entry = eltype(reader)()
 
@@ -148,6 +154,10 @@ function Transcripts(filename::String)
     for t in transcripts
         sort!(t.metadata.exons)
     end
+
+    metadata.filename = filename
+    metadata.gffsize = filesize(filename)
+    metadata.gffhash = SHA.sha1(open(filename))
 
     return transcripts, metadata
 end

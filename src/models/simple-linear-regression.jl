@@ -52,9 +52,10 @@ function estimate_simple_linear_regression(experiment_spec_filename,
     W = edmodels.MultivariateNormalDiag(
             name="W", tf.constant(0.0, shape=[num_factors, n]), w_sigma)
 
+    #y = tf.matmul(X, W)
     mu = tf.matmul(X, W)
     y = edmodels.MultivariateNormalDiag(
-            mu, tf.constant(1.0, shape=[num_samples, n]))
+            mu, tf.constant(1e-4, shape=[num_samples, n]))
 
     # inference
     # ---------

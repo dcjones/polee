@@ -33,11 +33,12 @@ function approximate_likelihood_from_isolator(input_filename,
     I = Array(Int, 0)
     J = Array(Int, 0)
     V = Array(Float32, 0)
+    println("reading isolator likelihood matrix...")
     for line in eachline(input)
         j_, i_, v_ = split(line, ',')
         i = 1 + parse(Int, i_)
         j = 1 + parse(Int, j_)
-        v = parse(Float32, j_)
+        v = parse(Float32, v_)
 
         push!(I, i)
         push!(J, j)
@@ -45,15 +46,18 @@ function approximate_likelihood_from_isolator(input_filename,
     end
     X = sparse(I, J, V, m, n)
     rsbX = SparseMatrixRSB(X)
+    println("done")
 
+    println("reading isolator transcript weights...")
     effective_lengths = Float32[]
     open(effective_lengths_filename) do input
         for line in eachline(input)
             push!(effective_lengths, parse(Float32, line))
         end
     end
+    println("done")
 
-    sample = RNASeqSample(m, n, rsbX, effective_lengths)
+    sample = RNASeqSample(m, n, rsbX, effective_lengths, TranscriptsMetadata())
 
     # measure and dump connectivity info
     #=
@@ -164,9 +168,13 @@ function approximate_likelihood(s::RNASeqSample)
     # step size constants
     ss_τ = 1.0
     ss_ε = 1e-16
+
+    # influence of the most recent gradient on step size
     ss_ω_α = 0.1
     ss_μ_α = 0.01
+
     ss_η = 1.0
+
     ss_max_μ_step = 1e-1
     ss_max_ω_step = 1e-1
     srand(4324)

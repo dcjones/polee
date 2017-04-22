@@ -171,7 +171,7 @@ function approximate_likelihood(s::RNASeqSample)
 
     # influence of the most recent gradient on step size
     ss_ω_α = 0.1
-    ss_μ_α = 0.01
+    ss_μ_α = 0.1
 
     ss_η = 1.0
 
@@ -181,7 +181,7 @@ function approximate_likelihood(s::RNASeqSample)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 2
+    num_mc_samples = 1
     η = fillpadded(FloatVec, 0.0f0, n-1)
     ζ = fillpadded(FloatVec, 0.0f0, n-1)
 
@@ -263,7 +263,7 @@ function approximate_likelihood(s::RNASeqSample)
         elbo += normal_entropy!(ω_grad, σ, n-1)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        @printf("\e[F\e[JOptimizing ELBO: %.4e\n", elbo)
+        @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
         #@printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
@@ -271,7 +271,8 @@ function approximate_likelihood(s::RNASeqSample)
             s_ω[:] = ω_grad.^2
         end
 
-        c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
+        #c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
+        c =  ss_η * 1.0/1.02^step_num
         for i in 1:n-1
             s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_μ[i]))
@@ -294,7 +295,7 @@ function approximate_likelihood(s::RNASeqSample)
             fruitless_step_count = 0
         end
 
-        if fruitless_step_count > 5
+        if fruitless_step_count > 100
             break
         end
     end

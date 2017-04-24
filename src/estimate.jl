@@ -1,6 +1,8 @@
 # TODO: use Pkg.dir when we make this an actual package
 unshift!(PyVector(pyimport("sys")["path"]), "/home/dcjones/prj/extruder/src")
 @pyimport tensorflow as tf
+@pyimport tensorflow as tf
+@pyimport tensorflow.contrib.distributions as tfdist
 @pyimport tensorflow.python.client.timeline as tftl
 @pyimport edward as ed
 @pyimport edward.models as edmodels
@@ -242,7 +244,7 @@ function write_effects_csv(filename, factoridx, W)
 end
 
 
-function write_effects(output_filename, factoridx, W)
+function write_effects(output_filename, factoridx, W, sigma)
     db = SQLite.DB(output_filename)
 
     SQLite.execute!(db, "drop table if exists effects")
@@ -250,10 +252,10 @@ function write_effects(output_filename, factoridx, W)
     SQLite.execute!(db,
         """
         create table effects
-        (transcript_num INT, factor TEXT, w REAL)
+        (transcript_num INT, factor TEXT, w REAL, sigma REAL)
         """)
 
-    ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3)")
+    ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3, ?4)")
 
     SQLite.execute!(db, "begin transaction")
     n = size(W, 2)
@@ -263,6 +265,7 @@ function write_effects(output_filename, factoridx, W)
             SQLite.bind!(ins_stmt, 1, j)
             SQLite.bind!(ins_stmt, 2, factor)
             SQLite.bind!(ins_stmt, 3, W[idx, j])
+            SQLite.bind!(ins_stmt, 4, sigma[j])
             SQLite.execute!(ins_stmt)
         end
     end
@@ -282,3 +285,7 @@ function write_estimates(filename, names, est)
         end
     end
 end
+    # TODO:
+    # There more I think about it, there really should be a Normal distribution
+    # between y and musigma.
+

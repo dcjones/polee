@@ -36,6 +36,7 @@ function estimate_simple_linear_regression(experiment_spec_filename,
     X = tf.constant(X_)
 
     n, musigma_data, y0 = load_samples(filenames)
+    @show n
     println("Sample data loaded")
 
     # model specification
@@ -43,7 +44,7 @@ function estimate_simple_linear_regression(experiment_spec_filename,
 
     # TODO: pass these in as parameters
     w_mu0 = 0.0
-    w_sigma0 = 0.1
+    w_sigma0 = 1.0
     w_bias_sigma0 = 100.0
 
     w_sigma = tf.concat(
@@ -52,10 +53,16 @@ function estimate_simple_linear_regression(experiment_spec_filename,
     W = edmodels.MultivariateNormalDiag(
             name="W", tf.constant(0.0, shape=[num_factors, n]), w_sigma)
 
-    #y = tf.matmul(X, W)
     mu = tf.matmul(X, W)
-    y = edmodels.MultivariateNormalDiag(
-            mu, tf.constant(1e-4, shape=[num_samples, n]))
+
+    y_sigma_alpha = tf.constant(1.0, shape=[n])
+    y_sigma_beta = tf.constant(1.0, shape=[n])
+    y_sigma = edmodels.InverseGamma(y_sigma_alpha, y_sigma_beta)
+
+    y_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
+                              tf.expand_dims(y_sigma, 0))
+
+    y = edmodels.MultivariateNormalDiag(mu, y_sigma_param)
 
     # inference
     # ---------
@@ -64,20 +71,25 @@ function estimate_simple_linear_regression(experiment_spec_filename,
     sess = ed.get_session()
     datadict = PyDict(Dict(y => y0))
 
-    map_iterations = 500
+    map_iterations = 2500
     qw_map_param = tf.Variable(tf.fill([num_factors, n], 0.0))
     qw_map = edmodels.PointMass(params=qw_map_param)
-    inference = ed.MAP(Dict(W => qw_map), data=datadict)
+
+    qy_sigma_param = tf.Variable(tf.fill([n], 1.0))
+    qy_sigma = edmodels.PointMass(params=qy_sigma_param)
+
+    inference = ed.MAP(Dict(W => qw_map, y_sigma => qy_sigma), data=datadict)
 
     #inference[:run](n_iter=map_iterations)
 
     #optimizer = tf.train[:MomentumOptimizer](1e-7, 0.9)
-    optimizer = tf.train[:AdamOptimizer](0.5)
+    optimizer = tf.train[:AdamOptimizer](0.1)
     inference[:run](n_iter=map_iterations, optimizer=optimizer)
 
     qw_mu = qw_map_param
 
-    @time write_effects(output_filename, factoridx, sess[:run](qw_mu))
+    @time write_effects(output_filename, factoridx,
+                        sess[:run](qw_mu), sess[:run](qy_sigma_param))
 end
 
 

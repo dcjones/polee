@@ -21,7 +21,7 @@
 %% TODO: actually describe this
 
 For $i < n$,
-$$z_i = \text{logit}^{-1}\left(y_i + \frac{1}{n - i}\right)$$
+$$z_i = \text{logit}^{-1}\left(y_i + \log\left(\frac{1}{n - i}\right)\right)$$
 
 For $i < n$,
 $$x_i = z_i \left(1 - \sum_{k=1}^{i-1} x_k \right)$$

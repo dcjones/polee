@@ -39,40 +39,38 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
     # TODO: pass these in as parameters
     w_mu0 = 0.0
     w_sigma0 = 1.0
-    w_bias_sigma0 = 100.0
+    w_bias_mu0 = log(1/n)
+    w_bias_sigma0 = 10.0
 
     w_sigma = tf.concat(
                   [tf.constant(w_bias_sigma0, shape=[1, n]),
                    tf.constant(w_sigma0, shape=[num_factors-1, n])], 0)
-    W = edmodels.MultivariateNormalDiag(
-            name="W", tf.constant(0.0, shape=[num_factors, n]), w_sigma)
+    w_mu = tf.concat(
+                  [tf.constant(w_bias_mu0, shape=[1, n]),
+                   tf.constant(w_mu0, shape=[num_factors-1, n])], 0)
 
-    v = tf.matmul(X, W)
+    W = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
 
-    y_sigma_alpha = tf.constant(1.0, shape=[n])
-    y_sigma_beta = tf.constant(1.0, shape=[n])
-    y_sigma_sq = edmodels.InverseGamma(y_sigma_alpha, y_sigma_beta)
-    #y_sigma = tf.sqrt(y_sigma_sq)
-    y_sigma = y_sigma_sq
+    mu = tf.matmul(X, W)
 
-    #y_sigma_log = edmodels.MultivariateNormalDiag(
-                    #tf.constant(0.0, shape=[n]),
-                    #tf.constant(1.0, shape=[n]))
-    #y_sigma = tf.exp(y_sigma_log)
+    #y_sigma_alpha = tf.constant(1.0, shape=[n])
+    #y_sigma_beta = tf.constant(1.0, shape=[n])
+    #y_sigma = edmodels.InverseGamma(y_sigma_alpha, y_sigma_beta)
 
+    y_sigma_mu0 = tf.constant(0.0, shape=[n])
+    y_sigma_sigma0 = tf.constant(1.0, shape=[n])
     #y_sigma = edmodels.TransformedDistribution(
-        #distribution=edmodels.MultivariateNormalDiag(
-                        #tf.constant(0.0, shape=[n]),
-                        #tf.constant(2.0, shape=[n])),
-        #bijector=tfdist.bijector[:Exp]())
+                #distribution=tfdist.MultivariateNormalDiag(y_sigma_mu0,
+                                                           #y_sigma_sigma0),
+                #bijector=tfdist.bijector[:Exp]())
 
-
-    #y_sigma = tf.constant(2.0, shape=[n])
+    y_log_sigma = edmodels.MultivariateNormalDiag(y_sigma_mu0, y_sigma_sigma0)
+    y_sigma = tf.exp(y_log_sigma)
 
     y_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
                               tf.expand_dims(y_sigma, 0))
 
-    y = edmodels.MultivariateNormalDiag(name="y", v, y_sigma_param)
+    y = edmodels.MultivariateNormalDiag(mu, y_sigma_param)
 
     musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                 y=y, value=musigma_data)
@@ -80,33 +78,53 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
     # inference
     # ---------
 
-    # TODO: This fucking sucks. It's not working at all.
-    # Maybe we can do two stage training. Fit the model to point estimates, then
-    # use that as a starting point to train the full model.
-
     println("Estimating...")
+
+    # optimize against point estimates
+    init_iterations = 250
+
+    #qw_init_param = tf.Variable(tf.fill([num_factors, n], 0.0))
+    qw_init_param = tf.Variable(w_mu)
+    qw = edmodels.PointMass(params=qw_init_param)
+
+    qy_log_sigma_init_param = tf.Variable(tf.fill([n], 0.0))
+    qy_log_sigma = edmodels.PointMass(params=qy_log_sigma_init_param)
+
+    inference = ed.MAP(Dict(W => qw, y_log_sigma => qy_log_sigma),
+                       data=PyDict(Dict(y => y0)))
+
+    optimizer = tf.train[:AdamOptimizer](0.1)
+    inference[:run](n_iter=init_iterations, optimizer=optimizer)
+
+
+    # optimize over the full model
     sess = ed.get_session()
-    datadict = PyDict(Dict(musigma => musigma_data))
 
     map_iterations = 500
-    qw_param = tf.Variable(tf.fill([num_factors, n], 0.0))
-    qw_param = tf.clip_by_value(qw_param, -10.0, 10.0)
+
+    #qw_param = tf.Variable(tf.fill([num_factors, n], 0.0))
+    qw_param = tf.Variable(sess[:run](qw_init_param))
+    #qw_param = tf.Print(qw_param, [tf.reduce_min(qw_param),
+                                   #tf.reduce_max(qw_param)], "W span")
     qw = edmodels.PointMass(params=qw_param)
 
-    qy_sigma_param = tf.Variable(tf.fill([n], 1.0))
-    #qy_sigma_param = tf.clip_by_value(qy_sigma_param, 1e-5, 2.0)
-    qy_sigma = edmodels.PointMass(params=qy_sigma_param)
+    qy_log_sigma_param = tf.Variable(sess[:run](qy_log_sigma_init_param))
+    #qy_log_sigma_param = tf.Print(qy_log_sigma_param,
+                              #[tf.reduce_min(qy_log_sigma_param),
+                               #tf.reduce_max(qy_log_sigma_param)], "sigma span")
+    qy_log_sigma = edmodels.PointMass(params=qy_log_sigma_param)
 
-    inference = ed.MAP(Dict(W => qw, y_sigma => qy_sigma),
-                       data=datadict)
+    inference = ed.MAP(Dict(W => qw, y_log_sigma => qy_log_sigma),
+                       data=PyDict(Dict(musigma => musigma_data)))
+
     #inference = ed.MAP(Dict(W => qw), data=datadict)
 
     #inference[:run](n_iter=map_iterations)
 
-    #optimizer = tf.train[:MomentumOptimizer](1e-7, 0.9)
-    #optimizer = tf.train[:AdamOptimizer](1.0)
-    #inference[:run](n_iter=map_iterations, optimizer=optimizer)
-    inference[:run](n_iter=map_iterations)
+    #optimizer = tf.train[:MomentumOptimizer](1e-12, 0.99)
+    optimizer = tf.train[:AdamOptimizer](0.1)
+    inference[:run](n_iter=map_iterations, optimizer=optimizer)
+    #inference[:run](n_iter=map_iterations)
 
 
     #=
@@ -127,7 +145,7 @@ function estimate_linear_regression(experiment_spec_filename, output_filename)
 
     @time write_effects(output_filename, factoridx,
                         sess[:run](qw_param),
-                        sess[:run](qy_sigma_param))
+                        sess[:run](tf.exp(qy_log_sigma_param)))
 end
 
 

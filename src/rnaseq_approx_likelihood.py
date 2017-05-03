@@ -13,7 +13,12 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         with tf.name_scope(name, values=[y]) as ns:
             # y = tf.verify_tensor_all_finite(y, "RNASeqApproxLikelihoodDist: non-finite y")
-            self.y = tf.identity(y, name="y")
+            # y = tf.Print(y, [tf.reduce_min(y), tf.reduce_max(y)], "y span")
+            self.y = tf.identity(y, name="rnaseq/y")
+            # self.y = tf.Print(self.y,
+                    # [tf.reduce_min(self.y),
+                     # tf.reduce_mean(self.y),
+                     # tf.reduce_max(self.y)], "y span")
             framework.assert_same_float_dtype([self.y])
         parameters = locals()
 
@@ -62,7 +67,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         # x = tf.check_numerics(x, message="RNASeqApproxLikelihoodDist: non-finite x", name="D")
 
-        # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "x-span")
+        # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "x span")
         ll = distributions.MultivariateNormalDiag(mu, sigma).log_pdf(x)
 
         # ll = tf.verify_tensor_all_finite(ll, "RNASeqApproxLikelihoodDist: non-finite ll")

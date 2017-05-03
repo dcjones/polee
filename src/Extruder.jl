@@ -38,6 +38,9 @@ EXTRUDER_MODELS = Dict{String, Function}()
 include("models/linear-regression.jl")
 include("models/simple-linear-regression.jl")
 include("models/simple-mode.jl")
+include("models/logistic-regression.jl")
+include("models/simple-logistic-regression.jl")
+include("models/quantification.jl")
 
 
 function read_transcript_sequences!(ts, filename)

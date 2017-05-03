@@ -1,7 +1,6 @@
 # TODO: use Pkg.dir when we make this an actual package
 unshift!(PyVector(pyimport("sys")["path"]), "/home/dcjones/prj/extruder/src")
 @pyimport tensorflow as tf
-@pyimport tensorflow as tf
 @pyimport tensorflow.contrib.distributions as tfdist
 @pyimport tensorflow.python.client.timeline as tftl
 @pyimport edward as ed
@@ -45,8 +44,12 @@ function load_samples(filenames)
         @assert length(μ) == n - 1
         @assert length(σ) == n - 1
 
-        push!(musigma_tensors,
-              tf.stack([tf.constant(PyVector(μ)), tf.constant(PyVector(σ))]))
+        #tf_μ = tf.constant(PyVector(μ))
+        #tf_σ = tf.constant(PyVector(σ))
+        tf_μ = tf.constant(μ)
+        tf_σ = tf.constant(σ)
+        tf_μσ = tf.stack([tf_μ, tf_σ])
+        push!(musigma_tensors, tf_μσ)
 
         # choose mean to be the initial values for y
         initial_values = Array(Float32, n)
@@ -171,11 +174,11 @@ function estimate(experiment_spec_filename, output_filename)
     # Now run VI starting from mu set to the MAP estimates
     vi_iterations = 500
     qw_mu = tf.Variable(sess[:run](qw_map_param))
-    qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 0.1)))
+    qw_sigma = tf.identity(tf.Variable(tf.fill([num_factors, n], 0.01)))
     qw = edmodels.MultivariateNormalDiag(name="qw", qw_mu, qw_sigma)
 
     qb_mu = tf.Variable(sess[:run](qb_map_param))
-    qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.1)))
+    qb_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.01)))
     qb = edmodels.MultivariateNormalDiag(name="qb", qb_mu, qb_sigma)
 
     inference = ed.KLqp(Dict(W => qw, B => qb), data=datadict)

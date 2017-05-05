@@ -8,6 +8,22 @@ unshift!(PyVector(pyimport("sys")["path"]), "/home/dcjones/prj/extruder/src")
 @pyimport rnaseq_approx_likelihood
 @pyimport hmc2
 
+
+function load_samples_from_specification(experiment_spec_filename)
+    experiment_spec = YAML.load_file(experiment_spec_filename)
+    names = [entry["name"] for entry in experiment_spec]
+    filenames = [entry["file"] for entry in experiment_spec]
+    sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
+    num_samples = length(filenames)
+    println("Read model specification with ", num_samples, " samples")
+
+    n, likapprox_data, y0 = load_samples(filenames)
+    println("Sample data loaded")
+
+    return likapprox_data, y0, sample_factors
+end
+
+
 function load_samples(filenames)
     n = nothing
 

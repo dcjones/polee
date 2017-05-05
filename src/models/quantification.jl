@@ -1,16 +1,15 @@
 
-
 function estimate_quantification(experiment_spec_filename, output_filename)
-    # read info from experiment specification
-    experiment_spec = YAML.load_file(experiment_spec_filename)
-    names = [entry["name"] for entry in experiment_spec]
-    filenames = [entry["file"] for entry in experiment_spec]
-    sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
-    num_samples = length(filenames)
-    println("Read model specification with ", num_samples, " samples")
+    likapprox_data, y0, sample_factors =
+            load_samples_from_specification(experiment_spec_filename)
+    estimate_quantification(likapprox_data, y0, sample_factors)
+    # TODO: write some output
+end
 
-    n, likapprox_data, y0 = load_samples(filenames)
-    println("Sample data loaded")
+
+function estimate_quantification(likapprox_data, y0, sample_factors)
+    num_samples = y0[:get_shape]()[1][:value]
+    n           = y0[:get_shape]()[2][:value]
 
     # model
     # -----
@@ -32,7 +31,6 @@ function estimate_quantification(experiment_spec_filename, output_filename)
     y_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
                               tf.expand_dims(y_sigma, 0))
 
-
     y = edmodels.MultivariateNormalDiag(y_mu_param, y_sigma_param)
 
     y_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
@@ -47,28 +45,36 @@ function estimate_quantification(experiment_spec_filename, output_filename)
 
     println("Estimating...")
 
-    qy_mu = tf.Variable(y0)
+    qy_mu_param = tf.Variable(y0)
     #qy_mu = tf.Print(qy_mu,
             #[tf.reduce_min(qy_mu), tf.reduce_mean(qy_mu), tf.reduce_max(qy_mu)],
             #"qy_mu span")
-    qy_sigma = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.1)))
-    qy = edmodels.MultivariateNormalDiag(qy_mu, qy_sigma)
+    qy_sigma_param = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.1)))
+    qy = edmodels.MultivariateNormalDiag(qy_mu_param, qy_sigma_param)
 
 
-    qy_mu_mu = tf.Variable(y0[1])
-    qy_mu_sigma = tf.identity(tf.Variable(tf.fill([n], 0.1)))
-    qy_mu = edmodels.MultivariateNormalDiag(qy_mu_mu, qy_mu_sigma)
+    qy_mu_mu_param = tf.Variable(y0[1])
+    qy_mu_sigma_param = tf.identity(tf.Variable(tf.fill([n], 0.1)))
+    qy_mu = edmodels.MultivariateNormalDiag(qy_mu_mu_param, qy_mu_sigma_param)
 
     inference = ed.KLqp(PyDict(Dict(y => qy, y_mu => qy_mu)),
                         data=PyDict(Dict(likapprox => likapprox_data)))
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
     #optimizer = tf.train[:MomentumOptimizer](1e-3, 0.99)
-    inference[:run](n_iter=500, optimizer=optimizer)
-
+    inference[:run](n_iter=250, optimizer=optimizer)
 
     sess = ed.get_session()
-    return (sess[:run](qy_mu), sess[:run](qy_sigma))
+    qy_mu_value    = sess[:run](qy_mu_param)
+    qy_sigma_value = sess[:run](qy_sigma_param)
+
+    # reset session and graph to free up memory
+    tf.reset_default_graph()
+    old_sess = ed.get_session()
+    old_sess[:close]()
+    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
+
+    return qy_mu_value, qy_sigma_value
 end
 
 

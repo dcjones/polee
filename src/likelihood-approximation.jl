@@ -21,6 +21,63 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
     end
 end
 
+
+function approximate_likelihood_from_rsem(input_filename, output_filename)
+    input = open(input_filename)
+
+    mat = match(r"^(\d+)\s+(\d+)", readline(input))
+    n = parse(Int, mat.captures[1])
+    m0 = parse(Int, mat.captures[2])
+
+    I = Array(Int, 0)
+    J = Array(Int, 0)
+    V = Array(Float32, 0)
+    println("reading rsem likelihood matrix...")
+    i = 0
+    for line in eachline(input)
+        i += 1
+
+        toks = split(line, ' ')
+        k = 1
+        while k < length(toks)
+            j = 1 + parse(Int, toks[k])
+            v = parse(Float64, toks[k+1])
+
+            if v > MIN_FRAG_PROB
+                push!(I, i)
+                push!(J, j)
+                push!(V, Float32(v))
+            end
+
+            k += 2
+        end
+    end
+    @show maximum(I)
+    @show maximum(J)
+    m = i
+    close(input)
+    @show (minimum(I), maximum(I), minimum(J), maximum(J), m, n)
+    println("making SparseMatrixCSC")
+    X = sparse(I, J, V, m, n)
+    println("making SparseMatrixRSB")
+    rsbX = SparseMatrixRSB(X)
+    println("done")
+    @show size(X)
+
+    effective_lengths = ones(Float32, n)
+    sample = RNASeqSample(m, n, rsbX, effective_lengths, TranscriptsMetadata())
+
+    @time μ, σ = approximate_likelihood(sample)
+
+    h5open(output_filename, "w") do out
+        n = sample.n
+        out["n"] = sample.n
+        out["mu", "compress", 1] = μ[1:n-1]
+        out["sigma", "compress", 1] = σ[1:n-1]
+    end
+end
+
+
 function approximate_likelihood_from_isolator(input_filename,
                                               effective_lengths_filename,
                                               output_filename)

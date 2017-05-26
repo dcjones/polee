@@ -1,9 +1,18 @@
 
 function estimate_quantification(experiment_spec_filename, output_filename)
-    likapprox_data, y0, sample_factors =
+    likapprox_data, y0, sample_factors, sample_names =
             load_samples_from_specification(experiment_spec_filename)
-    estimate_quantification(likapprox_data, y0, sample_factors)
-    # TODO: write some output
+
+    #sess = ed.get_session()
+    #post_mean = sess[:run](tf.nn[:softmax](y0, dim=-1))
+    #write_estimates(output_filename, sample_names, post_mean)
+    #exit()
+
+    qy_mu_value, qy_sigma_value =
+        estimate_quantification(likapprox_data, y0, sample_factors)
+
+    #post_mean = sess[:run](tf.nn[:softmax](qy_mu_value, dim=-1))
+    #write_estimates(output_filename, names, post_mean)
 end
 
 

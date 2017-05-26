@@ -43,8 +43,9 @@ function estimate_logistic_regression(experiment_spec_filename, output_filename)
 
     # pertition into training and testing sets
     idx = shuffle(0:num_samples-1)
-    idx_train = idx[1:div(num_samples, 2)]
-    idx_test  = idx[div(num_samples, 2)+1:end]
+    k = floor(Int, num_samples * 0.75)
+    idx_train = idx[1:k]
+    idx_test  = idx[k+1:end]
 
     X_train = tf.gather(Xobs, idx_train)
     X_test  = tf.gather(Xobs, idx_test)
@@ -119,7 +120,7 @@ function estimate_logistic_regression(experiment_spec_filename, output_filename)
 
     vi_iterations = 2000
     qw_mu = tf.Variable(w_mu)
-    qw_sigma = tf.identity(tf.Variable(tf.fill([n, num_factors], -20.0)))
+    qw_sigma = tf.identity(tf.Variable(tf.fill([n, num_factors], -15.0)))
     qw = edmodels.MultivariateNormalDiag(qw_mu, tf.exp(qw_sigma))
 
     inference = ed.KLqp(PyDict(Dict(W => qw)),

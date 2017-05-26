@@ -20,7 +20,7 @@ function load_samples_from_specification(experiment_spec_filename)
     n, likapprox_data, y0 = load_samples(filenames)
     println("Sample data loaded")
 
-    return likapprox_data, y0, sample_factors
+    return likapprox_data, y0, sample_factors, names
 end
 
 

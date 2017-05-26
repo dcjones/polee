@@ -181,7 +181,7 @@ function approximate_likelihood(s::RNASeqSample)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 1
+    num_mc_samples = 2
     η = fillpadded(FloatVec, 0.0f0, n-1)
     ζ = fillpadded(FloatVec, 0.0f0, n-1)
 
@@ -220,8 +220,6 @@ function approximate_likelihood(s::RNASeqSample)
     max_small_steps = 2
     max_fruitless_steps = 20
     max_steps = 200
-
-    output_idx = 72281
 
     println("Optimizing ELBO: ", -Inf)
 
@@ -271,8 +269,9 @@ function approximate_likelihood(s::RNASeqSample)
             s_ω[:] = ω_grad.^2
         end
 
-        #c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
-        c =  ss_η * 1.0/1.02^step_num
+        c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
+        #c = ss_η * (step_num^(-0.5 + 0.01))::Float64
+        #c =  ss_η * 1.0/1.02^step_num
         for i in 1:n-1
             s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_μ[i]))
@@ -284,10 +283,6 @@ function approximate_likelihood(s::RNASeqSample)
             ρ = c / (ss_τ + sqrt(s_ω[i]))
             ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
         end
-
-        #if step_num > 600
-            #break
-        #end
 
         if elbo < max_elbo
             fruitless_step_count += 1

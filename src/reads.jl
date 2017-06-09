@@ -16,7 +16,7 @@ end
 
 # SAM/BAM spec says pos should be the first matching position, which is hugely
 # inconvenient. We compute the actual start position here.
-function _leftposition(rec::BAMRecord)
+function _leftposition(rec::BAM.Record)
     pos = leftposition(rec)
     offset = Align.seqname_length(rec)
     for i in offset+1:4:offset+Align.n_cigar_op(rec)*4
@@ -32,7 +32,7 @@ function _leftposition(rec::BAMRecord)
 end
 
 
-function _alignment_length(rec::BAMRecord)
+function _alignment_length(rec::BAM.Record)
     offset = Align.seqname_length(rec)
     length::Int = 0
     for i in offset+1:4:offset+Align.n_cigar_op(rec)*4
@@ -46,7 +46,7 @@ function _alignment_length(rec::BAMRecord)
 end
 
 
-function _rightposition(rec::BAMRecord)
+function _rightposition(rec::BAM.Record)
     return Int32(_leftposition(rec) + _alignment_length(rec) - 1)
 end
 
@@ -55,7 +55,7 @@ immutable AlignmentPairMetadata
     mate1_idx::UInt32
     mate2_idx::UInt32
 end
-typealias AlignmentPair Interval{AlignmentPairMetadata}
+const AlignmentPair = Interval{AlignmentPairMetadata}
 
 
 function Base.isless(a::Alignment, b::Alignment)
@@ -89,11 +89,11 @@ end
 
 function Reads(filename::String, excluded_seqs::Set{String})
     if filename == "-"
-        reader = BAMReader(STDIN)
+        reader = BAM.Reader(STDIN)
         prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
         from_file = false
     else
-        reader = open(BAMReader, filename)
+        reader = open(BAM.Reader, filename)
         prog = Progress(0, 0.25, "Reading BAM file ", 60)
         from_file = true
     end
@@ -101,7 +101,7 @@ function Reads(filename::String, excluded_seqs::Set{String})
 end
 
 
-function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
+function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
                excluded_seqs::Set{String})
     prog_step = 1000
     entry = eltype(reader)()
@@ -123,7 +123,7 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
             update!(prog, position(reader.stream.io))
         end
 
-        if !ismapped(entry)
+        if !BAM.ismapped(entry)
             continue
         end
 
@@ -148,7 +148,7 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
         id = get!(readnames, seqname(entry), length(readnames) + 1)
         push!(alignments, Alignment(id, entry.refid + 1,
                                     _leftposition(entry), _rightposition(entry),
-                                    flag(entry), cigaridx))
+                                    BAM.flag(entry), cigaridx))
     end
     finish!(prog)
 
@@ -162,7 +162,7 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
 
     tic()
     # first partition alignments by reference sequence
-    blocks = Array(UnitRange{Int}, 0)
+    blocks = Array{UnitRange{Int}}(0)
     i = 1
     while i <= length(alignments)
         j = i
@@ -175,8 +175,7 @@ function Reads(reader::BAMReader, prog::Progress, from_file::Bool,
         i = j + 1
     end
 
-    trees = Array(Intervals.IntervalCollectionTree{AlignmentPairMetadata},
-                  length(blocks))
+    trees = Array{Intervals.ICTree{AlignmentPairMetadata}}(length(blocks))
 
     alignment_pairs = make_interval_collection(alignments, seqnames, blocks, trees)
     toc()
@@ -189,7 +188,7 @@ function make_interval_collection(alignments, seqnames, blocks, trees)
     Threads.@threads for blockidx in 1:length(blocks)
         block = blocks[blockidx]
         seqname = seqnames[alignments[block.start].refidx]
-        tree = Intervals.IntervalCollectionTree{AlignmentPairMetadata}()
+        tree = Intervals.ICTree{AlignmentPairMetadata}()
 
         i, j = block.start, block.start
         while i <= block.stop
@@ -251,7 +250,7 @@ function make_interval_collection(alignments, seqnames, blocks, trees)
 
     # piece together the interval collection
     alignment_pairs = IntervalCollection{AlignmentPairMetadata}()
-    treemap = Dict{StringField, Intervals.IntervalCollectionTree{AlignmentPairMetadata}}()
+    treemap = Dict{StringField, Intervals.ICTree{AlignmentPairMetadata}}()
     iclength = 0
     for (block, tree) in zip(blocks, trees)
         seqname = seqnames[alignments[block.start].refidx]
@@ -352,7 +351,7 @@ end
 macro fragmentlength_next_exonintron!(exons, idx, is_exon, first, last)
     quote
         if $(esc(is_exon))
-            if $(esc(idx)) + 1 <= length(exons)
+            if $(esc(idx)) + 1 <= length($(esc(exons)))
                 $(esc(first)) = $(esc(exons))[$(esc(idx))].last + 1
                 $(esc(last)) = $(esc(exons))[$(esc(idx))+1].first - 1
             else

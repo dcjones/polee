@@ -65,7 +65,7 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
     strand_match_count = 0
     strand_mismatch_count = 0
 
-    for (t, alnpr) in intersect(ts, examples)
+    for (t, alnpr) in eachoverlap(ts, examples)
         # collect sequences for sequence bias
         if alnpr.metadata.mate1_idx > 0
             push_alignment_context!(

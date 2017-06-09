@@ -8,8 +8,8 @@ type BiasModel
     ss_foreground::Vector{DNASequence}
     ss_background::Vector{DNASequence}
 
-    fs_model::TensorFlow.Session
-    ss_model::TensorFlow.Session
+    fs_model
+    ss_model
 end
 
 
@@ -89,9 +89,9 @@ end
 
 
 function train_model(foreground, background, k)
-    TF = TensorFlow
+    # TF = TensorFlow
 
-    sess = TF.Session(TF.Graph())
+    # sess = TF.Session(TF.Graph())
 
 
     #=
@@ -141,7 +141,7 @@ function train_model(foreground, background, k)
     #
     # So let's get some basic stuff working, then focus on evaluating
     # conditional probabilities and dumping them to a sparse matrix.
-    return sess
+    # return sess
 end
 
 

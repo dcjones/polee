@@ -22,7 +22,7 @@ end
 
 
 type TranscriptMetadata
-    name::StringField
+    name::String
     id::Int
     exons::Vector{Exon}
     seq::DNASequence
@@ -33,7 +33,7 @@ type TranscriptMetadata
 end
 
 
-typealias Transcript Interval{TranscriptMetadata}
+const Transcript = Interval{TranscriptMetadata}
 
 
 function exonic_length(t::Transcript)
@@ -53,7 +53,7 @@ function Base.push!(t::Transcript, e::Exon)
 end
 
 
-typealias Transcripts IntervalCollection{TranscriptMetadata}
+const Transcripts = IntervalCollection{TranscriptMetadata}
 
 
 type TranscriptsMetadata
@@ -85,11 +85,30 @@ function TranscriptsMetadata()
 end
 
 
+function Base.haskey(record::GFF3.Record, key::String)
+    for (i, k) in enumerate(record.attribute_keys)
+        if GFF3.isequaldata(key, record.data, k)
+            return true
+        end
+    end
+    return false
+end
+
+
+"""
+Get the first value corresponding to the key, or an empty string if the
+attribute isn't present.
+"""
+function getfirst_else_empty(rec::GFF3.Record, key::String)
+    return haskey(rec, key) ? GFF3.attributes(rec, key)[1] : ""
+end
+
+
 function Transcripts(filename::String)
     prog_step = 1000
     prog = Progress(filesize(filename), 0.25, "Reading GFF3 file ", 60)
 
-    reader = open(GFF3Reader, filename)
+    reader = open(GFF3.Reader, filename)
     entry = eltype(reader)()
 
     transcript_id_by_name = HATTrie()
@@ -97,47 +116,45 @@ function Transcripts(filename::String)
     metadata = TranscriptsMetadata()
 
     i = 0
+    count = 0
     while !isnull(tryread!(reader, entry))
         if (i += 1) % prog_step == 0
             update!(prog, position(reader.state.stream.source))
         end
+        count += 1
 
-        attr = entry.metadata.attributes
-
-        if entry.metadata.kind == "gene"
-            gene_id = attr["ID"]
-            metadata.gene_name[gene_id] =
-                haskey(attr, "Name") ? attr["Name"] : ""
-            metadata.gene_biotype[gene_id] =
-                haskey(attr, "biotype") ? attr["biotype"] : ""
-            metadata.gene_description[gene_id] =
-                haskey(attr, "description") ? attr["description"] : ""
+        typ = GFF3.featuretype(entry)
+        entry_id = getfirst_else_empty(entry, "ID")
+        if typ == "gene"
+            metadata.gene_name[entry_id]        = getfirst_else_empty(entry, "Name")
+            metadata.gene_biotype[entry_id]     = getfirst_else_empty(entry, "biotype")
+            metadata.gene_description[entry_id] = getfirst_else_empty(entry, "description")
             continue
         end
 
-        if haskey(attr, "Parent") && startswith(attr["Parent"], "gene:")
-            metadata.gene_id[attr["ID"]] = attr["Parent"]
-            metadata.transcript_kind[attr["ID"]] = entry.metadata.kind
+        parent_name = getfirst_else_empty(entry, "Parent")
+        if startswith(parent_name, "gene:")
+            metadata.gene_id[entry_id] = parent_name
+            metadata.transcript_kind[entry_id] = typ
         end
 
-        if entry.metadata.kind != "exon"
+        if typ != "exon"
             continue
         end
 
-        if !haskey(entry.metadata.attributes, "Parent")
+        if parent_name == ""
             error("Exon has no parent")
         end
 
-        parent_name = entry.metadata.attributes["Parent"]
+        # TODO: these other attributes need to be accessed through a function
         id = get!(transcript_id_by_name, parent_name,
                   length(transcript_id_by_name) + 1)
         if id > length(transcript_by_id)
-            parent_name = copy(parent_name)
-            push!(transcript_by_id,
-                Transcript(copy(entry.seqname), entry.first, entry.last,
-                               entry.strand, TranscriptMetadata(parent_name, id)))
+             push!(transcript_by_id,
+                 Transcript(StringField(GFF3.seqid(entry)), GFF3.seqstart(entry), GFF3.seqend(entry),
+                            GFF3.strand(entry), TranscriptMetadata(parent_name, id)))
         end
-        push!(transcript_by_id[id], Exon(entry.first, entry.last))
+        push!(transcript_by_id[id], Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
     end
 
     finish!(prog)

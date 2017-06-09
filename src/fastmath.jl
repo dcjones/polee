@@ -5,8 +5,8 @@ module FastMath
 
 export FloatVec, IntVec, logistic, fillpadded
 
-typealias FloatVec NTuple{8, VecElement{Float32}}
-typealias IntVec NTuple{8, VecElement{Int32}}
+const FloatVec = NTuple{8, VecElement{Float32}}
+const IntVec = NTuple{8, VecElement{Int32}}
 
 const ir_fv_type = "<8 x float>"
 const ir_iv_type = "<8 x i32>"
@@ -21,7 +21,7 @@ function ir_set1(n, typ, val)
         print(out, ", ", typ, " ", val)
     end
     print(out, " >")
-    return takebuf_string(out)
+    return String(take!(out))
 end
 
 
@@ -36,7 +36,7 @@ function ir_count(n, typ, from=1)
         @printf(out, "%0.f", from + i)
     end
     print(out, " >")
-    return takebuf_string(out)
+    return String(take!(out))
 end
 
 
@@ -101,8 +101,9 @@ end
 end
 
 
-@inline function Base.:./{N}(x::NTuple{N,VecElement{Float32}},
-                             y::NTuple{N,VecElement{Float32}})
+@inline function Base.broadcast{N}(::typeof(Base.:/),
+                                   x::NTuple{N,VecElement{Float32}},
+                                   y::NTuple{N,VecElement{Float32}})
     return Base.llvmcall(
         """
         %res = fdiv $(ir_fv_type) %0, %1
@@ -112,8 +113,9 @@ end
 end
 
 
-@inline function Base.:.*{N}(x::NTuple{N,VecElement{Float32}},
-                             y::NTuple{N,VecElement{Float32}})
+@inline function Base.broadcast{N}(::typeof(Base.:*),
+                                   x::NTuple{N,VecElement{Float32}},
+                                   y::NTuple{N,VecElement{Float32}})
     return Base.llvmcall(
         """
         %res = fmul $(ir_fv_type) %0, %1

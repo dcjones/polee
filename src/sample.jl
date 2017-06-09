@@ -29,9 +29,9 @@ end
 
 function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
     # join matching trees from ts and rs
-    T = Tuple{Intervals.IntervalCollectionTree{TranscriptMetadata},
-              Intervals.IntervalCollectionTree{AlignmentPairMetadata}}
-    treepairs = Array(T, 0)
+    T = Tuple{Intervals.ICTree{TranscriptMetadata},
+              Intervals.ICTree{AlignmentPairMetadata}}
+    treepairs = Array{T}(0)
     for (seqname, ts_tree) in ts.trees
         if haskey(rs.alignment_pairs.trees, seqname)
             push!(treepairs, (ts_tree, rs.alignment_pairs.trees[seqname]))

@@ -32,6 +32,7 @@ include("sample.jl")
 include("likelihood-approximation.jl")
 include("estimate.jl")
 include("hattrie_stringfield.jl")
+include("gibbs.jl")
 
 # TODO: automate including everything under models
 EXTRUDER_MODELS = Dict{String, Function}()
@@ -180,6 +181,8 @@ function main()
                 required = true
             "--excluded-seqs"
                 required = false
+            "--likelihood-matrix"
+                required = false
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
 
@@ -195,7 +198,10 @@ function main()
         sample = RNASeqSample(parsed_args["transcripts_filename"],
                               parsed_args["genome_filename"],
                               parsed_args["reads_filename"],
-                              excluded_seqs)
+                              excluded_seqs,
+                              parsed_args["likelihood-matrix"] == nothing ?
+                                Nullable{String}() :
+                                Nullable(parsed_args["likelihood-matrix"]))
         approximate_likelihood(sample, parsed_args["output"])
         return
 
@@ -264,6 +270,17 @@ function main()
                                parsed_args["output"])
         return
 
+    elseif subcmd == "sample"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "samples.csv"
+            "likelihood_matrix"
+                required = true
+        end
+        parsed_args = parse_args(subcmd_args, arg_settings)
+        gibbs_sampler(parsed_args["likelihood_matrix"],
+                      parsed_args["output"])
+        return
     else
         println("Unknown command: ", subcmd, "\n")
         print_usage()

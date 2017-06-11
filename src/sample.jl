@@ -121,10 +121,10 @@ function RNASeqSample(transcripts_filename::String,
             out["rowval", "compress", 1] = M.rowval
             out["nzval", "compress", 1] = M.nzval
             out["effective_lengths", "compress", 1] = effective_lengths
-            g = g_create(out, "metadata")
-            attrs(g)["gfffilename"] = metadata.gfffilename
-            attrs(g)["gffhash"]     = metadata.gffhash
-            attrs(g)["gffsize"]     = metadata.gffsize
+            # g = g_create(out, "metadata")
+            # attrs(g)["gfffilename"] = metadata.gfffilename
+            # attrs(g)["gffhash"]     = metadata.gffhash
+            # attrs(g)["gffsize"]     = metadata.gffsize
         end
     end
 

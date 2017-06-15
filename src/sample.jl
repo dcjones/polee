@@ -109,6 +109,17 @@ function RNASeqSample(transcripts_filename::String,
 
     toc()
 
+    # reassign indexes to remove any zero rows, which would lead to a
+    # -Inf log likelihood
+    p = sortperm(I)
+    I = I[p]
+    J = J[p]
+    V = V[p]
+    next_i = 1
+    for k in 2:length(I)
+        I[k] = min(I[k], I[k-1] + 1)
+    end
+
     m = maximum(I)
     n = length(ts)
 

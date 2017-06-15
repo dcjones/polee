@@ -169,6 +169,14 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
             effective_lengths[i] * model.π_simplex[i] / scaled_simplex_sum
     end
 
+    # log jacobian determinate for the effective length transform
+    efflen_ladj = 0.0
+    for i in 1:n
+        efflen_ladj += log(effective_lengths[i])
+    end
+    efflen_ladj -= n * log(scaled_simplex_sum)
+    # @show efflen_ladj
+
     # conditional fragment probabilities
     A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X,
              unsafe_wrap(Vector{Float32}, pointer(model.π_simplex), n, false))
@@ -183,20 +191,28 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
     #end
     #lp = sum(lpv)
 
-    # computed untransformed gradient in raw_grad
+    # compute df / dw (where w is effective length weighted mixtures)
     raw_grad = model.raw_grad
     At_mul_B!(unsafe_wrap(Vector{Float32}, pointer(raw_grad), n, false), X,
               unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
 
-    # Gradients with respect to simplex(x)
+    # compute df / dx
+    # raw_grad[i] now holds df/dw_i where w is the the effective length
+    # weighted mixtures. Here we update it to hold df/dx_i, where x are
+    # unweighted mixtures.
     c = 0.0
-    for i in 1:model.n
+    for i in 1:n
         c += (model.π_simplex[i] / scaled_simplex_sum) * raw_grad[i]
     end
 
-    for i in 1:model.n
+    for i in 1:n
         raw_grad[i] =
             effective_lengths[i] * (raw_grad[i] / scaled_simplex_sum - c);
+    end
+
+    # compute d(f+S) / dx, where S is the effective length transform
+    for i in 1:n-1
+        raw_grad[i] += n * (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
     end
 
     # compute gradient of simplex transform
@@ -246,16 +262,13 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
         # d/dy_i sum_{k=i+1}^{n-1} log(dx_k / dy_i)
         dxi_dyi = (1.0 - xs_sum[i]) * zs[i] * (1.0 - zs[i])
         grad[i] += dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
-        #if !isfinite(grad[i])
-            #@show (dxi_dyi, us[n-1], us[i], onemz_prod[i])
-            #exit()
-        #end
     end
 
     @assert isfinite(lp)
     @assert isfinite(ladj)
+    @assert isfinite(efflen_ladj)
 
-    return lp + ladj
+    return lp + ladj + efflen_ladj
 end
 
 

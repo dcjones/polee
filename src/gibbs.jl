@@ -2,7 +2,7 @@
 
 function gibbs_sampler(input_filename, output_filename)
     num_samples = 300
-    num_burnin_samples = 300
+    num_burnin_samples = 500
     sample_stride = 5 # record every nth sample
 
     sample = read(input_filename, RNASeqSample)
@@ -34,8 +34,7 @@ function gibbs_sampler(input_filename, output_filename)
     out = open(output_filename, "w")
 
     total_sample_num = num_burnin_samples + sample_stride * num_samples
-    # @showprogress for sample_num in 1:total_sample_num
-    for sample_num in 1:total_sample_num
+    @showprogress for sample_num in 1:total_sample_num
         # sample zs
         fill!(zs, 0)
         for i in 1:m

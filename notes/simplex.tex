@@ -261,18 +261,22 @@ Note that this is not an invertable transformation when applied to real numbers,
 but is invertable over a simplex. The inverse is simply $$L^{-1}(x)_i =
 \frac{(1/\ell_i) x_i}{\sum_{k=1}^{n} (1/\ell_k) x_k}$$
 
-\subsection{Gradients}
+\subsection{Gradients}\label{efflen_gradients}
 
 The gradients of an objective function applied to transformed values ($\nabla_x
 f(L(x))$) can be computed in $O(n)$.
 
 
 The partial derivatives of $L$ are for all $i$,
-$$\frac{\partial}{\partial x_i} \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
+$$
+\frac{\partial x'_i}{\partial x_i} =
+\frac{\partial}{\partial x_i} \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
 = \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
 - \frac{\ell_{i}^2 x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
 and for $i, j$ where $i \neq j$,
-$$\frac{\partial}{\partial x_i} \frac{\ell_j x_j}{\sum_{k=1}^{n} \ell_k x_k}
+$$
+\frac{\partial x'_j}{\partial x_i} =
+\frac{\partial}{\partial x_i} \frac{\ell_j x_j}{\sum_{k=1}^{n} \ell_k x_k}
 = - \frac{\ell_i \ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
 
 
@@ -301,40 +305,57 @@ linear time.
 
 \subsection{Jacobian}
 
-The determinant of the Jacobian matrix of the $L$ transform is 0, which we prove
-here.
+The Jacobian matrix for the transform $L$ is defined as
+$$ (J_L)_{ij} = \frac{\partial x'_i}{\partial x_j} $$
+These partial derivatives are derived in Section \ref{efflen_gradients}, but
+to avoid issues with dependant rows or columns, we use the equivalent parameterization in which
+$x_n$ is defined as $x_n = 1 - \sum_{k=1}^{n-1} x_k$. Then $J_L$ is a $(n -
+1) \times (n - 1)$ matrix where:
 
-The diagonal entries of the Jacobian matrix are, for $1 \le i \le n$,
+$$(J_L)_{ii} =
+\frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} - \frac{\ell_i (\ell_i - \ell_n) x_i}{(\sum_{k=1}^{n} \ell_k x_k)^2}$$
 
-$$J_{ii} = \frac{\partial}{\partial x_i} \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
-= \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}
-- \frac{\ell_{i}^2 x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
+$$(J_L)_{ij} = - \frac{\ell_i (\ell_j - \ell_n) x_i}{(\sum_{k=1}^{n} \ell_k x_k)^2}, i \neq j$$
 
-Every off-diagonal entry, for $i, j$ where $i \neq j$ is,
-$$J_{ij} = \frac{\partial}{\partial x_i} \frac{\ell_j x_j}{\sum_{k=1}^{n} \ell_k x_k}
-= - \frac{\ell_i \ell_j x_i}{\left( \sum_{k=1}^{n} \ell_k x_k \right)^2}$$
+We can factor this matrix as follows: define vector $u$ and $v$ where for $1
+\leq i \leq n-1$
 
-Note that $J$ can be factored as $J = u v^{T} + I u$ where for each $1 \le i
-\le n$,
+$$u_i = \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k}$$
 
-$$ u_i = \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} $$
+$$v_i = \frac{-(\ell_i - \ell_n) x_i}{\sum_{k=1}^{n} \ell_k x_k}$$
 
-$$ v_i = \frac{-\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k} $$
+Now note that $J_L = uv^{T} + Iu$. From the Matrix Determinant Lemma we can then say that
 
-Now the Matrix Determinant Lemma can be applied, giving us,
 \begin{align*}
-\det(J) &= \det(u v^{T} + I u) \\
-        &= (1 + v^T (Iu)^{-1} u) \det(Iu) \\
-        &= \left(1 + \sum_{i=1}^{n} u_i v_i (1/u_i) \right) \det(Iu) \\
-        &= \left(1 + \sum_{i=1}^{n} v_i \right) \det(Iu) \\
-        &= \left(1 - \sum_{i=1}^{n} \frac{\ell_i x_i}{\sum_{k=1}^{n} \ell_k x_k}
-        \right) \det(Iu) \\
-        &= 0
+\det(J_L) &= (1 + v^{T}(Iu)^{-1}u) \det (Iu) \\
+    &= \left(1 + \sum_{i=1}^{n-1} v_i \right) \prod_{i=1}^{n-1} {u_i} \\
+    &= \left(1 - \frac{\sum_{k=1}^{n-1} (\ell_k - \ell_n) x_k}
+                      {\sum_{k=1}^{n} \ell_k x_k} \right) 
+       \prod_{i=1}^{n-1} \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} \\
+    &= \left(1 - \frac{\sum_{k=1}^{n-1} \ell_k x_k -
+                       \ell_n \sum_{k=1}^{n-1} x_k}
+                      {\sum_{k=1}^{n} \ell_k x_k} \right)
+       \prod_{i=1}^{n-1} \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} \\
+    &= \left(\frac{\ell_n x_n  \ell_n (1 - x_n)}
+                      {\sum_{k=1}^{n} \ell_k x_k} \right)
+       \prod_{i=1}^{n-1} \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} \\
+    &= \left(\frac{\ell_n}{\sum_{k=1}^{n} \ell_k x_k} \right)
+       \prod_{i=1}^{n-1} \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} \\
+    &= \prod_{i=1}^{n} \frac{\ell_i}{\sum_{k=1}^{n} \ell_k x_k} \\
 \end{align*}
 
-The final step follows because $\sum_{i=1}^{n} \frac{\ell_i x_i}{\sum_{k=1}^{n}
-\ell_k x_k} = 1$.
+Note that $\det(J_L) > 0$ since $\ell_i > 0$ and $x_i > 0$ for all $i$.
 
+\subsection{Gradients of $\log |\det J_L|$}
+
+Gradients of the log Jacobian determinant for the effective length transform,
+with respect to untransformed mixtures $x$ are easily derived:
+
+\begin{align*}
+\frac{\partial}{\partial x_i}  \log |\det(J_L)| &=
+    \frac{\partial}{\partial x_i} \left( \sum_{i=1}^{n} \log(\ell_i) - n \log \left( \sum_{k=1}^{n} \ell_k x_k \right) \right) \\
+    &= -\frac{n \ell_i}{\sum_{k=1}^{n} \ell_k x_k}
+\end{align*}
 
 
 \end{document}

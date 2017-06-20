@@ -4,7 +4,8 @@
 # anything other than comparison.
 
 function estimate_simple_linear_regression(experiment_spec_filename,
-                                           output_filename)
+                                           output_filename,
+                                           ts, ts_metadata)
     # read info from experiment specification
     experiment_spec = YAML.load_file(experiment_spec_filename)
     names = [entry["name"] for entry in experiment_spec]
@@ -35,7 +36,7 @@ function estimate_simple_linear_regression(experiment_spec_filename,
     X_[:, factoridx["bias"]] = 1
     X = tf.constant(X_)
 
-    n, musigma_data, y0 = load_samples(filenames)
+    n, musigma_data, y0 = load_samples(filenames, ts_metadata)
     @show n
     println("Sample data loaded")
 

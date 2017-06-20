@@ -219,11 +219,6 @@ function main()
 
         parsed_args = parse_args(subcmd_args, arg_settings)
 
-        # TODO: test if this has already been generated
-        # automate generating serialized transcripts when they don't exist
-        #ts, metadata = Transcripts(parsed_args["transcripts"])
-        #write_transcripts("genes.db", ts, metadata)
-
         # TODO: add an option to exclude sets of transcripts
         # We don't want to fuck of the indexes. How exactly do we exclude a
         # transcript though? I guess we have to splice it outa of the parameter
@@ -232,9 +227,12 @@ function main()
         # Can I just do the regression and then exclude the coefficients to
         # particular transcripts. Is that sufficient?
 
+        ts, ts_metadata = Transcripts(parsed_args["transcripts"])
+
         EXTRUDER_MODELS[parsed_args["model"]](
                  parsed_args["experiment"],
-                 parsed_args["output"])
+                 parsed_args["output"],
+                 ts, ts_metadata)
 
         return
     elseif subcmd == "likelihood-approx-from-isolator"

@@ -1,5 +1,6 @@
 
-function estimate_quantification(experiment_spec_filename, output_filename)
+function estimate_quantification(experiment_spec_filename, output_filename,
+                                 ts, ts_metadata)
     likapprox_data, y0, sample_factors, sample_names =
             load_samples_from_specification(experiment_spec_filename)
 

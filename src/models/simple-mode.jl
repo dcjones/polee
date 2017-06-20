@@ -1,12 +1,13 @@
 
-function estimate_simple_mode(experiment_spec_filename, output_filename)
+function estimate_simple_mode(experiment_spec_filename, output_filename,
+                              ts, ts_metadata)
     experiment_spec = YAML.load_file(experiment_spec_filename)
     names = [entry["name"] for entry in experiment_spec]
     filenames = [entry["file"] for entry in experiment_spec]
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    n, musigma_data, y0 = load_samples(filenames)
+    n, musigma_data, y0 = load_samples(filenames, ts_metadata)
 
     sess = ed.get_session()
 

@@ -24,7 +24,7 @@ function load_samples_from_specification(experiment_spec_filename)
 end
 
 
-function load_samples(filenames)
+function load_samples(filenames, ts_metadata)
     n = nothing
 
     musigma_tensors = []
@@ -54,6 +54,12 @@ function load_samples(filenames)
 
         μ = read(input["mu"])
         σ = read(input["sigma"])
+
+        # check that the right gff file is being used
+        gffhash = read(attrs(input["metadata"])["gffhash"])
+        if !isempty(gffhash) && base64decode(gffhash) != ts_metadata.gffhash
+            error(@sprintf("'%s' was generated using a different GFF3 file than the one provided", filename))
+        end
 
         close(input)
 

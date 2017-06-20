@@ -1,7 +1,8 @@
 
 # This does logistic categorical regression on provided categories
 
-function estimate_simple_logistic_regression(experiment_spec_filename, output_filename)
+function estimate_simple_logistic_regression(experiment_spec_filename, output_filename,
+                                             ts, ts_metadata)
     # read info from experiment specification
     experiment_spec = YAML.load_file(experiment_spec_filename)
     names = [entry["name"] for entry in experiment_spec]
@@ -32,7 +33,7 @@ function estimate_simple_logistic_regression(experiment_spec_filename, output_fi
     Xobs = tf.constant(Xobs_)
     toc()
 
-    n, musigma_data, y0 = load_samples(filenames)
+    n, musigma_data, y0 = load_samples(filenames, ts_metadata)
     println("Sample data loaded")
 
     # pertition into training and testing sets

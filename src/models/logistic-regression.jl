@@ -1,7 +1,8 @@
 
 # This does logistic categorical regression on provided categories
 
-function estimate_logistic_regression(experiment_spec_filename, output_filename)
+function estimate_logistic_regression(experiment_spec_filename, output_filename,
+                                      ts, ts_metadata)
     # read info from experiment specification
     experiment_spec = YAML.load_file(experiment_spec_filename)
     names = [entry["name"] for entry in experiment_spec]
@@ -10,7 +11,7 @@ function estimate_logistic_regression(experiment_spec_filename, output_filename)
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    n, likapprox_data, y0 = load_samples(filenames)
+    n, likapprox_data, y0 = load_samples(filenames, ts_metadata)
     qy_mu_value, qy_sigma_value =
         estimate_quantification(likapprox_data, y0, sample_factors)
 

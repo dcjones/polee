@@ -238,7 +238,7 @@ function approximate_likelihood(s::RNASeqSample)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 2
+    num_mc_samples = 4
     η = fillpadded(FloatVec, 0.0f0, n-1)
     ζ = fillpadded(FloatVec, 0.0f0, n-1)
 

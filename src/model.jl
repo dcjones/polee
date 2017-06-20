@@ -13,13 +13,13 @@ type Model
     raw_grad::Vector{Float32}
 
     # intermediate values used in simplex calculation
-    xs_sum::Vector{Float64}
-    zs::Vector{Float64}
+    xs_sum::Vector{Float32}
+    zs::Vector{Float32}
 
     # intermediate values in gradient computation
-    log1mz_sum::Vector{Float64}
-    onemz_prod::Vector{Float64}
-    work::Vector{Float64}
+    log1mz_sum::Vector{Float32}
+    onemz_prod::Vector{Float32}
+    work::Vector{Float32}
 end
 
 function Model(m, n)
@@ -76,9 +76,9 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
     @assert length(work) >= k
     @assert length(zs) >= k
 
-    ladj = 0.0
-    xsum = 0.0
-    xs_sum[1] = 0.0
+    ladj = 0.0f0
+    xsum = 0.0f0
+    xs_sum[1] = 0.0f0
 
     # reusing these vectors as temporary storage
     work1 = xs_sum
@@ -87,7 +87,7 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
     simplex!_loop1(k, xs, work1, work2, zs, ys)
 
     log1mz_sum[1] = work2[2]
-    onemz_prod[1] = 1.0 - zs[1]
+    onemz_prod[1] = 1.0f0 - zs[1]
     for i in 2:k-1
         log1mz_sum[i] = log1mz_sum[i-1] + work2[i+1]
     end
@@ -102,9 +102,9 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
         xs[i] = (1 - xsum) * zs[i]
         xsum += xs[i]
         xs_sum[i+1] = xsum
-        @assert xs_sum[i+1] <= 1.0
+        @assert xs_sum[i+1] <= 1.0f0
     end
-    xs[k] = 1 - xsum
+    xs[k] = 1.0f0 - xsum
 
     return ladj
 end

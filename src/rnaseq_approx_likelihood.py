@@ -26,8 +26,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
               dtype=self.y.dtype,
               validate_args=validate_args,
               allow_nan_stats=allow_nan_stats,
-              is_continuous=True,
-              is_reparameterized=False,
+              reparameterization_type=tf.contrib.distributions.FULLY_REPARAMETERIZED,
               parameters=parameters,
               graph_parents=[self.y,])
 
@@ -68,7 +67,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # x = tf.check_numerics(x, message="RNASeqApproxLikelihoodDist: non-finite x", name="D")
 
         # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "x span")
-        ll = distributions.MultivariateNormalDiag(mu, sigma).log_pdf(x)
+        ll = distributions.MultivariateNormalDiag(mu, sigma).log_prob(x)
 
         # ll = tf.verify_tensor_all_finite(ll, "RNASeqApproxLikelihoodDist: non-finite ll")
         # ll = tf.Print(ll, [tf.reduce_sum(ll)], "Log-likelihood")

@@ -341,3 +341,30 @@ end
 # TODO: Read from sqlite3
 
 
+"""
+Generate a m-by-n sparse 0/1 matrix F where m is the number of genes, and n
+is the number of transcripts, such that givin transcript expression y, Fy
+gives gene expression.
+"""
+function gene_feature_matrix(ts::Transcripts, ts_metadata::TranscriptsMetadata)
+    gene_nums = Dict{String, Int}()
+    for (transcript_id, gene_id) in ts_metadata.gene_id
+        get!(gene_nums, gene_id, length(gene_nums) + 1)
+    end
+
+    I = Int[]
+    J = Int[]
+    for t in ts
+        gene_num = gene_nums[ts_metadata.gene_id[t.metadata.name]]
+        push!(I, gene_num)
+        push!(J, t.metadata.id)
+    end
+
+    m = length(gene_nums)
+    names = Array{String}(m)
+    for (gene_id, gene_num) in gene_nums
+        names[gene_num] = gene_id
+    end
+
+    return (m, I, J, names)
+end

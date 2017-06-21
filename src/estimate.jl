@@ -9,7 +9,7 @@ unshift!(PyVector(pyimport("sys")["path"]), "/home/dcjones/prj/extruder/src")
 @pyimport hmc2
 
 
-function load_samples_from_specification(experiment_spec_filename)
+function load_samples_from_specification(experiment_spec_filename, ts_metadata)
     experiment_spec = YAML.load_file(experiment_spec_filename)
     names = [entry["name"] for entry in experiment_spec]
     filenames = [entry["file"] for entry in experiment_spec]
@@ -17,7 +17,7 @@ function load_samples_from_specification(experiment_spec_filename)
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    n, likapprox_data, y0 = load_samples(filenames)
+    n, likapprox_data, y0 = load_samples(filenames, ts_metadata)
     println("Sample data loaded")
 
     return likapprox_data, y0, sample_factors, names
@@ -31,11 +31,11 @@ function load_samples(filenames, ts_metadata)
     y0_tensors = []
 
     # work vectors for simplex!
-    work1 = Array(Float32, 0)
-    work2 = Array(Float32, 0)
-    work3 = Array(Float32, 0)
-    work4 = Array(Float32, 0)
-    work5 = Array(Float32, 0)
+    work1 = Array{Float32}(0)
+    work2 = Array{Float32}(0)
+    work3 = Array{Float32}(0)
+    work4 = Array{Float32}(0)
+    work5 = Array{Float32}(0)
 
     for filename in filenames
         input = h5open(filename, "r")
@@ -43,11 +43,11 @@ function load_samples(filenames, ts_metadata)
         n_ = read(input["n"])
         if n == nothing
             n = n_
-            work1 = Array(Float32, n)
-            work2 = Array(Float32, n)
-            work3 = Array(Float32, n)
-            work4 = Array(Float32, n)
-            work5 = Array(Float32, n)
+            work1 = Array{Float32}(n)
+            work2 = Array{Float32}(n)
+            work3 = Array{Float32}(n)
+            work4 = Array{Float32}(n)
+            work5 = Array{Float32}(n)
         elseif n != n_
             error("Prepare sample was run with different transcript annotations on some samples.")
         end
@@ -74,9 +74,9 @@ function load_samples(filenames, ts_metadata)
         push!(musigma_tensors, tf_μσ)
 
         # choose mean to be the initial values for y
-        initial_values = Array(Float32, n)
+        initial_values = Array{Float32}(n)
         simplex!(n, initial_values, work1, work2, work3, work4, work5, μ)
-        map!(log, initial_values)
+        map!(log, initial_values, initial_values)
         push!(y0_tensors, initial_values)
 
     end

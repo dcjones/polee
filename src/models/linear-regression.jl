@@ -16,6 +16,10 @@ function estimate_linear_regression(experiment_spec_filename, output_filename,
     qy_mu    = tf.constant(qy_mu_value)
     qy_sigma = tf.constant(qy_sigma_value)
 
+    # TODO: figure this out
+    # @show n
+    # @show qy_mu[:get_size]()[:as_list]()
+    # exit()
 
     # build design matrix
     # -------------------

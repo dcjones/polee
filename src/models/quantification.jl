@@ -1,37 +1,30 @@
 
-function estimate_quantification(experiment_spec_filename::String,
-                                 output_filename::String,
-                                 ts::Transcripts,
-                                 ts_metadata::TranscriptsMetadata)
-    likapprox_data, y0, sample_factors, sample_names =
-            load_samples_from_specification(experiment_spec_filename, ts_metadata)
 
-    #sess = ed.get_session()
-    #post_mean = sess[:run](tf.nn[:softmax](y0, dim=-1))
-    #write_estimates(output_filename, sample_names, post_mean)
-    #exit()
 
-    qy_mu_value, qy_sigma_value =
-        estimate_quantification(likapprox_data, y0, sample_factors)
-
-    #post_mean = sess[:run](tf.nn[:softmax](qy_mu_value, dim=-1))
-    #write_estimates(output_filename, names, post_mean)
+function estimate_expression(input::ModelInput)
+    if input.feature == :transcript
+        return estimate_transcript_expression(input)
+    elseif input.feature == :gene
+        return estimate_gene_expression(input)
+    else
+        error("Expression estimates for $(feature)s not supported")
+    end
 end
 
 
-function estimate_gene_quantification(experiment_spec_filename::String,
-                                      output_filename::String,
-                                      ts::Transcripts,
-                                      ts_metadata::TranscriptsMetadata)
-    likapprox_data, y0, sample_factors, sample_names =
-            load_samples_from_specification(experiment_spec_filename, ts_metadata)
+function estimate_transcript_expression(input::ModelInput)
+    qy_mu_value, qy_sigma_value =
+        estimate_expression(input.likapprox_data, input.y0, input.sample_factors)
+end
 
-    m, I, J, names = gene_feature_matrix(ts, ts_metadata)
+
+function estimate_gene_expression(input::ModelInput)
+    m, I, J, names = gene_feature_matrix(input.ts, input.ts_metadata)
     F = tf.SparseTensor(indices=cat(2, I-1, J-1), values=tf.ones(length(I)),
                         dense_shape=[m, length(ts)])
 
     qy_mu_value, qy_sigma_value =
-        estimate_feature_quantification(likapprox_data, y0, sample_factors, F)
+        estimate_feature_expression(input.likapprox_data, input.y0, input.sample_factors, F)
 end
 
 
@@ -65,8 +58,7 @@ function transcript_quantification_model(likapprox_data, y0)
 end
 
 
-function estimate_feature_quantification(likapprox_data, y0, sample_factors,
-                                         features)
+function estimate_feature_expression(likapprox_data, y0, sample_factors, features)
     num_samples, n = y0[:get_shape]()[:as_list]()
     num_features = features[:get_shape]()[:as_list]()[1]
     y, y_mu_param, y_sigma_param, y_mu, likapprox =
@@ -117,7 +109,7 @@ function estimate_feature_quantification(likapprox_data, y0, sample_factors,
 end
 
 
-function estimate_quantification(likapprox_data, y0, sample_factors)
+function estimate_expression(likapprox_data, y0, sample_factors)
     num_samples, n = y0[:get_shape]()[:as_list]()
     y, y_mu_param, y_sigma_param, y_mu, likapprox = transcript_quantification_model(likapprox_data, y0)
 
@@ -152,6 +144,5 @@ function estimate_quantification(likapprox_data, y0, sample_factors)
 end
 
 
-EXTRUDER_MODELS["quantification"] = estimate_quantification
-EXTRUDER_MODELS["gene-quantification"] = estimate_gene_quantification
+EXTRUDER_MODELS["expression"] = estimate_expression
 

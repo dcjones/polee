@@ -1,32 +1,27 @@
 
-function estimate_linear_regression(experiment_spec_filename, output_filename,
-                                    ts, ts_metadata)
-    # read info from experiment specification
-    experiment_spec = YAML.load_file(experiment_spec_filename)
-    names = [entry["name"] for entry in experiment_spec]
-    filenames = [entry["file"] for entry in experiment_spec]
-    sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
-    num_samples = length(filenames)
-    println("Read model specification with ", num_samples, " samples")
+function estimate_linear_regression(input::ModelInput)
 
-    n, likapprox_data, y0 = load_samples(filenames, ts_metadata)
-    qy_mu_value, qy_sigma_value =
-        estimate_quantification(likapprox_data, y0, sample_factors)
+    if input.feature == :transcript
+        qy_mu_value, qy_sigma_value =
+            estimate_transcript_expression(input)
+    elseif input.feature == :gene
+        qy_mu_value, qy_sigma_value =
+            estimate_gene_expression(input)
+    else
+        error("Linear regression for $(feature)s not supported")
+    end
 
     qy_mu    = tf.constant(qy_mu_value)
     qy_sigma = tf.constant(qy_sigma_value)
-
-    # TODO: figure this out
-    # @show n
-    # @show qy_mu[:get_size]()[:as_list]()
-    # exit()
+    n = qy_mu[:get_shape]()[:as_list]()[2]
+    num_samples = length(input.sample_names)
 
     # build design matrix
     # -------------------
 
     factoridx = Dict{String, Int}()
     factoridx["bias"] = 1
-    for factors in sample_factors
+    for factors in input.sample_factors
         for factor in factors
             get!(factoridx, factor, length(factoridx) + 1)
         end
@@ -35,7 +30,7 @@ function estimate_linear_regression(experiment_spec_filename, output_filename,
     num_factors = length(factoridx)
     X_ = zeros(Float32, (num_samples, num_factors))
     for i in 1:num_samples
-        for factor in sample_factors[i]
+        for factor in input.sample_factors[i]
             j = factoridx[factor]
             X_[i, j] = 1
         end
@@ -63,9 +58,6 @@ function estimate_linear_regression(experiment_spec_filename, output_filename,
 
     W = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
 
-
-
-
     y_sigma_mu0 = tf.constant(0.0, shape=[n])
     y_sigma_sigma0 = tf.constant(1.0, shape=[n])
 
@@ -77,7 +69,6 @@ function estimate_linear_regression(experiment_spec_filename, output_filename,
 
     mu = edmodels.MultivariateNormalDiag(tf.matmul(X, W),
                                          tf.add(y_sigma_param, qy_sigma))
-
 
     # inference
     # ---------
@@ -115,6 +106,9 @@ function estimate_linear_regression(experiment_spec_filename, output_filename,
     optimizer = tf.train[:AdamOptimizer](0.1)
     inference[:run](n_iter=map_iterations, optimizer=optimizer)
     #inference[:run](n_iter=map_iterations)
+
+    output_filename = isnull(input.output_filename) ?
+        "effects.db" : get(input.output_filename)
 
     @time write_effects(output_filename, factoridx,
                         sess[:run](qw_param),

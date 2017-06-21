@@ -88,6 +88,18 @@ function load_samples(filenames, ts_metadata)
 end
 
 
+immutable ModelInput
+    likapprox_data::PyCall.PyObject
+    y0::PyCall.PyObject
+    sample_factors::Vector{Vector{String}}
+    sample_names::Vector{String}
+    feature::Symbol
+    ts::Transcripts
+    ts_metadata::TranscriptsMetadata
+    output_filename::Nullable{String}
+end
+
+
 function estimate(experiment_spec_filename, output_filename)
 
     # read info from experiment specification
@@ -270,10 +282,11 @@ end
 
 
 function write_effects(output_filename, factoridx, W, sigma)
+    println("Writing regression results to ", output_filename)
+
     db = SQLite.DB(output_filename)
 
     SQLite.execute!(db, "drop table if exists effects")
-
     SQLite.execute!(db,
         """
         create table effects

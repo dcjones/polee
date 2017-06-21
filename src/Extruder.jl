@@ -169,7 +169,7 @@ function main()
                                parsed_args["output"])
         return
 
-    elseif subcmd == "prepare-sample"
+    elseif subcmd == "prepare-sample" || subcmd == "prep"
         @add_arg_table arg_settings begin
             "--output", "-o"
                 default = "sample-data.h5"
@@ -205,10 +205,12 @@ function main()
         approximate_likelihood(sample, parsed_args["output"])
         return
 
-    elseif subcmd == "estimate"
+    elseif subcmd == "estimate" || subcmd == "est"
         @add_arg_table arg_settings begin
             "--output", "-o"
-                default = "output.txt"
+                default = Nullable{String}()
+            "feature"
+                required = true
             "model"
                 required = true
             "transcripts"
@@ -219,20 +221,20 @@ function main()
 
         parsed_args = parse_args(subcmd_args, arg_settings)
 
-        # TODO: add an option to exclude sets of transcripts
-        # We don't want to fuck of the indexes. How exactly do we exclude a
-        # transcript though? I guess we have to splice it outa of the parameter
-        # arrays, being careful to keep track of the original indexes.
-        #
-        # Can I just do the regression and then exclude the coefficients to
-        # particular transcripts. Is that sufficient?
-
         ts, ts_metadata = Transcripts(parsed_args["transcripts"])
 
-        EXTRUDER_MODELS[parsed_args["model"]](
-                 parsed_args["experiment"],
-                 parsed_args["output"],
-                 ts, ts_metadata)
+        likapprox_data, y0, sample_factors, sample_names =
+                load_samples_from_specification(parsed_args["experiment"], ts_metadata)
+
+        feature = Symbol(parsed_args["feature"])
+
+        input = ModelInput(
+            likapprox_data, y0, sample_factors, sample_names,
+            feature, ts, ts_metadata, parsed_args["output"])
+
+        EXTRUDER_MODELS[parsed_args["model"]](input)
+
+        # TODO: figure out what to do with `output`
 
         return
     elseif subcmd == "likelihood-approx-from-isolator"

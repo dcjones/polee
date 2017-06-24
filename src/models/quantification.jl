@@ -6,6 +6,8 @@ function estimate_expression(input::ModelInput)
         return estimate_transcript_expression(input)
     elseif input.feature == :gene
         return estimate_gene_expression(input)
+    elseif input.feature == :splicing
+        return estimate_splicing_expression(input)
     else
         error("Expression estimates for $(feature)s not supported")
     end
@@ -21,7 +23,35 @@ end
 function estimate_gene_expression(input::ModelInput)
     m, I, J, names = gene_feature_matrix(input.ts, input.ts_metadata)
     F = tf.SparseTensor(indices=cat(2, I-1, J-1), values=tf.ones(length(I)),
-                        dense_shape=[m, length(ts)])
+                        dense_shape=[m, length(input.ts)])
+
+    qy_mu_value, qy_sigma_value =
+        estimate_feature_expression(input.likapprox_data, input.y0, input.sample_factors, F)
+end
+
+
+function estimate_splicing_expression(input::ModelInput)
+    cassette_exons = get_cassette_exons(input.ts)
+
+    # TODO: also include alt acceptor/donor sites and maybe alt UTRs
+
+    I = Int[]
+    J = Int[]
+    for (i, (intron, flanks)) in  enumerate(cassette_exons)
+        for id in intron.metadata
+            push!(I, 2*i-1)
+            push!(J, id)
+        end
+
+        for id in flanks.metadata[3]
+            push!(I, 2*i)
+            push!(J, id)
+        end
+    end
+    m = 2*length(cassette_exons)
+
+    F = tf.SparseTensor(indices=cat(2, I-1, J-1), values=tf.ones(length(I)),
+                        dense_shape=[m, length(input.ts)])
 
     qy_mu_value, qy_sigma_value =
         estimate_feature_expression(input.likapprox_data, input.y0, input.sample_factors, F)

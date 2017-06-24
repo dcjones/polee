@@ -227,8 +227,8 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ε = 1e-16
 
     # influence of the most recent gradient on step size
-    ss_ω_α = 0.1
-    ss_μ_α = 0.1
+    ss_ω_α = 0.2
+    ss_μ_α = 0.2
 
     ss_η = 1.0
 
@@ -279,6 +279,8 @@ function approximate_likelihood(s::RNASeqSample)
     max_steps = 200
 
     println("Optimizing ELBO: ", -Inf)
+
+    tic()
 
     while true
         step_num += 1
@@ -351,6 +353,8 @@ function approximate_likelihood(s::RNASeqSample)
             break
         end
     end
+
+    toc()
 
     println("Finished in ", step_num, " steps")
 

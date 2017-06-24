@@ -4,7 +4,7 @@ module Extruder
 
 using ArgParse
 using Bio.Align
-using Bio.Intervals
+using GenomicFeatures
 using Bio.Seq
 using Bio.StringFields
 using Distributions

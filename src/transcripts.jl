@@ -117,7 +117,16 @@ function Transcripts(filename::String)
 
     i = 0
     count = 0
-    while !isnull(tryread!(reader, entry))
+    # while !isnull(tryread!(reader, entry))
+    while !eof(reader)
+        try
+            read!(reader, entry)
+        catch ex
+            if isa(ex, EOFError)
+                break
+            end
+        end
+
         if (i += 1) % prog_step == 0
             update!(prog, position(reader.state.stream.source))
         end
@@ -146,15 +155,26 @@ function Transcripts(filename::String)
             error("Exon has no parent")
         end
 
-        # TODO: these other attributes need to be accessed through a function
         id = get!(transcript_id_by_name, parent_name,
                   length(transcript_id_by_name) + 1)
         if id > length(transcript_by_id)
              push!(transcript_by_id,
-                 Transcript(StringField(GFF3.seqid(entry)), GFF3.seqstart(entry), GFF3.seqend(entry),
+                 Transcript(GFF3.seqid(entry), GFF3.seqstart(entry), GFF3.seqend(entry),
                             GFF3.strand(entry), TranscriptMetadata(parent_name, id)))
         end
-        push!(transcript_by_id[id], Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
+        push!(transcript_by_id[id].metadata.exons, Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
+        # push!(transcript_by_id[id], Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
+    end
+
+    for t in transcript_by_id
+        sort!(t.metadata.exons)
+    end
+
+    # fix transcript start/last
+    for (i, t) in enumerate(transcript_by_id)
+        sort!(t.metadata.exons)
+        transcript_by_id[i] = Transcript(t.seqname, t.metadata.exons[1].first,
+                                         t.metadata.exons[end].last, t.strand, t.metadata)
     end
 
     finish!(prog)
@@ -165,11 +185,6 @@ function Transcripts(filename::String)
     # (since it can give the sparse matrix a somewhat better structure)
     for (tid, t) in enumerate(transcripts)
         t.metadata.id = tid
-    end
-
-    # make sure all exons arrays are sorted
-    for t in transcripts
-        sort!(t.metadata.exons)
     end
 
     metadata.filename = filename
@@ -235,6 +250,67 @@ function genomic_to_transcriptomic(t::Transcript, position::Integer)
         end
         return tpos + position - t.metadata.exons[i].first
     end
+end
+
+
+function get_cassette_exons(ts::Transcripts)
+    introns = IntervalCollection{Vector{Int}}()
+    @time for t in ts
+        for i in 2:length(t.metadata.exons)
+            first = t.metadata.exons[i-1].last + 1
+            last  = t.metadata.exons[i].first - 1
+
+            key = Interval{Void}(t.seqname, first, last, t.strand, nothing)
+            entry = findfirst(introns, key, filter=(a,b)->a.strand==b.strand)
+            if isnull(entry)
+                entry = Interval{Vector{Int}}(t.seqname, first, last, t.strand, Int[t.metadata.id])
+                push!(introns, entry)
+            else
+                entry_ = get(entry)
+                push!(get(entry).metadata, t.metadata.id)
+            end
+        end
+    end
+
+    function match_strand_exon(a, b)
+        return a.strand == b.strand &&
+               a.metadata[1] == b.metadata[1] &&
+               a.metadata[2] == b.metadata[2]
+    end
+
+    flanking_introns = IntervalCollection{Tuple{Int, Int, Vector{Int}}}()
+    @time for t in ts
+        i = 3
+        while i <= length(t.metadata.exons)
+            e1 = t.metadata.exons[i-2]
+            e2 = t.metadata.exons[i-1]
+            e3 = t.metadata.exons[i]
+            key = Interval{Tuple{Int,Int}}(t.seqname, e1.last+1, e3.first-1, t.strand,
+                                           (e2.first, e3.last))
+
+            entry = findfirst(flanking_introns, key, filter=match_strand_exon)
+            if isnull(entry)
+                push!(flanking_introns,
+                      Interval{Tuple{Int, Int, Vector{Int}}}(
+                          key.seqname, key.first, key.last, key.strand,
+                          (key.metadata[1], key.metadata[2], Int[t.metadata.id])))
+            else
+                push!(get(entry).metadata[3], t.metadata.id)
+            end
+
+            i += 1
+        end
+    end
+
+    cassette_exons = Tuple{Interval{Vector{Int}}, Interval{Tuple{Int, Int, Vector{Int}}}}[]
+    for flanks in flanking_introns
+        intron = findfirst(introns, flanks, filter=(a,b)->a.strand==b.strand)
+        if !isnull(intron)
+            push!(cassette_exons, (get(intron), flanks))
+        end
+    end
+
+    return cassette_exons
 end
 
 
@@ -367,4 +443,10 @@ function gene_feature_matrix(ts::Transcripts, ts_metadata::TranscriptsMetadata)
     end
 
     return (m, I, J, names)
+end
+
+
+
+function splicing_feature_matrix(ts::Transcripts, ts_metadata::TranscriptsMetadata)
+
 end

@@ -29,8 +29,8 @@ end
 
 function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
     # join matching trees from ts and rs
-    T = Tuple{Intervals.ICTree{TranscriptMetadata},
-              Intervals.ICTree{AlignmentPairMetadata}}
+    T = Tuple{GenomicFeatures.ICTree{TranscriptMetadata},
+              GenomicFeatures.ICTree{AlignmentPairMetadata}}
     treepairs = Array{T}(0)
     for (seqname, ts_tree) in ts.trees
         if haskey(rs.alignment_pairs.trees, seqname)
@@ -73,7 +73,9 @@ function RNASeqSample(transcripts_filename::String,
 
     ts, ts_metadata = Transcripts(transcripts_filename)
     rs = Reads(reads_filename, excluded_seqs)
+    println("reading transcript sequences")
     read_transcript_sequences!(ts, genome_filename)
+    println("done")
     fm = FragModel(rs, ts)
 
     println("intersecting reads and transcripts...")

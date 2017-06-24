@@ -114,6 +114,7 @@ function Transcripts(filename::String)
     transcript_id_by_name = HATTrie()
     transcript_by_id = Transcript[]
     metadata = TranscriptsMetadata()
+    interned_seqnames = Dict{String, String}()
 
     i = 0
     count = 0
@@ -158,12 +159,13 @@ function Transcripts(filename::String)
         id = get!(transcript_id_by_name, parent_name,
                   length(transcript_id_by_name) + 1)
         if id > length(transcript_by_id)
-             push!(transcript_by_id,
-                 Transcript(GFF3.seqid(entry), GFF3.seqstart(entry), GFF3.seqend(entry),
-                            GFF3.strand(entry), TranscriptMetadata(parent_name, id)))
+            seqname = GFF3.seqid(entry)
+            push!(transcript_by_id,
+                  Transcript(get!(interned_seqnames, seqname, seqname),
+                             GFF3.seqstart(entry), GFF3.seqend(entry),
+                             GFF3.strand(entry), TranscriptMetadata(parent_name, id)))
         end
         push!(transcript_by_id[id].metadata.exons, Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
-        # push!(transcript_by_id[id], Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
     end
 
     for t in transcript_by_id

@@ -227,8 +227,8 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ε = 1e-16
 
     # influence of the most recent gradient on step size
-    ss_ω_α = 0.2
-    ss_μ_α = 0.2
+    ss_ω_α = 0.5
+    ss_μ_α = 0.5
 
     ss_η = 1.0
 
@@ -350,6 +350,10 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         if fruitless_step_count > 100
+            break
+        end
+
+        if step_num > 400
             break
         end
     end

@@ -98,6 +98,14 @@ function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
         log_one_minus_z = work2[i+1]
         log_one_minus_xsum = log1p(-xsum)
         ladj += log_z + log_one_minus_z + log_one_minus_xsum
+        if !isfinite(ladj)
+            @show ladj
+            @show log_z
+            @show log_one_minus_z
+            @show xsum
+            @show log_one_minus_xsum
+            exit()
+        end
 
         xs[i] = (1 - xsum) * zs[i]
         xsum += xs[i]
@@ -157,6 +165,7 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
     # transform π to simplex
     ladj = simplex!(model.n, model.π_simplex, model.xs_sum,
                     model.work, model.zs, log1mz_sum, onemz_prod, π)
+    @assert isfinite(ladj)
 
     # transform to effect length adjusted simplex
     scaled_simplex_sum = 0.0
@@ -265,7 +274,6 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
     end
 
     @assert isfinite(lp)
-    @assert isfinite(ladj)
     @assert isfinite(efflen_ladj)
 
     return lp + ladj + efflen_ladj

@@ -87,9 +87,9 @@ function approximate_likelihood_from_isolator(input_filename,
 
     m = parse(Int, readline(input))
     @show (m, n)
-    I = Array(Int, 0)
-    J = Array(Int, 0)
-    V = Array(Float32, 0)
+    I = Array{Int}(0)
+    J = Array{Int}(0)
+    V = Array{Float32}(0)
     println("reading isolator likelihood matrix...")
     for line in eachline(input)
         j_, i_, v_ = split(line, ',')
@@ -222,7 +222,7 @@ function approximate_likelihood(s::RNASeqSample)
     m, n = size(s)
     model = Model(m, n)
 
-    num_flows = 3
+    num_flows = 1
     flow = HouseholderFlow(n-1, num_flows)
 
     # step size constants
@@ -230,20 +230,20 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ε = 1e-16
 
     # influence of the most recent gradient on step size
-    ss_ω_α = 0.5
-    ss_μ_α = 0.5
-    ss_A_α = 0.5
+    ss_ω_α = 0.1
+    ss_μ_α = 0.1
+    ss_A_α = 0.1
 
     ss_η = 1.0
 
     ss_max_μ_step = 1e-1
     ss_max_ω_step = 1e-1
-    ss_max_A_step = 1e-1
-    srand(4324)
+    ss_max_A_step = 1.0
+    # srand(43241)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 4
+    num_mc_samples = 2
     η = fillpadded(FloatVec, 0.0f0, n-1)
     ζ = fillpadded(FloatVec, 0.0f0, n-1)
 
@@ -293,11 +293,6 @@ function approximate_likelihood(s::RNASeqSample)
         elbo0 = elbo
         elbo = 0.0
         fill!(μ_grad, 0.0f0)
-
-        for i in 1:n-1
-            μ[i] = rand()
-        end
-
         fill!(ω_grad, 0.0f0)
         fill!(flow.A_grad, 0.0f0)
         map!(exp, σv, ωv)
@@ -312,10 +307,39 @@ function approximate_likelihood(s::RNASeqSample)
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
 
+            # tmp = copy(ζ)
+
             transform!(flow, ζ)
             lp = log_likelihood(model, s.X, s.effective_lengths, ζ, π_grad)
             @assert isfinite(lp)
             gradients!(flow, ζ, π_grad)
+
+            # for _ in 1:10
+            #     tmpi = rand(1:n-1)
+            #     # tmpj = rand(2:num_flows)
+            #     tmpj = 1
+
+            #     copy!(ζ, tmp)
+            #     eps = 1e-2
+
+            #     flow.A[tmpi, tmpj] += eps
+            #     # ζ[tmpi] += eps
+
+            #     fill!(flow.A_grad, 0.0f0)
+            #     transform!(flow, ζ)
+            #     tmplp = log_likelihood(model, s.X, s.effective_lengths, ζ, π_grad)
+            #     @assert isfinite(lp)
+            #     gradients!(flow, ζ, π_grad)
+
+            #     @show flow.A_grad[tmpi, tmpj]
+            #     # @show π_grad[tmpi]
+            #     @show (tmplp - lp) / eps
+
+            #     flow.A[tmpi, tmpj] -= eps
+            #     println()
+            # end
+            # exit()
+
             elbo += lp
 
             @inbounds for i in 1:n-1
@@ -343,8 +367,9 @@ function approximate_likelihood(s::RNASeqSample)
             s_ω[:] = ω_grad.^2
         end
 
-        c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
-        #c = ss_η * (step_num^(-0.5 + 0.01))::Float64
+        # TODO: TESTING HERE, XXX<: What I don't shrink the step size?
+        # c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
+        c = ss_η * (step_num^(-0.5 + 0.01))::Float64
         #c =  ss_η * 1.0/1.02^step_num
 
         for i in 1:n-1
@@ -366,7 +391,8 @@ function approximate_likelihood(s::RNASeqSample)
                 flow.A[i,j] += clamp(ρ * flow.A_grad[i,j], -ss_max_A_step, ss_max_A_step)
             end
         end
-        @show minimum(flow.A), maximum(flow.A)
+        # @show minimum(flow.A), maximum(flow.A)
+        # @show minimum(flow.A_grad), maximum(flow.A_grad)
 
         if elbo < max_elbo
             fruitless_step_count += 1
@@ -374,11 +400,12 @@ function approximate_likelihood(s::RNASeqSample)
             fruitless_step_count = 0
         end
 
-        if fruitless_step_count > 100
-            break
-        end
+        # if fruitless_step_count > 400
+        #     break
+        # end
 
         if step_num > 400
+        # if step_num > 5000
             break
         end
     end

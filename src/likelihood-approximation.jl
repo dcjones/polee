@@ -222,7 +222,7 @@ function approximate_likelihood(s::RNASeqSample)
     m, n = size(s)
     model = Model(m, n)
 
-    num_flows = 1
+    num_flows = 0
     flow = HouseholderFlow(n-1, num_flows)
 
     # step size constants
@@ -307,38 +307,10 @@ function approximate_likelihood(s::RNASeqSample)
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
 
-            # tmp = copy(ζ)
-
             transform!(flow, ζ)
             lp = log_likelihood(model, s.X, s.effective_lengths, ζ, π_grad)
             @assert isfinite(lp)
             gradients!(flow, ζ, π_grad)
-
-            # for _ in 1:10
-            #     tmpi = rand(1:n-1)
-            #     # tmpj = rand(2:num_flows)
-            #     tmpj = 1
-
-            #     copy!(ζ, tmp)
-            #     eps = 1e-2
-
-            #     flow.A[tmpi, tmpj] += eps
-            #     # ζ[tmpi] += eps
-
-            #     fill!(flow.A_grad, 0.0f0)
-            #     transform!(flow, ζ)
-            #     tmplp = log_likelihood(model, s.X, s.effective_lengths, ζ, π_grad)
-            #     @assert isfinite(lp)
-            #     gradients!(flow, ζ, π_grad)
-
-            #     @show flow.A_grad[tmpi, tmpj]
-            #     # @show π_grad[tmpi]
-            #     @show (tmplp - lp) / eps
-
-            #     flow.A[tmpi, tmpj] -= eps
-            #     println()
-            # end
-            # exit()
 
             elbo += lp
 
@@ -359,17 +331,16 @@ function approximate_likelihood(s::RNASeqSample)
         elbo += normal_entropy!(ω_grad, σ, n-1)::Float64
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        # @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
-        @printf("Optimizing ELBO: %.4e\n", elbo)
+        @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
+        # @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
             s_μ[:] = μ_grad.^2
             s_ω[:] = ω_grad.^2
         end
 
-        # TODO: TESTING HERE, XXX<: What I don't shrink the step size?
-        # c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
-        c = ss_η * (step_num^(-0.5 + 0.01))::Float64
+        c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
+        # c = ss_η * (step_num^(-0.5 + 0.01))::Float64
         #c =  ss_η * 1.0/1.02^step_num
 
         for i in 1:n-1
@@ -391,8 +362,6 @@ function approximate_likelihood(s::RNASeqSample)
                 flow.A[i,j] += clamp(ρ * flow.A_grad[i,j], -ss_max_A_step, ss_max_A_step)
             end
         end
-        # @show minimum(flow.A), maximum(flow.A)
-        # @show minimum(flow.A_grad), maximum(flow.A_grad)
 
         if elbo < max_elbo
             fruitless_step_count += 1
@@ -405,7 +374,6 @@ function approximate_likelihood(s::RNASeqSample)
         # end
 
         if step_num > 400
-        # if step_num > 5000
             break
         end
     end

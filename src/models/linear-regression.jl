@@ -7,12 +7,15 @@ function estimate_linear_regression(input::ModelInput)
     elseif input.feature == :gene
         qy_mu_value, qy_sigma_value =
             estimate_gene_expression(input)
+    elseif input.feature == :splicing
+        qy_mu_value, qy_sigma_value =
+            estimate_splicing_log_ratio(input)
     else
         error("Linear regression for $(feature)s not supported")
     end
 
     qy_mu    = tf.constant(qy_mu_value)
-    qy_sigma = tf.constant(qy_sigma_value)
+    qy_sigma = tf.nn[:softplus](tf.constant(qy_sigma_value))
     n = qy_mu[:get_shape]()[:as_list]()[2]
     num_samples = length(input.sample_names)
 
@@ -67,6 +70,15 @@ function estimate_linear_regression(input::ModelInput)
     y_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
                               tf.expand_dims(y_sigma, 0))
 
+    # TODO: I'm not sure how to set this up with splicing in mind. There I want to do:
+    #  r = y[i] / (y[i] + y[i+1]) for i in 1, 3, 5, ...
+    #
+    #  but now it's not clear what's to be done with qy_sigma
+    #
+    # Maybe logistic regression is what we want to do here, since we are
+    # predicting 0-1 values.
+    #
+
     mu = edmodels.MultivariateNormalDiag(tf.matmul(X, W),
                                          tf.add(y_sigma_param, qy_sigma))
 
@@ -89,6 +101,7 @@ function estimate_linear_regression(input::ModelInput)
 
     #qy_log_sigma_param = tf.Variable(sess[:run](w_sigma))
     qy_log_sigma_param = tf.Variable(tf.fill([n], 0.1))
+    # qy_log_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     #qy_log_sigma_param = tf.Print(qy_log_sigma_param,
                               #[tf.reduce_min(qy_log_sigma_param),
                                #tf.reduce_max(qy_log_sigma_param)], "sigma span")
@@ -112,7 +125,8 @@ function estimate_linear_regression(input::ModelInput)
 
     @time write_effects(output_filename, factoridx,
                         sess[:run](qw_param),
-                        sess[:run](tf.exp(qy_log_sigma_param)))
+                        sess[:run](tf.exp(qy_log_sigma_param)),
+                        input.feature)
 end
 
 

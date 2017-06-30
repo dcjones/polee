@@ -1,27 +1,23 @@
 
 # This does logistic categorical regression on provided categories
 
-function estimate_logistic_regression(experiment_spec_filename, output_filename,
-                                      ts, ts_metadata)
-    # read info from experiment specification
-    experiment_spec = YAML.load_file(experiment_spec_filename)
-    names = [entry["name"] for entry in experiment_spec]
-    filenames = [entry["file"] for entry in experiment_spec]
-    sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
-    num_samples = length(filenames)
-    println("Read model specification with ", num_samples, " samples")
-
-    n, likapprox_data, y0 = load_samples(filenames, ts_metadata)
-    qy_mu_value, qy_sigma_value =
-        estimate_quantification(likapprox_data, y0, sample_factors)
-
-    qy_mu    = tf.constant(qy_mu_value)
-    qy_sigma = tf.constant(qy_sigma_value)
+function estimate_logistic_regression(input::ModelInput)
+    if input.feature == :transcript
+        qy_mu_value, qy_sigma_value =
+            estimate_transcript_expression(input)
+    elseif input.feature == :gene
+        qy_mu_value, qy_sigma_value =
+            estimate_gene_expression(input)
+    else
+        error("Logistic regression for $(feature)s not supported")
+    end
 
     # build design matrix
     # -------------------
 
     tic()
+    num_samples = length(input.sample_names)
+    sample_factors = input.sample_factors
     factoridx = Dict{String, Int}()
     for factors in sample_factors
         for factor in factors

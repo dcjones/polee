@@ -68,6 +68,7 @@ function load_samples(filenames, ts_metadata)
 
         #tf_μ = tf.constant(PyVector(μ))
         #tf_σ = tf.constant(PyVector(σ))
+
         tf_μ = tf.constant(μ)
         tf_σ = tf.constant(σ)
         tf_μσ = tf.stack([tf_μ, tf_σ])
@@ -97,6 +98,7 @@ immutable ModelInput
     ts::Transcripts
     ts_metadata::TranscriptsMetadata
     output_filename::Nullable{String}
+    gene_db::SQLite.DB
 end
 
 
@@ -281,7 +283,7 @@ function write_effects_csv(filename, factoridx, W)
 end
 
 
-function write_effects(output_filename, factoridx, W, sigma)
+function write_effects(output_filename, factoridx, W, sigma, feature)
     println("Writing regression results to ", output_filename)
 
     db = SQLite.DB(output_filename)
@@ -290,7 +292,7 @@ function write_effects(output_filename, factoridx, W, sigma)
     SQLite.execute!(db,
         """
         create table effects
-        (transcript_num INT, factor TEXT, w REAL, sigma REAL)
+        ($(feature)_num INT, factor TEXT, w REAL, sigma REAL)
         """)
 
     ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3, ?4)")

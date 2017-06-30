@@ -223,6 +223,7 @@ function main()
         parsed_args = parse_args(subcmd_args, arg_settings)
 
         ts, ts_metadata = Transcripts(parsed_args["transcripts"])
+        gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
         likapprox_data, y0, sample_factors, sample_names =
                 load_samples_from_specification(parsed_args["experiment"], ts_metadata)
@@ -231,7 +232,7 @@ function main()
 
         input = ModelInput(
             likapprox_data, y0, sample_factors, sample_names,
-            feature, ts, ts_metadata, parsed_args["output"])
+            feature, ts, ts_metadata, parsed_args["output"], gene_db)
 
         EXTRUDER_MODELS[parsed_args["model"]](input)
 

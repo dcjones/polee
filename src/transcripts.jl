@@ -413,6 +413,8 @@ function write_transcripts(output_filename, transcripts, metadata)
         end
     end
     SQLite.execute!(db, "end transaction")
+
+    return db
 end
 
 

@@ -178,9 +178,29 @@ function estimate_splicing_log_ratio(input::ModelInput)
 
     @show minimum(qy_mu_inc_value), median(qy_mu_inc_value), maximum(qy_mu_inc_value)
 
-    tmp = sort(qy_mu_inc_value[2,:])
-    @show tmp[1:10]
-    @show tmp[end-10:end]
+    cassette_exons = get_cassette_exons(input.ts)
+
+    println("EXTREME INC VALUES")
+    for i in 1:length(qy_mu_inc_value)
+        if qy_mu_inc_value[i] < -500.0
+            @show (i, qy_mu_inc_value[i], qy_mu_exc_value[i], qy_sigma_inc_value[i], qy_sigma_exc_value[i])
+            @show (length(cassette_exons[i][1].metadata), length(cassette_exons[i][2].metadata[3]))
+        end
+    end
+
+    println("EXTREME EXC VALUES")
+    for i in 1:length(qy_mu_exc_value)
+        if qy_mu_exc_value[i] < -500.0
+            @show (i, qy_mu_inc_value[i], qy_mu_exc_value[i], qy_sigma_inc_value[i], qy_sigma_exc_value[i])
+            @show (length(cassette_exons[i][1].metadata), length(cassette_exons[i][2].metadata[3]))
+        end
+    end
+
+    # tmp = sort(qy_mu_inc_value[2,:])
+    # @show tmp[1:10]
+    # @show tmp[end-10:end]
+
+    exit()
 
     # @show minimum(qy_mu_exc_value), median(qy_mu_exc_value), maximum(qy_mu_exc_value)
     # @show minimum(qy_mu_ratio_value), median(qy_mu_ratio_value), maximum(qy_mu_ratio_value)
@@ -200,7 +220,7 @@ function transcript_quantification_model(likapprox_data, y0)
 
     # y_sigma: variance around pooled mean
     y_sigma_mu0 = tf.constant(0.0, shape=[n])
-    y_sigma_sigma0 = tf.constant(1.0, shape=[n])
+    y_sigma_sigma0 = tf.constant(0.2, shape=[n])
     y_log_sigma = edmodels.MultivariateNormalDiag(y_sigma_mu0, y_sigma_sigma0)
     y_sigma = tf.exp(y_log_sigma)
 
@@ -210,6 +230,7 @@ function transcript_quantification_model(likapprox_data, y0)
 
     y_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
                               tf.expand_dims(y_sigma, 0))
+    y_sigma_param = tf.Print(y_sigma_param, [tf.reduce_min(y_sigma_param), tf.reduce_max(y_sigma_param)], "Y_SIGMA SPAN")
 
     y = edmodels.MultivariateNormalDiag(y_mu_param, y_sigma_param)
 
@@ -226,10 +247,64 @@ function estimate_feature_expression(likapprox_data, y0, sample_factors, feature
     y, y_mu_param, y_sigma_param, y_mu, likapprox =
         transcript_quantification_model(likapprox_data, y0)
 
+    # TODO: I'm getting INFS. The issue is extremely large SIGMA values that
+    # occur for some reason.
+    #
+    # Update: still getting NaNs, despite fixing the issue with extreme sigmas.
+    # have no idea why that's happening.
+    #
+
+    # We effectively want to sum log-normal variates to arrive at feature
+    # expression. We approximate that with another log-normal by matching
+    # moments (this is sometimes called the Fenton-Wilkinson method)
+
+    # y_sigma_param = tf.Print(y_sigma_param, [tf.reduce_min(y_sigma_param), tf.reduce_max(y_sigma_param)], "Y_SIGMA SPAN")
+    y_var = tf.square(y_sigma_param)
+    y_var = tf.Print(y_var, [tf.reduce_min(y_var), tf.reduce_max(y_var)], "Y_VAR SPAN")
+    y_mu_param = tf.Print(y_mu_param, [tf.reduce_min(y_mu_param), tf.reduce_max(y_mu_param)], "Y_MU SPAN")
+
+    tmp = tf.add(y_mu_param, tf.divide(y_var, 2))
+    tmp = tf.Print(tmp, [tf.reduce_min(tmp), tf.reduce_max(tmp)], "TMP SPAN")
+    y_mu_exp_adj1 = tf.exp(tmp)
+
+    # y_mu_exp_adj1 = tf.exp(tf.add(y_mu_param, tf.divide(y_var, 2)))
+    y_mu_exp_adj1 = tf.Print(y_mu_exp_adj1, [tf.reduce_min(y_mu_exp_adj1), tf.reduce_max(y_mu_exp_adj1)], "MU_EXP_ADJ1 SPAN")
+    y_features_mu_exp_part1 =
+        tf.transpose(tf.sparse_tensor_dense_matmul(features, y_mu_exp_adj1, adjoint_b=true))
+
+    y_mu_exp_adj2 = tf.multiply(tf.exp(tf.add(tf.multiply(2.0f0, y_mu_param), y_var)),
+                                tf.subtract(tf.exp(y_var), 1.0f0))
+    # y_mu_exp_adj2 = tf.Print(y_mu_exp_adj2, [tf.reduce_min(y_mu_exp_adj2), tf.reduce_max(y_mu_exp_adj2)], "MU_EXP_ADJ1 SPAN")
+    y_features_mu_exp_part2 =
+        tf.transpose(tf.sparse_tensor_dense_matmul(features, y_mu_exp_adj2, adjoint_b=true))
+
+    var_numer = y_features_mu_exp_part1
+    var_denom = tf.square(y_features_mu_exp_part2)
+
+    # var_numer = tf.Print(var_numer, [tf.reduce_min(var_numer), tf.reduce_max(var_numer)], "NUMER SPAN")
+    # var_denom = tf.Print(var_denom, [tf.reduce_min(var_denom), tf.reduce_max(var_denom)], "DENOM SPAN")
+
+    y_features_var_param = tf.log(tf.add(1.0f0, tf.divide(var_numer, var_denom)))
+    # tmp = tf.divide(var_numer, var_denom)
+    # tmp = tf.Print(tmp, [tf.reduce_min(tmp), tf.reduce_max(tmp)], "TMP SPAN")
+    # y_features_var_param = tf.log(tf.add(1.0f0, tmp))
+
+    y_features_sigma_param = tf.sqrt(y_features_var_param)
+
+    y_features_mu_param = tf.subtract(tf.log(y_features_mu_exp_part1),
+                                      tf.divide(tf.square(y_features_sigma_param), 2))
+
+    y_features_mu_param = tf.Print(y_features_mu_param,
+        [tf.reduce_min(y_features_mu_param), tf.reduce_max(y_features_mu_param)], "FEATURE MU SPAN")
+    y_features_sigma_param = tf.Print(y_features_sigma_param,
+        [tf.reduce_min(y_features_sigma_param), tf.reduce_max(y_features_sigma_param)], "FEATURE SIGMA SPAN")
+
+    #=
     y_features_mu_param =
         tf.transpose(tf.sparse_tensor_dense_matmul(features, y_mu_param, adjoint_b=true))
     y_features_sigma_param =
         tf.transpose(tf.sparse_tensor_dense_matmul(features, y_sigma_param, adjoint_b=true))
+    =#
     y_features = edmodels.MultivariateNormalDiag(y_features_mu_param, y_features_sigma_param)
 
     println("Estimating...")
@@ -256,7 +331,7 @@ function estimate_feature_expression(likapprox_data, y0, sample_factors, feature
                         data=PyDict(Dict(likapprox => likapprox_data)))
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    inference[:run](n_iter=250, optimizer=optimizer)
+    inference[:run](n_iter=10, optimizer=optimizer)
 
     sess = ed.get_session()
     qy_mu_value    = sess[:run](qy_features_mu_param)
@@ -302,6 +377,10 @@ function estimate_expression(likapprox_data, y0, sample_factors)
     old_sess = ed.get_session()
     old_sess[:close]()
     ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
+
+    @show minimum(qy_mu_value), median(qy_mu_value), maximum(qy_mu_value)
+    @show minimum(qy_sigma_value), median(qy_sigma_value), maximum(qy_sigma_value)
+    exit()
 
     return qy_mu_value, qy_sigma_value
 end

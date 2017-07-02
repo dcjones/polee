@@ -1,7 +1,7 @@
 
 
 function gibbs_sampler(input_filename, output_filename)
-    num_samples = 300
+    num_samples = 1000
     num_burnin_samples = 500
     sample_stride = 5 # record every nth sample
 
@@ -16,7 +16,7 @@ function gibbs_sampler(input_filename, output_filename)
 
     # transcript read counts
     cs = Array{UInt32}(n)
-    
+
     # transcript mixture
     ys = Array{Float32}(n)
     fill!(ys, 1.0f0/n)
@@ -54,6 +54,11 @@ function gibbs_sampler(input_filename, output_filename)
                     zs[i] = X.rowval[k]
                     break
                 end
+            end
+            if zs[i] == 0 && wlen != 0
+                @show wlen
+                @show wsum
+                @show r
             end
             @assert zs[i] != 0 || wlen == 0
         end

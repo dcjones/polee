@@ -83,3 +83,112 @@ function gradients!(t::HouseholderFlow, x, x_grad)
         end
     end
 end
+
+
+
+immutable MultiplicativeMixingFlow
+    ws::Vector{Float32}
+    xs::Vector{Float32} # input x, prior to transformation
+    ws_grad::Vector{Float32}
+end
+
+
+function MultiplicativeMixingFlow(n)
+    return MultiplicativeMixingFlow(#randn(Float32, n-1),
+                                    zeros(Float32, n-1),
+                                    Array{Float32}(n),
+                                    Array{Float32}(n-1))
+end
+
+
+function transform!(t::MultiplicativeMixingFlow, xs)
+    n = length(t.xs)
+    for i in 1:n
+        t.xs[i] = xs[i]
+    end
+    ladj = 0.0
+    for i in 2:n
+        xs[i] = t.xs[i] * (1.0f0 + t.ws[i-1] * t.xs[i-1])
+        ladj += log(abs(1.0f0 + t.ws[i-1] * t.xs[i-1]))
+    end
+
+    return ladj
+end
+
+
+function gradients!(t::MultiplicativeMixingFlow, xs, xs_grad)
+    n = length(t.xs)
+    for i in 1:n-1
+        t.ws_grad[i] += t.xs[i] * t.xs[i+1] * xs_grad[i+1]
+    end
+
+    if n > 1
+        xs_grad[1] = xs_grad[1] + t.ws[1] * t.xs[2] * xs_grad[2]
+        for i in 2:n-1
+            # if i == 2
+            #     @show t.ws[i-1]
+            #     @show t.ws[i]
+            #     @show (1.0f0 + t.ws[i-1] * t.xs[i-1]) * xs_grad[i]
+            #     @show t.ws[i] * t.xs[i] * xs_grad[i+1]
+            # end
+            xs_grad[i] = (1.0f0 + t.ws[i-1] * t.xs[i-1]) * xs_grad[i] +
+                         t.ws[i] * t.xs[i] * xs_grad[i+1]
+        end
+        xs_grad[n] = (1.0f0 + t.ws[n-1] * t.xs[n-1]) * xs_grad[n]
+    end
+
+    # jacobian gradients wrt to x and w
+    for i in 1:n-1
+        jt = 1.f0 + t.ws[i] * t.xs[i]
+        jd = (1.0f0/abs(jt)) * (jt/abs(jt))
+
+        xs_grad[i] += jd * t.ws[i] / (1.0f0 + t.ws[i] * t.xs[i])
+        t.ws_grad[i] += jd * t.xs[i] / (1.0f0 + t.ws[i] * t.xs[i])
+    end
+end
+
+
+immutable AdditiveMixingFlow
+    ws::Vector{Float32}
+    xs::Vector{Float32} # input x, prior to transformation
+    ws_grad::Vector{Float32}
+end
+
+
+function AdditiveMixingFlow(n)
+    return AdditiveMixingFlow(#randn(Float32, n-1),
+                              zeros(Float32, n-1),
+                              Array{Float32}(n),
+                              Array{Float32}(n-1))
+end
+
+
+function transform!(t::AdditiveMixingFlow, xs)
+    n = length(t.xs)
+    for i in 1:n
+        t.xs[i] = xs[i]
+    end
+    ladj = 0.0
+    for i in 2:n
+        xs[i] = t.xs[i] + t.ws[i-1] * t.xs[i-1]
+    end
+
+    return 0.0
+end
+
+
+function gradients!(t::AdditiveMixingFlow, xs, xs_grad)
+    n = length(t.xs)
+    for i in 1:n-1
+        t.ws_grad[i] += t.xs[i+1] * xs_grad[i+1]
+    end
+
+    if n > 1
+        xs_grad[1] = xs_grad[1] + t.ws[1] * xs_grad[2]
+        for i in 2:n-1
+            xs_grad[i] = xs_grad[i] +
+                         t.ws[i] * xs_grad[i+1]
+        end
+        # xs_grad[n] = (1.0f0 + t.ws[n-1] * t.xs[n-1]) * xs_grad[n]
+    end
+end

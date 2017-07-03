@@ -81,8 +81,8 @@ function RNASeqSample(transcripts_filename::String,
     println("intersecting reads and transcripts...")
 
     # sparse matrix indexes and values
-    I = Int32[]
-    J = Int32[]
+    I = UInt32[]
+    J = UInt32[]
     V = Float32[]
 
     # reassign indexes to alignments to group by position

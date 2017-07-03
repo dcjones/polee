@@ -222,11 +222,15 @@ end
 
 function approximate_likelihood(s::RNASeqSample)
     m, n = size(s)
-    model = Model(m, n)
 
-    num_flows = 0
-    # flow = MultiplicativeMixingFlow(n-1)
-    flow = AdditiveMixingFlow(n-1)
+    # cluster transcripts for hierachrical stick breaking
+    I, J, V = findnz(s.X)
+    tree = hclust(I, J, V, n)
+    @show maxdepth(tree)
+
+    exit() # TODO: a lot of other stuff
+
+    model = Model(m, n)
 
     # step size constants
     ss_τ = 1.0
@@ -241,7 +245,6 @@ function approximate_likelihood(s::RNASeqSample)
 
     ss_max_μ_step = 1e-1
     ss_max_ω_step = 1e-1
-    ss_max_A_step = 1e-1
     # srand(43241)
 
     # number of monte carlo samples to estimate gradients an elbo at each
@@ -261,7 +264,6 @@ function approximate_likelihood(s::RNASeqSample)
     # step-size
     s_μ = fillpadded(FloatVec, 1e-6, n-1)
     s_ω = fillpadded(FloatVec, 1e-6, n-1)
-    s_A = zeros(Float32, n-1)
 
     # simd vectors
     ηv = reinterpret(FloatVec, η)
@@ -297,8 +299,6 @@ function approximate_likelihood(s::RNASeqSample)
         elbo = 0.0
         fill!(μ_grad, 0.0f0)
         fill!(ω_grad, 0.0f0)
-        # fill!(flow.A_grad, 0.0f0)
-        fill!(flow.ws_grad, 0.0f0)
         map!(exp, σv, ωv)
 
         for _ in 1:num_mc_samples
@@ -311,12 +311,9 @@ function approximate_likelihood(s::RNASeqSample)
                 ζv[i] = σv[i] .* ηv[i] + μv[i]
             end
 
-            flow_ladj = transform!(flow, ζ)
             lp = log_likelihood(model, s.X, s.effective_lengths, ζ, π_grad)
             @assert isfinite(lp)
-            gradients!(flow, ζ, π_grad)
-
-            elbo += lp + flow_ladj
+            elbo += lp
 
             @inbounds for i in 1:n-1
                 μ_grad[i] += π_grad[i]
@@ -324,7 +321,6 @@ function approximate_likelihood(s::RNASeqSample)
             end
         end
 
-        flow.ws_grad ./= num_mc_samples
         for i in 1:n-1
             μ_grad[i] /= num_mc_samples
             ω_grad[i] /= num_mc_samples
@@ -359,20 +355,6 @@ function approximate_likelihood(s::RNASeqSample)
             ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
         end
 
-        # for j in 1:num_flows
-        #     for i in 1:n-1
-        #         s_A[i] = (1 - ss_A_α) * s_A[i] + ss_A_α * flow.A_grad[i,j]^2
-        #         ρ = c / (ss_τ + sqrt(s_A[i,j]))
-        #         flow.A[i,j] += clamp(ρ * flow.A_grad[i,j], -ss_max_A_step, ss_max_A_step)
-        #     end
-        # end
-
-        # for i in 1:n-2
-        #     s_A[i] = (1 - ss_A_α) * s_A[i] + ss_A_α * flow.ws_grad[i]^2
-        #     ρ = c / (ss_τ + sqrt(s_A[i]))
-        #     flow.ws[i] += clamp(ρ * flow.ws_grad[i], -ss_max_A_step, ss_max_A_step)
-        # end
-
         if elbo < max_elbo
             fruitless_step_count += 1
         else
@@ -387,9 +369,6 @@ function approximate_likelihood(s::RNASeqSample)
             break
         end
     end
-
-    @show flow.ws
-    @show minimum(flow.ws), maximum(flow.ws)
 
     toc()
 

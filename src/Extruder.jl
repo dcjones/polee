@@ -7,6 +7,7 @@ using Bio.Align
 using GenomicFeatures
 using Bio.Seq
 using Bio.StringFields
+using DataStructures: PriorityQueue, dequeue!, peek
 using Distributions
 using HATTries
 using HDF5
@@ -34,6 +35,7 @@ include("likelihood-approximation.jl")
 include("estimate.jl")
 include("hattrie_stringfield.jl")
 include("gibbs.jl")
+include("cluster.jl")
 
 # TODO: automate including everything under models
 EXTRUDER_MODELS = Dict{String, Function}()

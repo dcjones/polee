@@ -224,8 +224,7 @@ function approximate_likelihood(s::RNASeqSample)
     m, n = size(s)
 
     # cluster transcripts for hierachrical stick breaking
-    I, J, V = findnz(s.X)
-    tree = hclust(I, J, V, n)
+    tree = hclust(s.X, n)
     @show maxdepth(tree)
 
     exit() # TODO: a lot of other stuff

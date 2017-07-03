@@ -94,8 +94,8 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, K)
 
     ab = SubtreeListNode(a.vs, a.is, HClustNode(a.root, b.root))
 
-    demote!(queue, a, K)
-    demote!(queue, b, K)
+    promote!(queue, a, K)
+    promote!(queue, b, K)
 
     # stick ab in a's place
     if a.left !== a
@@ -162,12 +162,12 @@ end
 
 
 # Set adjacent node distances to Inf
-function demote!(queue::PriorityQueue, a, K)
+function promote!(queue::PriorityQueue, a, K)
     if a.left !== a
         u = a.left
         for _ in 1:K
             if haskey(queue, (u, a))
-                queue[(u, a)] = Inf32
+                queue[(u, a)] = 0.0f0
             end
             if u.left === u
                 break
@@ -181,7 +181,7 @@ function demote!(queue::PriorityQueue, a, K)
         u = a.right
         for _ in 1:K
             if haskey(queue, (a, u))
-                queue[(a, u)] = Inf32
+                queue[(a, u)] = 0.0f0
             end
             if u.right === u
                 break
@@ -220,14 +220,9 @@ function update_distances!(queue::PriorityQueue, a, K)
 end
 
 
-function hclust(I::Vector{Int32}, J::Vector{Int32}, V::Vector{Float32}, n)
-    # compare this many neighbors to each neighbors left and right to find
-    # candidates to merge
-    K = 10
-
+function hclust_initalize(X::SparseMatrixRSB, n, K)
     # construct nodes
-    # TODO: do this in a separate function that just returns the front of the
-    # list so GC can reclaim some of this.
+    I, J, V = findnz(X)
     p = sortperm(J)
     I = I[p]
     J = J[p]
@@ -271,7 +266,7 @@ function hclust(I::Vector{Int32}, J::Vector{Int32}, V::Vector{Float32}, n)
     shuffle!(nodes)
     nodes = nodes[sortperm(medreadidx)]
 
-    @show medreadidx[1:20]
+    # @show medreadidx[1:20]
 
     # turn nodes into a linked list
     for i in 2:n
@@ -288,17 +283,27 @@ function hclust(I::Vector{Int32}, J::Vector{Int32}, V::Vector{Float32}, n)
     end
     toc() # 3 seconds
 
-    tic()
+    return queue
+end
+
+
+function hclust(X::SparseMatrixRSB, n)
+    # compare this many neighbors to each neighbors left and right to find
+    # candidates to merge
+    K = 5
+    queue = hclust_initalize(X, n, K)
+
+    # TODO: most of the time is spend on queue maintanence. We could do better
+    # by using a basic binary heap and periodically walking through and
+    # promoting all merged node comparisons so they get purged.
+
+    # tic()
     steps = 0
     merge_count = 0
     # Profile.start_timer()
     while true
         steps += 1
         a, b = dequeue!(queue)
-
-        if steps % 10000 == 0
-            @show (steps, merge_count, length(queue), length(a.vs), length(b.vs))
-        end
 
         if a.merged || b.merged
             continue
@@ -309,8 +314,8 @@ function hclust(I::Vector{Int32}, J::Vector{Int32}, V::Vector{Float32}, n)
 
         # all trees have been merged
         if ab.left === ab && ab.right === ab
-            @show (n, steps, merge_count)
-            toc()
+            # @show (n, steps, merge_count)
+            # toc()
             # Profile.stop_timer()
             # Profile.print()
             return ab.root

@@ -18,7 +18,7 @@ using SQLite
 using StatsBase
 import SHA
 import YAML
-import TensorFlow
+# import TensorFlow
 
 include("fastmath.jl")
 using .FastMath
@@ -31,6 +31,7 @@ include("fragmodel.jl")
 include("model.jl")
 include("sample.jl")
 include("flows.jl")
+include("kumaraswamy.jl")
 include("likelihood-approximation.jl")
 include("estimate.jl")
 include("hattrie_stringfield.jl")

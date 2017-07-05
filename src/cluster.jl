@@ -4,34 +4,42 @@
 # best caputers the covariance present in the data.
 
 # Node in the completed tree
-immutable HClustNode
+type HClustNode
     # 0 if internal node, >1 for child nodes giving the transcript index
     j::Int32
 
-    left_child::Nullable{HClustNode}
-    right_child::Nullable{HClustNode}
+    left_child::HClustNode
+    right_child::HClustNode
+    parent::HClustNode
+
+    # input value
+    input_value::Float32
+    grad::Float32
 
     function (::Type{HClustNode})(j::Integer)
-        node = new(j, Nullable{HClustNode}(), Nullable{HClustNode}())
+        node = new(j)
+        node.parent = node
+        node.left_child = node
+        node.right_child = node
         return node
     end
 
-    function (::Type{HClustNode})(j::Integer, left_child::Nullable{HClustNode},
-                                  right_child::Nullable{HClustNode})
+    function (::Type{HClustNode})(j::Integer, left_child::HClustNode,
+                                  right_child::HClustNode)
         return new(j, left_child, right_child)
     end
 end
 
 
 function HClustNode(left_child::HClustNode, right_child::HClustNode)
-    return HClustNode(0, Nullable(left_child), Nullable(right_child))
+    return HClustNode(0, left_child, right_child)
 end
 
 
 function maxdepth(root::HClustNode)
     return 1 +
-        max(isnull(root.left_child) ? 0 : maxdepth(get(root.left_child)),
-            isnull(root.right_child) ? 0 : maxdepth(get(root.right_child)))
+        max(root.left_child === root ? 0 : maxdepth(root.left_child),
+            root.right_child === root ? 0 : maxdepth(root.right_child))
 end
 
 
@@ -92,7 +100,10 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, K)
         copy!(a.is, i, b.is, j, k)
     end
 
-    ab = SubtreeListNode(a.vs, a.is, HClustNode(a.root, b.root))
+    node = HClustNode(a.root, b.root)
+    a.root.parent = node
+    b.root.parent = node
+    ab = SubtreeListNode(a.vs, a.is, node)
 
     promote!(queue, a, K)
     promote!(queue, b, K)
@@ -287,7 +298,8 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
 end
 
 
-function hclust(X::SparseMatrixRSB, n)
+function hclust(X::SparseMatrixRSB)
+    m, n = size(X)
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
     K = 5
@@ -324,3 +336,81 @@ function hclust(X::SparseMatrixRSB, n)
         update_distances!(queue, ab, K)
     end
 end
+
+
+# Hierarchical stick breaking transformation
+type HSBTransform
+    # tree nodes in depth first traversal order
+    nodes::Vector{HClustNode}
+end
+
+
+function HSBTransform(X::SparseMatrixRSB)
+    m, n = size(X)
+    root = hclust(X)
+
+    # Put nodes in DFS order
+    nodes = HClustNode[]
+    sizehint!(nodes, n)
+    stack = HClustNode[root]
+    while !isempty(stack)
+        node = pop!(stack)
+        push!(nodes, node)
+        if node.left_child !== node
+            push!(stack, node.left_child)
+        end
+        if node.right_child !== node
+            push!(stack, node.right_child)
+        end
+    end
+
+    return HSBTransform(nodes)
+end
+
+
+function transform!(t::HSBTransform, ys::Vector{Float32}, xs::Vector{Float32})
+    nodes = t.nodes
+    nodes[1].input_value = 1.0f0
+    k = 1 # internal node count
+    for i in 1:length(nodes)
+        node = nodes[i]
+
+        if node.j != 0 # leaf node
+            xs[node.j] = node.input_value
+            continue
+        end
+
+        @assert 0.0f0 <= node.input_value <= 1.0f0
+        @assert 0.0f0 <= ys[k] <= 1.0f0
+        @assert node.left_child !== node
+        @assert node.right_child !== node
+
+        node.left_child.input_value = ys[k] * node.input_value
+        node.right_child.input_value = (1.0f0 - ys[k]) * node.input_value
+
+        k += 1
+    end
+
+    # TODO: compute log absolute jacobian determinant
+end
+
+
+function gradients!(t::HSBTransform, y_grad::Vector{Float32}, x_grad::Vector{Float32})
+    nodes = t.nodes
+    k = length(y_grad)
+    for i in length(nodes):-1:1
+        node = nodes[i]
+
+        if node.j != 0 # leaf node
+            node.grad = x_grad[node.j]
+        else
+            node.grad = node.input_value * (node.left_child.grad - node.right_child.grad)
+            y_grad[k] += node.grad
+            k -= 1
+        end
+    end
+    @assert k == 0
+
+    # TODO: compute gradients for log absolute jacobian determinant
+end
+

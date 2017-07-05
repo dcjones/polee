@@ -223,12 +223,6 @@ end
 function approximate_likelihood(s::RNASeqSample)
     m, n = size(s)
 
-    # cluster transcripts for hierachrical stick breaking
-    tree = hclust(s.X, n)
-    @show maxdepth(tree)
-
-    exit() # TODO: a lot of other stuff
-
     model = Model(m, n)
 
     # step size constants
@@ -236,44 +230,43 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ε = 1e-16
 
     # influence of the most recent gradient on step size
-    ss_ω_α = 0.1
-    ss_μ_α = 0.1
-    ss_A_α = 0.1
+    ss_α_α = 0.1
+    ss_β_α = 0.1
 
     ss_η = 1.0
 
-    ss_max_μ_step = 1e-1
-    ss_max_ω_step = 1e-1
+    ss_max_α_step = 1e-1
+    ss_max_β_step = 1e-1
     # srand(43241)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
     num_mc_samples = 2
-    η = fillpadded(FloatVec, 0.0f0, n-1)
-    ζ = fillpadded(FloatVec, 0.0f0, n-1)
 
-    μ = fillpadded(FloatVec, 0.0f0, n-1)
-    σ = fillpadded(FloatVec, 1.0f0, n-1, 1.f0)
-    ω = fillpadded(FloatVec, -3.0f0, n-1) # log transformed σ
+    # cluster transcripts for hierachrical stick breaking
+    @time t = HSBTransform(s.X)
 
-    π_grad = fillpadded(FloatVec, 0.0f0, n-1)
-    μ_grad = fillpadded(FloatVec, 0.0f0, n-1)
-    ω_grad = fillpadded(FloatVec, 0.0f0, n-1)
+    # Unifom distributed values
+    zs = Array{Float32}(n-1)
+
+    # zs transformed to Kumaraswamy distributed values
+    ys = Array{Float32}(n-1)
+
+    # ys transformed by hierarchical stick breaking
+    xs = Array{Float32}(n)
+
+    αs = zeros(Float32, n-1)
+    βs = zeros(Float32, n-1)
+    ds = Array{Kumaraswamy{Float32}}(n-1)
+
+    α_grad = Array{Float32}(n-1)
+    β_grad = Array{Float32}(n-1)
+    y_grad = Array{Float32}(n-1)
+    x_grad = Array{Float32}(n)
 
     # step-size
-    s_μ = fillpadded(FloatVec, 1e-6, n-1)
-    s_ω = fillpadded(FloatVec, 1e-6, n-1)
-
-    # simd vectors
-    ηv = reinterpret(FloatVec, η)
-    ζv = reinterpret(FloatVec, ζ)
-    μv = reinterpret(FloatVec, μ)
-    ωv = reinterpret(FloatVec, ω)
-    σv = reinterpret(FloatVec, σ)
-    s_μv = reinterpret(FloatVec, s_μ)
-    s_ωv = reinterpret(FloatVec, s_ω)
-    μ_gradv = reinterpret(FloatVec, μ_grad)
-    ω_gradv = reinterpret(FloatVec, ω_grad)
+    s_α = Array{Float32}(n-1)
+    s_β = Array{Float32}(n-1)
 
     elbo = 0.0
     elbo0 = 0.0
@@ -296,62 +289,92 @@ function approximate_likelihood(s::RNASeqSample)
         step_num += 1
         elbo0 = elbo
         elbo = 0.0
-        fill!(μ_grad, 0.0f0)
-        fill!(ω_grad, 0.0f0)
-        map!(exp, σv, ωv)
+        fill!(α_grad, 0.0f0)
+        fill!(β_grad, 0.0f0)
+
+        for i in 1:n-1
+            ds[i] = Kumaraswamy(exp(αs[i]), exp(βs[i]))
+        end
 
         for _ in 1:num_mc_samples
             for i in 1:n-1
-                η[i] = _randn()
+                a, b = ds[i].a, ds[i].b
+                zs[i] = rand()
+                ys[i] = (1 - (1 - zs[i])^(1/b))^(1/a)
             end
 
-            # de-standardize normal variate
-            for i in 1:length(ζv)
-                ζv[i] = σv[i] .* ηv[i] + μv[i]
-            end
+            fill!(x_grad, 0.0f0)
+            fill!(y_grad, 0.0f0)
 
-            lp = log_likelihood(model, s.X, s.effective_lengths, ζ, π_grad)
+            transform!(t, ys, xs)
+            # TODO: gut all the simplex transform stuff from here
+            lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             @assert isfinite(lp)
+            gradients!(t, y_grad, x_grad)
             elbo += lp
 
-            @inbounds for i in 1:n-1
-                μ_grad[i] += π_grad[i]
-                ω_grad[i] += π_grad[i] * η[i] * σ[i]
+            for i in 1:n-1
+                a, b = ds[i].a, ds[i].b
+
+                c = 1 - (1 - zs[i])^(1/b)
+                dy_dα = - c^(1/a) * log(c) / a
+                α_grad[i] += dy_dα * y_grad[i]
+
+                dy_dβ = c^(1/a - 1) * (1 - zs[i])^(1/b) * log(1 - zs[i]) / (a * b)
+                β_grad[i] += dy_dβ * y_grad[i]
             end
         end
 
         for i in 1:n-1
-            μ_grad[i] /= num_mc_samples
-            ω_grad[i] /= num_mc_samples
-            ω_grad[i] += 1 # normal distribution entropy gradient
+            a_grad[i] /= num_mc_samples
+            b_grad[i] /= num_mc_samples
         end
 
-        elbo /= num_mc_samples
-        elbo += normal_entropy!(ω_grad, σ, n-1)::Float64
+        elbo /= num_mc_samples # get estimated expectation over mc samples
+
+        @show elbo
+        exit()
+
+        # Treating the kumaraswamy var as a transformed uniform, there's
+        # no need to deal with entropy here, since entropy is log(1) = 0
+        #=
+        for i in 1:n-1
+            a, b = ds[i].a, ds[i].b
+            Hb = harmonic(b)
+            elbo += (1 - 1/a) + (1 - 1/b) * Hb + log(a * b)
+
+            # gradients w.r.t. log(a), log(b)
+            a_grad[i] += 1/a + 1 # a * (1/a^2 + 1/a)
+            # b * (Hb/b^2 + 1/b + (1 - 1/b) * trigamma(b+1))
+            b_grad[i] += Hb/b + 1 + (b-1) * trigamma(b+1)
+        end
+        =#
+
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
         @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
         # @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
-            s_μ[:] = μ_grad.^2
-            s_ω[:] = ω_grad.^2
+            s_a[:] = a_grad.^2
+            s_b[:] = b_grad.^2
         end
 
+        # step size schedule
         c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
         # c = ss_η * (step_num^(-0.5 + 0.01))::Float64
         #c =  ss_η * 1.0/1.02^step_num
 
         for i in 1:n-1
-            s_μ[i] = (1 - ss_μ_α) * s_μ[i] + ss_μ_α * μ_grad[i]^2
-            ρ = c / (ss_τ + sqrt(s_μ[i]))
-            μ[i] += clamp(ρ * μ_grad[i], -ss_max_μ_step, ss_max_μ_step)
-        end
+            # update a parameters
+            s_a[i] = (1 - ss_a_α) * s_a[i] + ss_a_α * a_grad[i]^2
+            ρ = c / (ss_τ + sqrt(s_a[i]))
+            as[i] += clamp(ρ * a_grad[i], -ss_max_a_step, ss_max_a_step)
 
-        for i in 1:n-1
-            s_ω[i] = (1 - ss_ω_α) * s_ω[i] + ss_ω_α * ω_grad[i]^2
-            ρ = c / (ss_τ + sqrt(s_ω[i]))
-            ω[i] += clamp(ρ * ω_grad[i], -ss_max_ω_step, ss_max_ω_step)
+            # update b parameters
+            s_b[i] = (1 - ss_b_α) * s_b[i] + ss_b_α * b_grad[i]^2
+            ρ = c / (ss_τ + sqrt(s_b[i]))
+            bs[i] += clamp(ρ * b_grad[i], -ss_max_b_step, ss_max_b_step)
         end
 
         if elbo < max_elbo
@@ -381,8 +404,8 @@ function approximate_likelihood(s::RNASeqSample)
         #end
     #end
 
-    map!(exp, σv, ωv)
-    return μ, σ, flow.ws
+    # TODO: we need to also return some representation of the tree
+    return as, bs
 end
 
 

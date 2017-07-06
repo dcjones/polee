@@ -3,118 +3,18 @@ type Model
     m::Int # number of fragments
     n::Int # number of transcripts
 
-    # π transformed to the simplex
-    π_simplex::Vector{Float32}
+    # xs transformed to the effective length weighted simplex
+    ws::Vector{Float32}
 
     # work vector for computing posterior log prob
     frag_probs::Vector{Float32}
-
-    # intermediate gradient (before accounting for transform)
-    raw_grad::Vector{Float32}
-
-    # intermediate values used in simplex calculation
-    xs_sum::Vector{Float64}
-    zs::Vector{Float64}
-
-    # intermediate values in gradient computation
-    log1mz_sum::Vector{Float64}
-    onemz_prod::Vector{Float64}
-    work::Vector{Float64}
 end
+
 
 function Model(m, n)
     return Model(Int(m), Int(n),
-                 fillpadded(FloatVec, 0.0, n),
-                 fillpadded(FloatVec, 0.0, m),
-                 fillpadded(FloatVec, 0.0, n),
-                 fill(0.0, n),
-                 fill(0.0, n),
-                 fill(0.0, n),
-                 fill(0.0, n),
-                 fill(0.0, n))
-end
-
-
-"""
-Logistic (inverse logit) function.
-"""
-logistic(x) = 1 / (1 + exp(-x))
-
-
-function simplex!_loop1(k, xs, work1, work2, zs, ys)
-    Threads.@threads for i in 1:k-1
-        zs[i] = logistic(ys[i] + log(1.0f0/(k - i)))
-        work1[i+1] = log(zs[i])
-        work2[i+1] = log1p(-zs[i])
-    end
-end
-
-
-function simplex!_loop2(k, log1mz_sum, onemz_prod)
-    Threads.@threads for i in 1:k-1
-        onemz_prod[i] = exp(log1mz_sum[i])
-    end
-end
-
-
-"""
-Transform an unconstrained vector `ys` to a simplex.
-
-Return the log absolute determinate of the jacobian (ladj), and store the
-gradient of the ladj in `grad`.
-
-Some intermediate values are also stored:
-    * `xs_sum`: cumulative sum of xs where `xs_sum[i]` is the sum of all
-                `xs[j]` for `j < i`.
-    * `zs`: intermediate adjusted y-values
-    * `log1mz_sum`: cumulative sum of `log(1 - zs[j])`.
-    * `onemz_prod`: cumulative product of `(1 - zs[j])`.
-"""
-function simplex!(k, xs, xs_sum, work, zs, log1mz_sum, onemz_prod, ys)
-    @assert length(xs) >= k
-    @assert length(xs_sum) >= k
-    @assert length(work) >= k
-    @assert length(zs) >= k
-
-    ladj = 0.0
-    xsum = 0.0
-    xs_sum[1] = 0.0
-
-    # reusing these vectors as temporary storage
-    work1 = xs_sum
-    work2 = work
-
-    simplex!_loop1(k, xs, work1, work2, zs, ys)
-
-    log1mz_sum[1] = work2[2]
-    onemz_prod[1] = 1.0 - zs[1]
-    for i in 2:k-1
-        log1mz_sum[i] = log1mz_sum[i-1] + work2[i+1]
-    end
-    simplex!_loop2(k, log1mz_sum, onemz_prod)
-
-    for i in 1:k-1
-        log_z = work1[i+1]
-        log_one_minus_z = work2[i+1]
-        log_one_minus_xsum = log1p(-xsum)
-        ladj += log_z + log_one_minus_z + log_one_minus_xsum
-        if !isfinite(ladj)
-            @show ladj
-            @show log_z
-            @show log_one_minus_z
-            @show xsum
-            @show log_one_minus_xsum
-            exit()
-        end
-
-        xs[i] = (1 - xsum) * zs[i]
-        xsum += xs[i]
-        xs_sum[i+1] = xsum
-        @assert xs_sum[i+1] <= 1.0
-    end
-    xs[k] = 1.0 - xsum
-
-    return ladj
+                 Vector{Float32}(n),
+                 fillpadded(FloatVec, 0.0, m))
 end
 
 
@@ -132,50 +32,20 @@ function log_likelihood_loop1(frag_probs_v)
 end
 
 
-#function log_likelihood_loop2(n, xs_sum, zs, raw_grad, onemz_prod, us, grad)
-    #Threads.@threads for i in 1:n-1
-        #dxi_dyi = (1 - xs_sum[i]) * zs[i] * (1 - zs[i])
-
-        ## (dp(x) / dyi)_i
-        #df_dyi_i = raw_grad[i] * dxi_dyi
-        #grad[i] += df_dyi_i
-
-        ## (dp(x) / dyi)_n
-        ##dxn_dxi = -exp(log1mz_sum[n-1] - log1mz_sum[i])
-        #dxn_dxi = -onemz_prod[n-1] / onemz_prod[i]
-        #df_dyi_n = dxi_dyi * dxn_dxi * raw_grad[n]
-        #grad[i] += df_dyi_n
-
-        ## sum_{j=i+1}^{n-1} (dp(x) / dyi)_j
-        #df_dy_mid = -dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
-        #grad[i] += df_dy_mid
-    #end
-#end
-
-
 # assumes a flat prior on π
-function log_likelihood(model::Model, X, effective_lengths, π, grad)
+function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
     frag_probs = model.frag_probs
-    fill!(grad, 0.0)
+    ws = model.ws
     m, n = model.m, model.n
 
-    log1mz_sum = model.log1mz_sum
-    onemz_prod = model.onemz_prod
-
-    # transform π to simplex
-    ladj = simplex!(model.n, model.π_simplex, model.xs_sum,
-                    model.work, model.zs, log1mz_sum, onemz_prod, π)
-    @assert isfinite(ladj)
-
-    # transform to effect length adjusted simplex
+    # transform to effective length adjusted simplex
     scaled_simplex_sum = 0.0
     for i in 1:n
-        scaled_simplex_sum += effective_lengths[i] * model.π_simplex[i]
+        scaled_simplex_sum += effective_lengths[i] * xs[i]
     end
 
     for i in 1:n
-        model.π_simplex[i] =
-            effective_lengths[i] * model.π_simplex[i] / scaled_simplex_sum
+        ws[i] = effective_lengths[i] * xs[i] / scaled_simplex_sum
     end
 
     # log jacobian determinate for the effective length transform
@@ -184,99 +54,46 @@ function log_likelihood(model::Model, X, effective_lengths, π, grad)
         efflen_ladj += log(effective_lengths[i])
     end
     efflen_ladj -= n * log(scaled_simplex_sum)
-    # @show efflen_ladj
 
     # conditional fragment probabilities
-    A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X,
-             unsafe_wrap(Vector{Float32}, pointer(model.π_simplex), n, false))
+    A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X, ws)
 
     # log-likelihood
     frag_probs_v = reinterpret(FloatVec, frag_probs)
-
     lp = log_likelihood_loop1(frag_probs_v)
-    #for i in 1:length(frag_probs_v)
-        #lpv += log(frag_probs_v[i])
-        #frag_probs_v[i] = inv(frag_probs_v[i])
-    #end
-    #lp = sum(lpv)
+
+    # `log_likelihood_loop1` does the below but realy realy fast
+    #    for i in 1:length(frag_probs)
+    #        lp += log(frag_probs[i])
+    #        frag_probs[i] = inv(frag_probs[i])
+    #    end
 
     # compute df / dw (where w is effective length weighted mixtures)
-    raw_grad = model.raw_grad
-    At_mul_B!(unsafe_wrap(Vector{Float32}, pointer(raw_grad), n, false), X,
-              unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
+    At_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
 
     # compute df / dx
-    # raw_grad[i] now holds df/dw_i where w is the the effective length
+    # x_grad[i] now holds df/dw_i where w is the the effective length
     # weighted mixtures. Here we update it to hold df/dx_i, where x are
     # unweighted mixtures.
     c = 0.0
     for i in 1:n
-        c += (model.π_simplex[i] / scaled_simplex_sum) * raw_grad[i]
+        c += (ws[i] / scaled_simplex_sum) * x_grad[i]
     end
 
     for i in 1:n
-        raw_grad[i] =
-            effective_lengths[i] * (raw_grad[i] / scaled_simplex_sum - c);
+        x_grad[i] = effective_lengths[i] * (x_grad[i] / scaled_simplex_sum - c);
     end
 
-    # compute d(f+S) / dx, where S is the effective length transform
+    # compute terms for derivatives of efflen_ladj (log absolute determinant of the jacobian)
+    # for the effective length transform
     for i in 1:n-1
-        raw_grad[i] += n * (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
-    end
-
-    # compute gradient of simplex transform
-    zs = model.zs
-    xs_sum = model.xs_sum
-
-    us = model.work
-    us[1] = zs[1] * raw_grad[1]
-    for i in 2:n
-        us[i] = us[i-1] + zs[i] * onemz_prod[i-1] * raw_grad[i]
-    end
-
-    # compute df(x) / dyi gradients
-    for i in 1:model.n-1
-        dxi_dyi = (1 - xs_sum[i]) * zs[i] * (1 - zs[i])
-
-        # (dp(x) / dyi)_i
-        df_dyi_i = raw_grad[i] * dxi_dyi
-        grad[i] += df_dyi_i
-
-        # (dp(x) / dyi)_n
-        #dxn_dxi = -exp(log1mz_sum[n-1] - log1mz_sum[i])
-        dxn_dxi = -onemz_prod[n-1] / onemz_prod[i]
-        df_dyi_n = dxi_dyi * dxn_dxi * raw_grad[n]
-        grad[i] += df_dyi_n
-
-        # sum_{j=i+1}^{n-1} (dp(x) / dyi)_j
-        df_dy_mid = -dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
-        grad[i] += df_dy_mid
-        #if !isfinite(grad[i])
-            #@show (dxi_dyi, us[n-1], us[i], onemz_prod[i])
-            #exit()
-        #end
-    end
-    #log_likelihood_loop2(n, xs_sum, zs, raw_grad, onemz_prod, us, grad)
-
-    # gradient of the log absolute determinate of the jacobian (ladj)
-    us[1] = -1 / (1 - xs_sum[1])
-    for i in 2:n-1
-        us[i] = us[i-1] - onemz_prod[i-1] / (1 - xs_sum[i])
-    end
-
-    for i in 1:n-1
-        # d/dy_i log(dx_i / dy_i)
-        grad[i] += (1 - 2*zs[i])
-
-        # d/dy_i sum_{k=i+1}^{n-1} log(dx_k / dy_i)
-        dxi_dyi = (1.0 - xs_sum[i]) * zs[i] * (1.0 - zs[i])
-        grad[i] += dxi_dyi * (us[n-1] - us[i]) / onemz_prod[i]
+        x_grad[i] += n * (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
     end
 
     @assert isfinite(lp)
     @assert isfinite(efflen_ladj)
 
-    return lp + ladj + efflen_ladj
+    return lp + efflen_ladj
 end
 
 

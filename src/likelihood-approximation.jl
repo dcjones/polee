@@ -306,7 +306,6 @@ function approximate_likelihood(s::RNASeqSample)
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
             hsp_ladj = hsp_transform!(t, ys, xs)               # y -> x
 
-            # TODO: gut all the simplex transform stuff from here
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             elbo += lp + kum_ladj + hsp_ladj
 

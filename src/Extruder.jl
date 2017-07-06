@@ -36,7 +36,7 @@ include("likelihood-approximation.jl")
 include("estimate.jl")
 include("hattrie_stringfield.jl")
 include("gibbs.jl")
-include("cluster.jl")
+include("stick_breaking.jl")
 
 # TODO: automate including everything under models
 EXTRUDER_MODELS = Dict{String, Function}()

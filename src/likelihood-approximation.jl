@@ -243,7 +243,7 @@ function approximate_likelihood(s::RNASeqSample)
     zs = Array{Float32}(n-1)
 
     # zs transformed to Kumaraswamy distributed values
-    ys = Array{Float32}(n-1)
+    ys = Array{Float64}(n-1)
 
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(n)
@@ -252,8 +252,13 @@ function approximate_likelihood(s::RNASeqSample)
     αs = zeros(Float32, n-1)
     βs = zeros(Float32, n-1)
 
-    as = Array{Float32, n-1} # exp(αs)
-    bs = Array{Float32, n-1} # exp(βs)
+    # TODO: We need to find initial values that avoid infs
+    # We can do this by assigning 1/n to every leaf than walking our way up
+    # Otherwise one long branch can really fuck us over.
+    # Once we have those values, we can choose as/bs to center around that mean
+
+    as = Array{Float32}(n-1) # exp(αs)
+    bs = Array{Float32}(n-1) # exp(βs)
 
     # various intermediate gradients
     α_grad = Array{Float32}(n-1)
@@ -304,13 +309,20 @@ function approximate_likelihood(s::RNASeqSample)
             rand!(zs)
 
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
+            # @show (minimum(zs), maximum(zs))
+            @show (minimum(ys), maximum(ys))
+            @show zs[indmax(ys)]
+            @show as[indmax(ys)]
+            @show bs[indmax(ys)]
+            # @show (minimum(as), maximum(as))
+            # @show (minimum(bs), maximum(bs))
             hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
 
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             elbo += lp + kum_ladj + hsp_ladj
 
-            hsb_transform_gradients!(t, y_grad, x_grad) # TODO: renome hsp_transform_gradients
-            kumaraswamy_transform_gradients!(as, bs, y_grad, a_grad, b_grad)
+            hsb_transform_gradients!(t, ys, y_grad, x_grad)
+            kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
 
             # adjust for log transform and accumulate
             for i in 1:n-1
@@ -326,35 +338,18 @@ function approximate_likelihood(s::RNASeqSample)
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
 
-        # Note: elbo has a negative entropy term is well, but but we are using
-        # uniform values on [0,1] which has entropy of 0.
-
-        @show elbo
-        exit()
-
-        # Treating the kumaraswamy var as a transformed uniform, there's
-        # no need to deal with entropy here, since entropy is log(1) = 0
-        #=
-        for i in 1:n-1
-            a, b = ds[i].a, ds[i].b
-            Hb = harmonic(b)
-            elbo += (1 - 1/a) + (1 - 1/b) * Hb + log(a * b)
-
-            # gradients w.r.t. log(a), log(b)
-            a_grad[i] += 1/a + 1 # a * (1/a^2 + 1/a)
-            # b * (Hb/b^2 + 1/b + (1 - 1/b) * trigamma(b+1))
-            b_grad[i] += Hb/b + 1 + (b-1) * trigamma(b+1)
-        end
-        =#
+        # Note: the elbo has a negative entropy term is well, but but we are
+        # using uniform values on [0,1] which has entropy of 0, so that term
+        # goes away.
 
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
-        # @printf("Optimizing ELBO: %.4e\n", elbo)
+        # @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
+        @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
-            s_a[:] = a_grad.^2
-            s_b[:] = b_grad.^2
+            s_α[:] = α_grad.^2
+            s_β[:] = β_grad.^2
         end
 
         # step size schedule
@@ -402,6 +397,7 @@ function approximate_likelihood(s::RNASeqSample)
     #end
 
     # TODO: we need to also return some representation of the tree
+    exit()
     return as, bs
 end
 

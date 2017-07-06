@@ -395,7 +395,7 @@ function rand_hsb_tree(n)
 end
 
 
-function hsb_transform!(t::HSBTransform, ys::Vector{Float32}, xs::Vector{Float32})
+function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
     nodes = t.nodes
     nodes[1].input_value = 1.0f0
     k = 1 # internal node count
@@ -415,6 +415,14 @@ function hsb_transform!(t::HSBTransform, ys::Vector{Float32}, xs::Vector{Float32
         node.left_child.input_value = ys[k] * node.input_value
         node.right_child.input_value = (1.0f0 - ys[k]) * node.input_value
 
+        if node.left_child.input_value == 0.0 || node.right_child.input_value == 0.0
+            @show node.input_value
+            @show ys[k]
+            @show node.left_child.input_value
+            @show node.right_child.input_value
+            exit()
+        end
+
         k += 1
     end
     @assert k == length(ys) + 1
@@ -431,17 +439,30 @@ function hsb_transform!(t::HSBTransform, ys::Vector{Float32}, xs::Vector{Float32
         end
 
         ladj += log(node.input_value)
+        if !isfinite(ladj)
+            @show ladj
+            @show node.input_value
+            exit()
+        end
         if node.rightmost_path
             ladj += log(1 - ys[k])
+            if !isfinite(ladj)
+                @show ladj
+                @show ys[k]
+                exit()
+            end
         end
         k += 1
     end
 
+    @assert isfinite(ladj)
     return ladj
 end
 
 
-function hsb_gradients!(t::HSBTransform, y_grad::Vector{Float32}, x_grad::Vector{Float32})
+function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
+                                  y_grad::Vector,
+                                  x_grad::Vector)
     nodes = t.nodes
     k = length(y_grad)
     for i in length(nodes):-1:1

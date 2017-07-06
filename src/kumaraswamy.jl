@@ -22,34 +22,34 @@ function Distributions.entropy(d::Kumaraswamy)
 end
 
 
-
-immutable KumaraswamyTransform
-
-end
-
 # Take uniform random numbers in zs, transform them to Kamaraswamy distributed values
 # in ys according to parameters as and bs. Return the log absolute determinant of the jacobian,
-function kumaraswamy_transform!(as::Vector{Float32}, bs::Vector{Float32},
-                                zs::Vector{Float32}, ys::Vector{Float32})
+function kumaraswamy_transform!(as::Vector, bs::Vector,
+                                zs::Vector, ys::Vector)
     @assert length(as) == length(bs) == length(zs) == length(ys)
     ladj = 0.0f0
     for i in 1:length(ys)
-        a = as[i]
-        b = bs[i]
-        z = zs[i]
+        a = Float64(as[i])
+        b = Float64(bs[i])
+        z = Float64(zs[i])
         ia = 1/a
         ib = 1/b
+
+        # u = exp(ib * log1p(-z)) # (1-z)^(1/b)
+        # c = 1 - u
+
         c = 1 - (1 - z)^ib
         ys[i] = c^ia
         ladj += (ib - 1) * log(1 - z) + (ia - 1) * log(c) - log(a * b)
     end
 
+    @assert isfinite(ladj)
     return ladj
 end
 
 
-function kumaraswamy_transform_gradients!(as, bs, y_grad, a_grad, b_grad)
-    for i in 1:length(ys)
+function kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
+    for i in 1:length(as)
         a = as[i]
         b = bs[i]
         z = zs[i]

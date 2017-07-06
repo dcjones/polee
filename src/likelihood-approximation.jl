@@ -213,13 +213,6 @@ function diagnostic_samples(model, X, μ, σ, i)
 end
 
 
-function myrandn!(xs::Vector{Float32})
-    for i in 1:length(xs)
-        xs[i] = randn()
-    end
-end
-
-
 function approximate_likelihood(s::RNASeqSample)
     m, n = size(s)
 
@@ -255,12 +248,18 @@ function approximate_likelihood(s::RNASeqSample)
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(n)
 
+    # log transformed kumaraswamy parameters
     αs = zeros(Float32, n-1)
     βs = zeros(Float32, n-1)
-    ds = Array{Kumaraswamy{Float32}}(n-1)
 
+    as = Array{Float32, n-1} # exp(αs)
+    bs = Array{Float32, n-1} # exp(βs)
+
+    # various intermediate gradients
     α_grad = Array{Float32}(n-1)
     β_grad = Array{Float32}(n-1)
+    a_grad = Array{Float32}(n-1)
+    b_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
     x_grad = Array{Float32}(n)
 
@@ -293,41 +292,37 @@ function approximate_likelihood(s::RNASeqSample)
         fill!(β_grad, 0.0f0)
 
         for i in 1:n-1
-            ds[i] = Kumaraswamy(exp(αs[i]), exp(βs[i]))
+            as[i] = exp(αs[i])
+            bs[i] = exp(βs[i])
         end
 
         for _ in 1:num_mc_samples
-            for i in 1:n-1
-                a, b = ds[i].a, ds[i].b
-                zs[i] = rand()
-                ys[i] = (1 - (1 - zs[i])^(1/b))^(1/a)
-            end
-
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
+            fill!(a_grad, 0.0f0)
+            fill!(b_grad, 0.0f0)
+            rand!(zs)
 
-            transform!(t, ys, xs)
+            kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
+            hsp_ladj = hsp_transform!(t, ys, xs)               # y -> x
+
             # TODO: gut all the simplex transform stuff from here
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
-            @assert isfinite(lp)
-            gradients!(t, y_grad, x_grad)
-            elbo += lp
+            elbo += lp + kum_ladj + hsp_ladj
 
+            hsp_transform_gradients!(t, y_grad, x_grad) # TODO: renome hsp_transform_gradients
+            kumaraswamy_transform_gradients!(as, bs, y_grad, a_grad, b_grad)
+
+            # adjust for log transform and accumulate
             for i in 1:n-1
-                a, b = ds[i].a, ds[i].b
-
-                c = 1 - (1 - zs[i])^(1/b)
-                dy_dα = - c^(1/a) * log(c) / a
-                α_grad[i] += dy_dα * y_grad[i]
-
-                dy_dβ = c^(1/a - 1) * (1 - zs[i])^(1/b) * log(1 - zs[i]) / (a * b)
-                β_grad[i] += dy_dβ * y_grad[i]
+                α_grad[i] += as[i] * a_grad[i]
+                β_grad[i] += bs[i] * b_grad[i]
             end
         end
 
         for i in 1:n-1
-            a_grad[i] /= num_mc_samples
-            b_grad[i] /= num_mc_samples
+            α_grad[i] /= num_mc_samples
+            β_grad[i] /= num_mc_samples
         end
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
@@ -367,14 +362,14 @@ function approximate_likelihood(s::RNASeqSample)
 
         for i in 1:n-1
             # update a parameters
-            s_a[i] = (1 - ss_a_α) * s_a[i] + ss_a_α * a_grad[i]^2
-            ρ = c / (ss_τ + sqrt(s_a[i]))
-            as[i] += clamp(ρ * a_grad[i], -ss_max_a_step, ss_max_a_step)
+            s_α[i] = (1 - ss_α_α) * s_α[i] + ss_α_α * α_grad[i]^2
+            ρ = c / (ss_τ + sqrt(s_α[i]))
+            αs[i] += clamp(ρ * α_grad[i], -ss_max_α_step, ss_max_α_step)
 
             # update b parameters
-            s_b[i] = (1 - ss_b_α) * s_b[i] + ss_b_α * b_grad[i]^2
-            ρ = c / (ss_τ + sqrt(s_b[i]))
-            bs[i] += clamp(ρ * b_grad[i], -ss_max_b_step, ss_max_b_step)
+            s_β[i] = (1 - ss_β_α) * s_β[i] + ss_β_α * β_grad[i]^2
+            ρ = c / (ss_τ + sqrt(s_β[i]))
+            βs[i] += clamp(ρ * β_grad[i], -ss_max_β_step, ss_max_β_step)
         end
 
         if elbo < max_elbo

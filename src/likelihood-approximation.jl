@@ -304,12 +304,12 @@ function approximate_likelihood(s::RNASeqSample)
             rand!(zs)
 
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
-            hsp_ladj = hsp_transform!(t, ys, xs)               # y -> x
+            hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
 
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             elbo += lp + kum_ladj + hsp_ladj
 
-            hsp_transform_gradients!(t, y_grad, x_grad) # TODO: renome hsp_transform_gradients
+            hsb_transform_gradients!(t, y_grad, x_grad) # TODO: renome hsp_transform_gradients
             kumaraswamy_transform_gradients!(as, bs, y_grad, a_grad, b_grad)
 
             # adjust for log transform and accumulate
@@ -325,6 +325,9 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
+
+        # Note: elbo has a negative entropy term is well, but but we are using
+        # uniform values on [0,1] which has entropy of 0.
 
         @show elbo
         exit()

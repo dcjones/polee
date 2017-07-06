@@ -65,10 +65,10 @@ function kumaraswamy_transform_gradients!(as, bs, y_grad, a_grad, b_grad)
                       ib
 
         # df/da and df/db, computed as dy/da * df/dy and dy/db * df/dy
-        dy_da = c^ia * log(c) / a^2
+        dy_da = -c^ia * log(c) / a^2
         a_grad[i] += dy_da * y_grad[i]
 
-        dy_db = c^(ia - 1) + (1 - z)^ib * log(1 - z) / (a * b^2)
+        dy_db = c^(ia - 1) * (1 - z)^ib * log(1 - z) / (a * b^2)
         b_grad[i] += dy_db * y_grad[i]
     end
 end

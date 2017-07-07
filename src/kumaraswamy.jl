@@ -40,7 +40,13 @@ function kumaraswamy_transform!(as::Vector, bs::Vector,
 
         c = 1 - (1 - z)^ib
         ys[i] = c^ia
+        ys[i] = min(1.0f0 - eps(Float32), max(eps(Float32), ys[i]))
+
         ladj += (ib - 1) * log(1 - z) + (ia - 1) * log(c) - log(a * b)
+        if !isfinite(ladj)
+            @show (ys[i], as[i], bs[i], ib, ia, c, z)
+            error()
+        end
     end
 
     @assert isfinite(ladj)
@@ -50,9 +56,9 @@ end
 
 function kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
     for i in 1:length(as)
-        a = as[i]
-        b = bs[i]
-        z = zs[i]
+        a = Float64(as[i])
+        b = Float64(bs[i])
+        z = Float64(zs[i])
         ia = 1/a
         ib = 1/b
         c = 1 - (1 - z)^ib
@@ -63,6 +69,10 @@ function kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
         b_grad[i] += -log_omz / b^2 +
                       (ia - 1) * (1/c) * (1 - z)^ib * log_omz / b^2 -
                       ib
+        if !isfinite(a_grad[i]) || !isfinite(b_grad[i])
+            @show (a_grad[i], b_grad[i], a, b, z, ia, ib, c, log_omz)
+            error()
+        end
 
         # df/da and df/db, computed as dy/da * df/dy and dy/db * df/dy
         dy_da = -c^ia * log(c) / a^2
@@ -70,6 +80,10 @@ function kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
 
         dy_db = c^(ia - 1) * (1 - z)^ib * log(1 - z) / (a * b^2)
         b_grad[i] += dy_db * y_grad[i]
+        if !isfinite(a_grad[i]) || !isfinite(b_grad[i])
+            @show (a_grad[i], b_grad[i], a, b, z, ia, ib, c, log_omz)
+            error()
+        end
     end
 end
 

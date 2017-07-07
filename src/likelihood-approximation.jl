@@ -249,8 +249,45 @@ function approximate_likelihood(s::RNASeqSample)
     xs = Array{Float32}(n)
 
     # log transformed kumaraswamy parameters
-    αs = zeros(Float32, n-1)
-    βs = zeros(Float32, n-1)
+    # αs = zeros(Float32, n-1)
+    # βs = zeros(Float32, n-1)
+    αs = fill(log(10f0), n-1)
+    βs = fill(log(921.7f0), n-1)
+
+    #=
+    # choose initial values to avoid underflow
+    # count subtree size and store in the node's input_value field
+    k = n-1
+    nodes = t.nodes
+    for i in length(nodes):-1:1
+        node = nodes[i]
+        if node.j != 0
+            node.input_value = 1
+        else
+            a = beta_a = node.left_child.input_value + 1
+            beta_b = node.right_child.input_value + 1
+
+            u = (1 - beta_a) / (2 - beta_a - beta_b)
+
+            @show beta_a
+            @show beta_b
+            @show u
+
+            b = 1/beta_a + (beta_a - 1) / (beta_a * u^a)
+            b = min(b, 1f16)
+
+            αs[k] = log(a)
+            βs[k] = log(b)
+
+            @show (exp(αs[k]), exp(βs[k]), node.left_child.input_value,
+                   node.right_child.input_value)
+
+            node.input_value =
+                1 + node.left_child.input_value + node.right_child.input_value
+            k -= 1
+        end
+    end
+    =#
 
     # TODO: We need to find initial values that avoid infs
     # We can do this by assigning 1/n to every leaf than walking our way up
@@ -284,6 +321,8 @@ function approximate_likelihood(s::RNASeqSample)
     max_small_steps = 2
     max_fruitless_steps = 20
     max_steps = 200
+    minz = eps(Float32)
+    maxz = 1.0f0 - eps(Float32)
 
     println("Optimizing ELBO: ", -Inf)
 
@@ -300,29 +339,32 @@ function approximate_likelihood(s::RNASeqSample)
             as[i] = exp(αs[i])
             bs[i] = exp(βs[i])
         end
+        @show minimum(as), maximum(as)
+        @show minimum(bs), maximum(bs)
 
         for _ in 1:num_mc_samples
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
             fill!(a_grad, 0.0f0)
             fill!(b_grad, 0.0f0)
-            rand!(zs)
+            for i in 1:n-1
+                zs[i] = min(maxz, max(minz, rand()))
+            end
+            # @show extrema(zs)
 
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
-            # @show (minimum(zs), maximum(zs))
-            @show (minimum(ys), maximum(ys))
-            @show zs[indmax(ys)]
-            @show as[indmax(ys)]
-            @show bs[indmax(ys)]
-            # @show (minimum(as), maximum(as))
-            # @show (minimum(bs), maximum(bs))
+            # @show extrema(ys)
             hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
+            # @show extrema(xs)
 
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             elbo += lp + kum_ladj + hsp_ladj
 
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
             kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
+
+            # @show extrema(a_grad)
+            # @show extrema(b_grad)
 
             # adjust for log transform and accumulate
             for i in 1:n-1
@@ -335,6 +377,9 @@ function approximate_likelihood(s::RNASeqSample)
             α_grad[i] /= num_mc_samples
             β_grad[i] /= num_mc_samples
         end
+
+        # @show extrema(α_grad)
+        # @show extrema(β_grad)
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
 

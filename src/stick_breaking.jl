@@ -12,6 +12,7 @@ type HClustNode
     left_child::HClustNode
     right_child::HClustNode
     parent::HClustNode
+    parent_idx::Int32
 
     rightmost_path::Bool
     subtree_size::Int32
@@ -24,6 +25,8 @@ type HClustNode
         node.left_child = node
         node.right_child = node
         node.parent = node
+        node.parent_idx = 0
+        node.rightmost_path = false
         return node
     end
 
@@ -31,6 +34,8 @@ type HClustNode
                                   right_child::HClustNode)
         node = new(j, left_child, right_child)
         node.parent = node
+        node.parent_idx = 0
+        node.rightmost_path = false
         return node
     end
 end
@@ -72,6 +77,11 @@ end
 
 
 function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, K)
+    # if a.root.j != 0 && b.root.j != 0
+        # println("merge: ", a.root.j, " ", b.root.j)
+        # @show distance(a, b)
+    # end
+
     i = 1
     j = 1
     while i <= length(a.vs) && j <= length(b.vs)
@@ -150,8 +160,10 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     j = 1
     while i <= length(a.vs) && j <= length(b.vs)
         if a.is[i] < b.is[j]
+            d += a.vs[i]^2
             i += 1
         elseif a.is[i] > b.is[j]
+            d += b.vs[j]^2
             j += 1
         else
             d += (a.vs[i] - b.vs[j])^2
@@ -172,7 +184,7 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
-    noise = 1f-12 * rand()
+    noise = 1f-20 * rand()
     return d + noise
 end
 
@@ -308,6 +320,7 @@ function hclust(X::SparseMatrixRSB)
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
     K = 5
+    # K = 100
     queue = hclust_initalize(X, n, K)
 
     # TODO: most of the time is spend on queue maintanence. We could do better
@@ -350,6 +363,19 @@ type HSBTransform
 end
 
 
+function set_subtree_sizes!(nodes::Vector{HClustNode})
+    # traverse up the tree setting the subtree size
+    for i in length(nodes):-1:1
+        if nodes[i].j != 0
+            nodes[i].subtree_size = 1
+        else
+            nodes[i].subtree_size = 1 + nodes[i].left_child.subtree_size
+                                      + nodes[i].right_child.subtree_size
+        end
+    end
+end
+
+
 # Put nodes in DFS order and label rightmost path
 function order_nodes(root::HClustNode, n)
     nodes = HClustNode[]
@@ -364,6 +390,9 @@ function order_nodes(root::HClustNode, n)
             @assert node.left_child !== node
             @assert node.right_child !== node
 
+            node.left_child.parent_idx  = length(nodes)
+            node.right_child.parent_idx = length(nodes)
+
             node.left_child.rightmost_path = false
             push!(stack, node.left_child)
 
@@ -372,15 +401,7 @@ function order_nodes(root::HClustNode, n)
         end
     end
 
-    # traverse up the tree setting the subtree size
-    for i in length(nodes):-1:1
-        if nodes[i].j != 0
-            nodes[i].subtree_size = 1
-        else
-            nodes[i].subtree_size = 1 + nodes[i].left_child.subtree_size
-                                      + nodes[i].right_child.subtree_size
-        end
-    end
+    set_subtree_sizes!(nodes)
 
     return nodes
 end
@@ -391,6 +412,34 @@ function HSBTransform(X::SparseMatrixRSB)
     root = hclust(X)
     @show maxdepth(root)
     nodes = order_nodes(root, n)
+    return HSBTransform(nodes)
+end
+
+
+# rebuild tree from serialization
+function HSBTransform(parent_idxs, js)
+    @assert length(parent_idxs) == length(js)
+    nodes = [HClustNode(0) for i in 1:length(parent_idxs)]
+    nodes[1].rightmost_path = true
+    nodes[1].j = js[1]
+    for i in 2:length(nodes)
+        nodes[i].j = js[i]
+        nodes[i].parent = nodes[parent_idxs[i]]
+        nodes[i].parent_idx = parent_idxs[i]
+
+        parent_node = nodes[parent_idxs[i]]
+
+        # right branch is expanded first in the DFS order we use
+        if parent_node.right_child === parent_node
+            parent_node.right_child = nodes[i]
+            nodes[i].rightmost_path = parent_node.rightmost_path
+        else
+            parent_node.left_child = nodes[i]
+        end
+    end
+
+    set_subtree_sizes!(nodes)
+
     return HSBTransform(nodes)
 end
 

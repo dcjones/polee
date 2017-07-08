@@ -8,13 +8,23 @@ end
 
 
 function approximate_likelihood(sample::RNASeqSample, output_filename::String)
-    μ, σ, w = approximate_likelihood(sample)
+    αs, βs, t = approximate_likelihood(sample)
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
-        out["mu", "compress", 1] = μ[1:n-1]
-        out["sigma", "compress", 1] = σ[1:n-1]
-        out["w", "compress", 1] = w
+        out["alpha", "compress", 1] = αs[1:n-1]
+        out["beta", "compress", 1]  = βs[1:n-1]
+
+        node_parent_idxs = Array{Int32}(length(t.nodes))
+        node_js          = Array{Int32}(length(t.nodes))
+        for i in 1:length(t.nodes)
+            node = t.nodes[i]
+            node_parent_idxs[i] = node.parent_idx
+            node_js[i] = node.j
+        end
+        out["node_parent_idxs"] = node_parent_idxs
+        out["node_js"] = node_js
+
         g = g_create(out, "metadata")
         attrs(g)["gfffilename"] = sample.transcript_metadata.filename
         attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
@@ -441,9 +451,7 @@ function approximate_likelihood(s::RNASeqSample)
         #end
     #end
 
-    # TODO: we need to also return some representation of the tree
-    exit()
-    return as, bs
+    return αs, βs, t
 end
 
 

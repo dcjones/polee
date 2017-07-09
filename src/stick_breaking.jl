@@ -14,7 +14,6 @@ type HClustNode
     parent::HClustNode
     parent_idx::Int32
 
-    rightmost_path::Bool
     subtree_size::Int32
 
     input_value::Float32
@@ -26,7 +25,6 @@ type HClustNode
         node.right_child = node
         node.parent = node
         node.parent_idx = 0
-        node.rightmost_path = false
         return node
     end
 
@@ -35,7 +33,6 @@ type HClustNode
         node = new(j, left_child, right_child)
         node.parent = node
         node.parent_idx = 0
-        node.rightmost_path = false
         return node
     end
 end
@@ -78,8 +75,8 @@ end
 
 function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, K)
     # if a.root.j != 0 && b.root.j != 0
-        # println("merge: ", a.root.j, " ", b.root.j)
-        # @show distance(a, b)
+    #     println("merge: ", a.root.j, " ", b.root.j)
+    #     @show distance(a, b)
     # end
 
     i = 1
@@ -158,32 +155,46 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     d = 0.0f0
     i = 1
     j = 1
+    intersection_size = 0
+    union_size = 0
     while i <= length(a.vs) && j <= length(b.vs)
         if a.is[i] < b.is[j]
-            d += a.vs[i]^2
+            # d += a.vs[i]^2
+            # d += a.vs[i]
+            union_size += 1
             i += 1
         elseif a.is[i] > b.is[j]
-            d += b.vs[j]^2
+            # d += b.vs[j]^2
+            # d += b.vs[j]
+            union_size += 1
             j += 1
         else
-            d += (a.vs[i] - b.vs[j])^2
+            # d += (a.vs[i] - b.vs[j])^2
+            # d += abs(a.vs[i] - b.vs[j])
+            intersection_size += 1
+            union_size += 1
             i += 1
             j += 1
         end
     end
 
     while i <= length(a.vs)
-        d += a.vs[i]^2
+        # d += a.vs[i]^2
+        # d += a.vs[i]
+        union_size += 1
         i += 1
     end
 
     while j <= length(b.vs)
-        d += b.vs[j]^2
+        # d += b.vs[j]^2
+        # d += b.vs[j]
+        union_size += 1
         j += 1
     end
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
+    d = -intersection_size / union_size
     noise = 1f-20 * rand()
     return d + noise
 end
@@ -369,18 +380,27 @@ function set_subtree_sizes!(nodes::Vector{HClustNode})
         if nodes[i].j != 0
             nodes[i].subtree_size = 1
         else
-            nodes[i].subtree_size = 1 + nodes[i].left_child.subtree_size
-                                      + nodes[i].right_child.subtree_size
+            nodes[i].subtree_size = 1 + nodes[i].left_child.subtree_size +
+                                        nodes[i].right_child.subtree_size
         end
     end
+
+    # check_subtree_sizes(nodes[1])
 end
 
 
-# Put nodes in DFS order and label rightmost path
+function check_subtree_sizes(node::HClustNode)
+    nl = node.left_child === node ? 0 : check_subtree_sizes(node.left_child)
+    nr = node.right_child === node ? 0 : check_subtree_sizes(node.right_child)
+    @assert node.subtree_size == 1 + nl + nr
+    return 1 + nl + nr
+end
+
+
+# Put nodes in DFS order and set parent_idx
 function order_nodes(root::HClustNode, n)
     nodes = HClustNode[]
     sizehint!(nodes, n)
-    root.rightmost_path = true
     stack = HClustNode[root]
     while !isempty(stack)
         node = pop!(stack)
@@ -393,11 +413,11 @@ function order_nodes(root::HClustNode, n)
             node.left_child.parent_idx  = length(nodes)
             node.right_child.parent_idx = length(nodes)
 
-            node.left_child.rightmost_path = false
             push!(stack, node.left_child)
-
-            node.right_child.rightmost_path = node.rightmost_path
             push!(stack, node.right_child)
+        else
+            @assert node.left_child === node
+            @assert node.right_child === node
         end
     end
 
@@ -420,7 +440,6 @@ end
 function HSBTransform(parent_idxs, js)
     @assert length(parent_idxs) == length(js)
     nodes = [HClustNode(0) for i in 1:length(parent_idxs)]
-    nodes[1].rightmost_path = true
     nodes[1].j = js[1]
     for i in 2:length(nodes)
         nodes[i].j = js[i]
@@ -432,7 +451,6 @@ function HSBTransform(parent_idxs, js)
         # right branch is expanded first in the DFS order we use
         if parent_node.right_child === parent_node
             parent_node.right_child = nodes[i]
-            nodes[i].rightmost_path = parent_node.rightmost_path
         else
             parent_node.left_child = nodes[i]
         end
@@ -484,6 +502,7 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         nl = node.left_child.subtree_size
         nr = node.right_child.subtree_size
         y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
+        # y = ys[k]
 
         node.left_child.input_value = y * node.input_value
         node.right_child.input_value = (1.0f0 - y) * node.input_value
@@ -529,6 +548,7 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         nr = node.right_child.subtree_size
         y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
         ladj += log(nl) + log(nr) - 2*log(ys[k] * nl + (1 - ys[k]) * nr)
+        # y = ys[k]
 
         # jacobian for stick breaking
         ladj += log(node.input_value)
@@ -536,14 +556,6 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
             @show ladj
             @show node.input_value
             exit()
-        end
-        if node.rightmost_path
-            ladj += log(1 - y)
-            if !isfinite(ladj)
-                @show ladj
-                @show ys[k]
-                exit()
-            end
         end
         k += 1
     end
@@ -567,8 +579,9 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             nl = node.left_child.subtree_size
             nr = node.right_child.subtree_size
             y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
-
             dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
+            # y = ys[k]
+            # dy_dyk = 1.0f0
 
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
@@ -604,18 +617,13 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
 
             y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
             dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
+            # y = ys[k]
+            # dy_dyk = 1.0f0
 
             # derivative of the ladj in this subtree wrt to y[k] which is
             # derived by multipying children's gradient's by contribution to
             # their input values
             y_grad[k] += dy_dyk * node.input_value * (node.left_child.grad - node.right_child.grad)
-            if node.rightmost_path
-                y_grad[k] += dy_dyk * 1 / (y - 1)
-            end
-            if !isfinite(y_grad[k])
-                @show (dy_dyk, node.input_value, node.left_child.grad, node.right_child.grad, node.rightmost_path)
-                error()
-            end
 
             # store derivative of the ladj wrt to this node's input_value
             node.grad = 1/node.input_value +

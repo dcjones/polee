@@ -117,9 +117,16 @@ function RNASeqSample(transcripts_filename::String,
     I = I[p]
     J = J[p]
     V = V[p]
-    next_i = 1
+
+    last_i = I[1]
+    I[1] = 1
     for k in 2:length(I)
-        I[k] = min(I[k], I[k-1] + 1)
+        if I[k] == last_i
+            I[k] = I[k-1]
+        else
+            last_i = I[k]
+            I[k] = I[k-1] + 1
+        end
     end
 
     m = maximum(I)

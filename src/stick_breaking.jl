@@ -73,7 +73,13 @@ type SubtreeListNode
 end
 
 
-function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, K)
+function Base.isless(a::Tuple{Float32, SubtreeListNode, SubtreeListNode},
+                     b::Tuple{Float32, SubtreeListNode, SubtreeListNode})
+    return a[1] < b[1]
+end
+
+
+function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, queue_idxs, K)
     # if a.root.j != 0 && b.root.j != 0
     #     println("merge: ", a.root.j, " ", b.root.j)
     #     @show distance(a, b)
@@ -117,8 +123,8 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, K)
     b.root.parent = node
     ab = SubtreeListNode(a.vs, a.is, node)
 
-    promote!(queue, a, K)
-    promote!(queue, b, K)
+    promote!(queue, queue_idxs, a, K)
+    promote!(queue, queue_idxs, b, K)
 
     # stick ab in a's place
     if a.left !== a
@@ -196,17 +202,19 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     # balanced tree
     d = -intersection_size / union_size
     noise = 1f-20 * rand()
-    return d + noise
+    return Float32(d + noise)
 end
 
 
-# Set adjacent node distances to Inf
-function promote!(queue::PriorityQueue, a, K)
+# Set adjacent node distances to 0.0 so they get popped immediately
+# TODO: We can't look up items up if we use heap, so what are we to do?
+function promote!(queue, queue_idxs, a, K)
     if a.left !== a
         u = a.left
         for _ in 1:K
-            if haskey(queue, (u, a))
-                queue[(u, a)] = 0.0f0
+            if haskey(queue_idxs, (u, a))
+                idx = queue_idxs[(u,a)]
+                DataStructures.update!(queue, idx, (0.0f0, u, a))
             end
             if u.left === u
                 break
@@ -219,8 +227,9 @@ function promote!(queue::PriorityQueue, a, K)
     if a.right !== a
         u = a.right
         for _ in 1:K
-            if haskey(queue, (a, u))
-                queue[(a, u)] = 0.0f0
+            if haskey(queue_idxs, (a, u))
+                idx = queue_idxs[(a,u)]
+                DataStructures.update!(queue, idx, (0.0f0, a, u))
             end
             if u.right === u
                 break
@@ -232,11 +241,12 @@ function promote!(queue::PriorityQueue, a, K)
 end
 
 
-function update_distances!(queue::PriorityQueue, a, K)
+function update_distances!(queue, queue_idxs, a, K)
     if a.left !== a
         u = a.left
         for _ in 1:K
-            queue[(u, a)] = distance(u, a)
+            d = distance(u, a)
+            queue_idxs[(u,a)] = push!(queue, (d, u, a))
             if u.left === u
                 break
             else
@@ -248,7 +258,8 @@ function update_distances!(queue::PriorityQueue, a, K)
     if a.right !== a
         u = a.right
         for _ in 1:K
-            queue[(a, u)] = distance(a, u)
+            d = distance(a, u)
+            queue_idxs[(a,u)] = push!(queue, (d, a, u))
             if u.right === u
                 break
             else
@@ -314,15 +325,17 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
     end
 
     tic()
-    queue = PriorityQueue(Tuple{SubtreeListNode, SubtreeListNode}, Float32)
+    queue = mutable_binary_minheap(Tuple{Float32, SubtreeListNode, SubtreeListNode})
+    queue_idxs = Dict{Tuple{SubtreeListNode, SubtreeListNode}, Int}()
     for i in 1:n
         for j in i+1:min(i+K, n)
-            queue[(nodes[i], nodes[j])] = distance(nodes[i], nodes[j])
+            d = distance(nodes[i], nodes[j])
+            queue_idxs[(nodes[i], nodes[j])] = push!(queue, (d, nodes[i], nodes[j]))
         end
     end
     toc() # 3 seconds
 
-    return queue
+    return queue, queue_idxs
 end
 
 
@@ -332,7 +345,7 @@ function hclust(X::SparseMatrixRSB)
     # candidates to merge
     K = 5
     # K = 100
-    queue = hclust_initalize(X, n, K)
+    queue, queue_idxs = hclust_initalize(X, n, K)
 
     # TODO: most of the time is spend on queue maintanence. We could do better
     # by using a basic binary heap and periodically walking through and
@@ -341,28 +354,30 @@ function hclust(X::SparseMatrixRSB)
     # tic()
     steps = 0
     merge_count = 0
-    # Profile.start_timer()
+    Profile.start_timer()
     while true
         steps += 1
-        a, b = dequeue!(queue)
+        d, a, b = pop!(queue)
+        delete!(queue_idxs, (a,b))
 
         if a.merged || b.merged
             continue
         end
 
-        ab = merge!(a, b, queue, K)
+        ab = merge!(a, b, queue, queue_idxs, K)
         merge_count += 1
 
         # all trees have been merged
         if ab.left === ab && ab.right === ab
-            # @show (n, steps, merge_count)
+            @show (n, steps, merge_count)
             # toc()
-            # Profile.stop_timer()
-            # Profile.print()
+            Profile.stop_timer()
+            Profile.print()
+            exit()
             return ab.root
         end
 
-        update_distances!(queue, ab, K)
+        update_distances!(queue, queue_idxs, ab, K)
     end
 end
 

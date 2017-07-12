@@ -370,8 +370,10 @@ function approximate_likelihood(s::RNASeqSample)
             hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
             toc()
 
+            tic()
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             elbo += lp + kum_ladj + hsp_ladj
+            toc()
 
             tic()
             hsb_transform_gradients!(t, ys, y_grad, x_grad)

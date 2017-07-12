@@ -7,7 +7,7 @@ using Bio.Align
 using GenomicFeatures
 using Bio.Seq
 using Bio.StringFields
-using DataStructures: PriorityQueue, dequeue!, peek
+using DataStructures
 using Distributions
 using HATTries
 using HDF5

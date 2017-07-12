@@ -85,6 +85,12 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, queue_idxs, K)
     #     @show distance(a, b)
     # end
 
+    # if b has the larger array, let that be reused, and a's array be gced
+    if length(b.vs) > length(a.vs)
+        a.vs, b.vs = b.vs, a.vs
+        a.is, b.is = b.is, a.is
+    end
+
     i = 1
     j = 1
     while i <= length(a.vs) && j <= length(b.vs)
@@ -184,19 +190,21 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
         end
     end
 
-    while i <= length(a.vs)
-        # d += a.vs[i]^2
-        # d += a.vs[i]
-        union_size += 1
-        i += 1
-    end
+    union_size += length(a.vs) - i + 1
+    # while i <= length(a.vs)
+    #     # d += a.vs[i]^2
+    #     # d += a.vs[i]
+    #     union_size += 1
+    #     i += 1
+    # end
 
-    while j <= length(b.vs)
-        # d += b.vs[j]^2
-        # d += b.vs[j]
-        union_size += 1
-        j += 1
-    end
+    union_size += length(b.vs) - j + 1
+    # while j <= length(b.vs)
+    #     # d += b.vs[j]^2
+    #     # d += b.vs[j]
+    #     union_size += 1
+    #     j += 1
+    # end
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
@@ -354,7 +362,7 @@ function hclust(X::SparseMatrixRSB)
     # tic()
     steps = 0
     merge_count = 0
-    Profile.start_timer()
+    # Profile.start_timer()
     while true
         steps += 1
         d, a, b = pop!(queue)
@@ -371,9 +379,9 @@ function hclust(X::SparseMatrixRSB)
         if ab.left === ab && ab.right === ab
             @show (n, steps, merge_count)
             # toc()
-            Profile.stop_timer()
-            Profile.print()
-            exit()
+            # Profile.stop_timer()
+            # Profile.print()
+            # exit()
             return ab.root
         end
 

@@ -14,10 +14,11 @@ end
 function Model(m, n)
     return Model(Int(m), Int(n),
                  Vector{Float32}(n),
-                 fillpadded(FloatVec, 0.0, m))
+                 fillpadded(FloatVec, 0.0f0, m, 1.0f0))
 end
 
 
+#=
 function log_likelihood_loop1(frag_probs_v)
     lpv = fill(fill(FloatVec, 0.0f0), Threads.nthreads())
     Threads.@threads for i in 1:length(frag_probs_v)
@@ -29,6 +30,17 @@ function log_likelihood_loop1(frag_probs_v)
         ans += sum(v)
     end
     return ans
+end
+=#
+
+
+function log_likelihood_loop1(frag_probs, m)
+    lp = 0.0f0
+    Threads.@threads for i in 1:m
+        lp += log(frag_probs[i])
+        frag_probs[i] = inv(frag_probs[i])
+    end
+    return lp
 end
 
 
@@ -57,16 +69,21 @@ function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
 
     # conditional fragment probabilities
     A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X, ws)
+    for k in m+1:length(frag_probs)
+        frag_probs[k] = 1.0f0
+    end
 
     # log-likelihood
-    frag_probs_v = reinterpret(FloatVec, frag_probs)
-    lp = log_likelihood_loop1(frag_probs_v)
+    # frag_probs_v = reinterpret(FloatVec, frag_probs)
+    # lp = log_likelihood_loop1(frag_probs_v)
 
     # `log_likelihood_loop1` does the below but realy realy fast
-    #    for i in 1:length(frag_probs)
-    #        lp += log(frag_probs[i])
-    #        frag_probs[i] = inv(frag_probs[i])
-    #    end
+    # lp = log_likelihood_loop1(frag_probs, m)
+    lp = 0.0
+    for i in 1:m
+        lp += log(frag_probs[i])
+        frag_probs[i] = inv(frag_probs[i])
+    end
 
     # compute df / dw (where w is effective length weighted mixtures)
     At_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))

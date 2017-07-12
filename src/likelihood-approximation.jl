@@ -244,7 +244,7 @@ function approximate_likelihood(s::RNASeqSample)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 2
+    num_mc_samples = 4
 
     # cluster transcripts for hierachrical stick breaking
     @time t = HSBTransform(s.X)
@@ -299,11 +299,6 @@ function approximate_likelihood(s::RNASeqSample)
     end
     =#
 
-    # TODO: We need to find initial values that avoid infs
-    # We can do this by assigning 1/n to every leaf than walking our way up
-    # Otherwise one long branch can really fuck us over.
-    # Once we have those values, we can choose as/bs to center around that mean
-
     as = Array{Float32}(n-1) # exp(αs)
     bs = Array{Float32}(n-1) # exp(βs)
 
@@ -334,7 +329,12 @@ function approximate_likelihood(s::RNASeqSample)
     minz = eps(Float32)
     maxz = 1.0f0 - eps(Float32)
 
+    @show extrema(s.effective_lengths)
+
     println("Optimizing ELBO: ", -Inf)
+
+    I, J, V = findnz(s.X)
+    X = sparse(I, J, V, m, n)
 
     tic()
 
@@ -349,8 +349,6 @@ function approximate_likelihood(s::RNASeqSample)
             as[i] = exp(αs[i])
             bs[i] = exp(βs[i])
         end
-        @show minimum(as), maximum(as)
-        @show minimum(bs), maximum(bs)
 
         for _ in 1:num_mc_samples
             fill!(x_grad, 0.0f0)
@@ -360,36 +358,125 @@ function approximate_likelihood(s::RNASeqSample)
             for i in 1:n-1
                 zs[i] = min(maxz, max(minz, rand()))
             end
-            # @show extrema(zs)
 
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
-            # @show extrema(ys)
             hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
-            # @show extrema(xs)
 
-            lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
+            lp = log_likelihood(model, X, s.effective_lengths, xs, x_grad)
+
             elbo += lp + kum_ladj + hsp_ladj
 
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
             kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
-
-            # @show extrema(a_grad)
-            # @show extrema(b_grad)
 
             # adjust for log transform and accumulate
             for i in 1:n-1
                 α_grad[i] += as[i] * a_grad[i]
                 β_grad[i] += bs[i] * b_grad[i]
             end
+
+            #=
+            eps = 1e-2
+            # for _ in 1:2
+                # idx = 24222
+                idx = indmax(abs.(as .* a_grad))
+
+                # lp1 = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
+                # x_grad0 = copy(x_grad)
+                # lp2 = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
+                # @show maximum(x_grad .- x_grad0)
+
+                # # Verify x_grad
+                # eps = 1e-8
+                # # idx = rand(1:n)
+                # xs_idx = xs[idx]
+                # xs[idx] += eps
+                # lp_ = log_likelihood(model, X, s.effective_lengths, xs, x_grad)
+                # f0 = lp
+                # f = lp_
+                # @show (idx, x_grad[idx], (f - f0)/eps)
+                # xs[idx] = xs_idx
+
+                println("-------------------------")
+                # Verify y_grad
+                # idx = rand(1:n-1)
+                # idx = 182898
+                eps = 1e-7
+                ys[idx] += eps
+                hsp_ladj_ = hsb_transform!(t, ys, xs)               # y -> x
+                lp_ = log_likelihood(model, X, s.effective_lengths, xs, x_grad)
+                f0 = lp + hsp_ladj
+                f = lp_ + hsp_ladj_
+                @show (idx, y_grad[idx], (f - f0)/eps)
+                ys[idx] -= eps
+
+                # find corresponding node
+                k = 1
+                for node in t.nodes
+                    if node.j == 0
+                        if k == idx
+                            @show (ys[k], node.input_value, node.grad)
+                            @show (node.left_child.subtree_size, node.right_child.subtree_size)
+                            @show (node.left_child.grad, node.right_child.grad)
+                            break
+                        end
+                        k += 1
+                    end
+                end
+
+                # idx = rand(1:n-1)
+                eps = 1e-4
+                as[idx] += eps
+                kum_ladj_ = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
+                hsp_ladj_ = hsb_transform!(t, ys, xs)               # y -> x
+                lp_ = log_likelihood(model, X, s.effective_lengths, xs, x_grad)
+                f0 = lp + kum_ladj + hsp_ladj
+                f = lp_ + kum_ladj_ + hsp_ladj_
+                @show (idx, a_grad[idx], (f - f0)/eps)
+                as[idx] -= eps
+
+                # idx = rand(1:n-1)
+                # bs[idx] += eps
+                # kum_ladj_ = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
+                # hsp_ladj_ = hsb_transform!(t, ys, xs)               # y -> x
+                # lp_ = log_likelihood(model, X, s.effective_lengths, xs, x_grad)
+                # f0 = lp + kum_ladj + hsp_ladj
+                # f = lp_ + kum_ladj_ + hsp_ladj_
+                # @show (idx, b_grad[idx], (f - f0)/eps)
+                # bs[idx] -= eps
+
+                # idx = rand(1:n-1)
+                # idx = indmax(abs.(as .* a_grad))
+                eps = 1e-2
+                αs[idx] += eps
+                as[idx] = exp(αs[idx])
+                kum_ladj_ = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
+                hsp_ladj_ = hsb_transform!(t, ys, xs)               # y -> x
+                lp_ = log_likelihood(model, X, s.effective_lengths, xs, x_grad)
+                f0 = lp + kum_ladj + hsp_ladj
+                f = lp_ + kum_ladj_ + hsp_ladj_
+                @show (idx, as[idx] * a_grad[idx], (f - f0)/eps)
+                αs[idx] -= eps
+                as[idx] = exp(αs[idx])
+
+                # idx = rand(1:n-1)
+                # βs[idx] += eps
+                # bs[idx] = exp(βs[idx])
+                # kum_ladj_ = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
+                # hsp_ladj_ = hsb_transform!(t, ys, xs)               # y -> x
+                # lp_ = log_likelihood(model, X, s.effective_lengths, xs, x_grad)
+                # f0 = lp + kum_ladj + hsp_ladj
+                # f = lp_ + kum_ladj_ + hsp_ladj_
+                # @show (bs[idx] * b_grad[idx], (f - f0)/eps)
+                # βs[idx] -= eps
+            # end
+            =#
         end
 
         for i in 1:n-1
             α_grad[i] /= num_mc_samples
             β_grad[i] /= num_mc_samples
         end
-
-        # @show extrema(α_grad)
-        # @show extrema(β_grad)
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
 
@@ -434,7 +521,7 @@ function approximate_likelihood(s::RNASeqSample)
         #     break
         # end
 
-        if step_num > 1000
+        if step_num > 500
             break
         end
     end

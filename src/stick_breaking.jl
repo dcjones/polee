@@ -380,20 +380,35 @@ function set_subtree_sizes!(nodes::Vector{HClustNode})
         if nodes[i].j != 0
             nodes[i].subtree_size = 1
         else
-            nodes[i].subtree_size = 1 + nodes[i].left_child.subtree_size +
-                                        nodes[i].right_child.subtree_size
+            nodes[i].subtree_size = nodes[i].left_child.subtree_size +
+                                    nodes[i].right_child.subtree_size
         end
     end
 
-    # check_subtree_sizes(nodes[1])
+    check_subtree_sizes(nodes[1])
 end
 
 
 function check_subtree_sizes(node::HClustNode)
-    nl = node.left_child === node ? 0 : check_subtree_sizes(node.left_child)
-    nr = node.right_child === node ? 0 : check_subtree_sizes(node.right_child)
-    @assert node.subtree_size == 1 + nl + nr
-    return 1 + nl + nr
+    if node.j != 0
+        @assert node.subtree_size == 1
+        return 1
+    else
+        nl = check_subtree_sizes(node.left_child)
+        nr = check_subtree_sizes(node.right_child)
+        @assert node.subtree_size == nl + nr
+        return nl + nr
+    end
+end
+
+
+function check_node_ordering(nodes)
+    for k in 2:length(nodes)
+        node = nodes[k]
+        @assert node.parent_idx < k
+        @assert nodes[node.parent_idx].left_child === node ||
+                nodes[node.parent_idx].right_child === node
+    end
 end
 
 
@@ -421,6 +436,7 @@ function order_nodes(root::HClustNode, n)
         end
     end
 
+    # check_node_ordering(nodes)
     set_subtree_sizes!(nodes)
 
     return nodes
@@ -502,31 +518,9 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         nl = node.left_child.subtree_size
         nr = node.right_child.subtree_size
         y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
-        # y = ys[k]
 
         node.left_child.input_value = y * node.input_value
         node.right_child.input_value = (1.0f0 - y) * node.input_value
-
-        if node.left_child.input_value == 0.0 || node.right_child.input_value == 0.0
-            @show y
-            @show ys[k]
-            @show node.left_child.input_value
-            @show node.right_child.input_value
-            @show node.input_value
-
-            println("Tracing to root")
-            parent_count = 0
-            while node.parent !== node
-                parent_count += 1
-                node = node.parent
-                nl = node.left_child.subtree_size
-                nr = node.right_child.subtree_size
-                @show (node.input_value, nl, nr)
-            end
-            @show parent_count
-
-            exit()
-        end
 
         k += 1
     end
@@ -548,15 +542,9 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         nr = node.right_child.subtree_size
         y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
         ladj += log(nl) + log(nr) - 2*log(ys[k] * nl + (1 - ys[k]) * nr)
-        # y = ys[k]
 
         # jacobian for stick breaking
         ladj += log(node.input_value)
-        if !isfinite(ladj)
-            @show ladj
-            @show node.input_value
-            exit()
-        end
         k += 1
     end
 
@@ -576,20 +564,15 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
         if node.j != 0 # leaf node
             node.grad = x_grad[node.j]
         else
-            nl = node.left_child.subtree_size
-            nr = node.right_child.subtree_size
+            nl = Int64(node.left_child.subtree_size)
+            nr = Int64(node.right_child.subtree_size)
             y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
             dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
-            # y = ys[k]
-            # dy_dyk = 1.0f0
+            @assert dy_dyk > 0.0f0
 
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
             y_grad[k] = dy_dyk * node.input_value * (node.left_child.grad - node.right_child.grad)
-            if !isfinite(y_grad[k])
-                @show (dy_dyk, node.input_value, node.left_child.grad, node.right_child.grad)
-                error()
-            end
 
             # store derivative wrt this nodes input_value
             node.grad = y * node.left_child.grad + (1 - y) * node.right_child.grad
@@ -610,15 +593,9 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             nl = node.left_child.subtree_size
             nr = node.right_child.subtree_size
             y_grad[k] -= 2 * (nl - nr) / (ys[k] * nl + (1-ys[k]) * nr)
-            if !isfinite(y_grad[k])
-                @show (nl, nr, ys[k], nl, ys[k], nr)
-                error()
-            end
 
             y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
             dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
-            # y = ys[k]
-            # dy_dyk = 1.0f0
 
             # derivative of the ladj in this subtree wrt to y[k] which is
             # derived by multipying children's gradient's by contribution to

@@ -355,17 +355,15 @@ function hclust(X::SparseMatrixRSB)
     # K = 100
     queue, queue_idxs = hclust_initalize(X, n, K)
 
-    # TODO: most of the time is spend on queue maintanence. We could do better
-    # by using a basic binary heap and periodically walking through and
-    # promoting all merged node comparisons so they get purged.
-
     # tic()
     steps = 0
     merge_count = 0
     # Profile.start_timer()
+    prog = Progress(n-1, 0.25, "Clustering transcripts ", 60)
     while true
         steps += 1
         d, a, b = pop!(queue)
+        # @show d
         delete!(queue_idxs, (a,b))
 
         if a.merged || b.merged
@@ -374,6 +372,7 @@ function hclust(X::SparseMatrixRSB)
 
         ab = merge!(a, b, queue, queue_idxs, K)
         merge_count += 1
+        next!(prog)
 
         # all trees have been merged
         if ab.left === ab && ab.right === ab
@@ -542,8 +541,15 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         nr = node.right_child.subtree_size
         y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
 
+        # y = ys[k]
+
         node.left_child.input_value = y * node.input_value
         node.right_child.input_value = (1.0f0 - y) * node.input_value
+
+        if node.left_child.input_value == 0.0 || node.right_child.input_value == 0.0
+            @show (node.input_value, nl, nr, ys[k], y)
+            exit()
+        end
 
         k += 1
     end
@@ -565,9 +571,14 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         nr = node.right_child.subtree_size
         y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
         ladj += log(nl) + log(nr) - 2*log(ys[k] * nl + (1 - ys[k]) * nr)
+        # y = ys[k]
 
         # jacobian for stick breaking
         ladj += log(node.input_value)
+        if !isfinite(ladj)
+            @show (node.input_value, nl, nr, ys[k])
+            exit()
+        end
         k += 1
     end
 
@@ -592,6 +603,9 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
             dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
             @assert dy_dyk > 0.0f0
+
+            # y = ys[k]
+            # dy_dyk = 1.0f0
 
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
@@ -619,6 +633,9 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
 
             y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
             dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
+
+            # y = ys[k]
+            # dy_dyk = 1.0f0
 
             # derivative of the ladj in this subtree wrt to y[k] which is
             # derived by multipying children's gradient's by contribution to

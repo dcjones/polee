@@ -67,12 +67,19 @@ function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
         efflen_ladj += log(effective_lengths[i])
     end
     efflen_ladj -= n * log(scaled_simplex_sum)
+    # @show efflen_ladj
 
     # conditional fragment probabilities
     A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X, ws)
     for k in m+1:length(frag_probs)
         frag_probs[k] = 1.0f0
     end
+
+    # @show sum(X * Float32[1.0, 0.0, 0.0, 0.0])
+    # @show sum(X * Float32[0.0, 1.0, 0.0, 0.0])
+    # @show sum(X * Float32[0.0, 0.0, 1.0, 0.0])
+    # @show sum(X * Float32[0.0, 0.0, 0.0, 1.0])
+    # exit()
 
     # log-likelihood
     # frag_probs_v = reinterpret(FloatVec, frag_probs)
@@ -89,6 +96,10 @@ function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
     # compute df / dw (where w is effective length weighted mixtures)
     At_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
 
+    # @show xs
+    # @show ws
+    # @show x_grad
+
     # compute df / dx
     # x_grad[i] now holds df/dw_i where w is the the effective length
     # weighted mixtures. Here we update it to hold df/dx_i, where x are
@@ -98,15 +109,24 @@ function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
         c += (ws[i] / scaled_simplex_sum) * x_grad[i]
     end
 
-    for i in 1:n
-        x_grad[i] = effective_lengths[i] * (x_grad[i] / scaled_simplex_sum - c);
+    for i in 1:n-1
+        x_grad[i] = (effective_lengths[i] / scaled_simplex_sum) * x_grad[i] -
+                    (effective_lengths[n] / scaled_simplex_sum) * x_grad[n] -
+                    (effective_lengths[i] - effective_lengths[n]) * c
     end
+    x_grad[n] = 0.0
 
     # compute terms for derivatives of efflen_ladj (log absolute determinant of the jacobian)
     # for the effective length transform
     for i in 1:n-1
-        x_grad[i] += n * (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
+        x_grad[i] += (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
     end
+
+    # @show x_grad
+
+    @show extrema(xs)
+    @show extrema(ws)
+    @show extrema(x_grad)
 
     @assert isfinite(lp)
     @assert isfinite(efflen_ladj)

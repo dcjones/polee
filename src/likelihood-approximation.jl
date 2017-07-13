@@ -233,18 +233,18 @@ function approximate_likelihood(s::RNASeqSample)
     ss_ε = 1e-16
 
     # influence of the most recent gradient on step size
-    ss_α_α = 0.1
-    ss_β_α = 0.1
+    ss_α_α = 0.2
+    ss_β_α = 0.2
 
     ss_η = 1.0
 
-    ss_max_α_step = 1e-1
-    ss_max_β_step = 1e-1
+    ss_max_α_step = 1e0
+    ss_max_β_step = 1e0
     # srand(43241)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 4
+    num_mc_samples = 2
 
     # cluster transcripts for hierachrical stick breaking
     @time t = HSBTransform(s.X)
@@ -329,8 +329,6 @@ function approximate_likelihood(s::RNASeqSample)
     minz = eps(Float32)
     maxz = 1.0f0 - eps(Float32)
 
-    @show extrema(s.effective_lengths)
-
     println("Optimizing ELBO: ", -Inf)
 
     # I, J, V = findnz(s.X)
@@ -351,6 +349,8 @@ function approximate_likelihood(s::RNASeqSample)
             bs[i] = exp(βs[i])
         end
 
+        println("-------------------------")
+
         for _ in 1:num_mc_samples
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
@@ -360,28 +360,36 @@ function approximate_likelihood(s::RNASeqSample)
                 zs[i] = min(maxz, max(minz, rand()))
             end
 
-            println("------------------------")
-
-            tic()
+            # tic()
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
-            toc()
 
-            tic()
+            # negative entropy
+            # for i in 1:n-1
+            #     elbo += log(ys[i])
+            # end
+            # toc()
+
+            # tic()
             hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
-            toc()
+            # toc()
 
-            tic()
+            # tic()
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             elbo += lp + kum_ladj + hsp_ladj
-            toc()
+            # toc()
 
-            tic()
+            # tic()
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
-            toc()
+            # toc()
 
-            tic()
+            # negative entropy
+            # for i in 1:n-1
+            #     y_grad[i] += 1/ys[i]
+            # end
+
+            # tic()
             kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
-            toc()
+            # toc()
 
             # adjust for log transform and accumulate
             for i in 1:n-1
@@ -390,12 +398,20 @@ function approximate_likelihood(s::RNASeqSample)
             end
         end
 
+
         for i in 1:n-1
             α_grad[i] /= num_mc_samples
             β_grad[i] /= num_mc_samples
         end
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
+
+        # @show x_grad
+        # @show y_grad
+        # @show a_grad
+        # @show b_grad
+        # @show α_grad
+        # @show β_grad
 
         # Note: the elbo has a negative entropy term is well, but but we are
         # using uniform values on [0,1] which has entropy of 0, so that term
@@ -412,21 +428,28 @@ function approximate_likelihood(s::RNASeqSample)
         end
 
         # step size schedule
-        c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
+        # c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
         # c = ss_η * (step_num^(-0.5 + 0.01))::Float64
-        #c =  ss_η * 1.0/1.02^step_num
+        c =  ss_η * 1.0/1.02^step_num
 
+        max_delta = 0.0
         for i in 1:n-1
             # update a parameters
             s_α[i] = (1 - ss_α_α) * s_α[i] + ss_α_α * α_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_α[i]))
-            αs[i] += clamp(ρ * α_grad[i], -ss_max_α_step, ss_max_α_step)
+            delta = ρ * α_grad[i]
+            max_delta = max(max_delta, abs(delta))
+            αs[i] += clamp(delta, -ss_max_α_step, ss_max_α_step)
 
             # update b parameters
             s_β[i] = (1 - ss_β_α) * s_β[i] + ss_β_α * β_grad[i]^2
             ρ = c / (ss_τ + sqrt(s_β[i]))
-            βs[i] += clamp(ρ * β_grad[i], -ss_max_β_step, ss_max_β_step)
+            delta = ρ * β_grad[i]
+            max_delta = max(max_delta, abs(delta))
+            βs[i] += clamp(delta, -ss_max_β_step, ss_max_β_step)
         end
+
+        @show max_delta
 
         toc()
 
@@ -440,7 +463,7 @@ function approximate_likelihood(s::RNASeqSample)
         #     break
         # end
 
-        if step_num > 500
+        if step_num > 1000
             break
         end
     end

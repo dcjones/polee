@@ -17,6 +17,11 @@ function harmonic(x)
 end
 
 
+function harmonic_deriv(x)
+    return trigamma(x+1)
+end
+
+
 function Distributions.entropy(d::Kumaraswamy)
     return (1 - 1/d.a) + (1 - 1/d.b) * harmonic(b) + log(d.a * d.b)
 end
@@ -84,6 +89,19 @@ function kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
             @show (a_grad[i], b_grad[i], a, b, z, ia, ib, c, log_omz)
             error()
         end
+
+        # if i == 1
+        #     ag1 = -log(c) / a^2 - ia
+        #     bg1 = -log_omz / b^2 +
+        #                 (ia - 1) * (1/c) * (1 - z)^ib * log_omz / b^2 -
+        #                 ib
+
+        #     @show ag1
+        #     @show bg1
+        #     @show dy_da
+        #     @show dy_db
+        #     @show y_grad[i]
+        # end
     end
 end
 

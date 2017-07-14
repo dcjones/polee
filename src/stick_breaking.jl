@@ -79,10 +79,12 @@ function Base.isless(a::Tuple{Float32, SubtreeListNode, SubtreeListNode},
 end
 
 
-function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, queue_idxs, K)
+function merge!(a::SubtreeListNode, b::SubtreeListNode,
+                merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{Int32},
+                queue, queue_idxs, K)
     # if a.root.j != 0 && b.root.j != 0
     #     println("merge: ", a.root.j, " ", b.root.j)
-    #     @show distance(a, b)
+    #     @show (distance(a, b), length(a.is), length(b.is))
     # end
 
     # if b has the larger array, let that be reused, and a's array be gced
@@ -90,39 +92,71 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode, queue, queue_idxs, K)
         a.vs, b.vs = b.vs, a.vs
         a.is, b.is = b.is, a.is
     end
+    alen = length(a.is)
+    blen = length(b.is)
 
-    i = 1
-    j = 1
-    while i <= length(a.vs) && j <= length(b.vs)
-        if a.is[i] < b.is[j]
-            a.vs[i] /= 2.0f0
+    if length(merge_buffer_v) < alen
+        resize!(merge_buffer_v, alen)
+        resize!(merge_buffer_i, alen)
+    end
+    copy!(merge_buffer_v, a.vs)
+    copy!(merge_buffer_i, a.is)
+
+    # figure out space needed for merge
+    merged_size = 0
+    i, j = 1, 1
+    while i <= alen && j <= blen
+        if merge_buffer_i[i] < b.is[j]
+            merged_size += 1
             i += 1
-        elseif a.is[i] > b.is[j]
-            a.is[i], b.is[j] = b.is[j], a.is[i]
-            a.vs[i], b.vs[j] = b.vs[j], a.vs[i]
-            i += 1
+        elseif merge_buffer_i[i] > b.is[j]
+            merged_size += 1
+            j += 1
         else
-            # TODO: if I'm averaging these, should every other value be divided
-            # by zero. Maybe something to test emperically.
-            a.vs[i] = (a.vs[i] + b.vs[j]) / 2.0f0
+            merged_size += 1
             i += 1
             j += 1
         end
     end
 
-    if j <= length(b.vs)
-        k = length(b.vs) - j + 1
-        resize!(a.vs, length(a.vs) + k)
-        # copy!(a.vs, i, b.vs, j, k)
-        u = i
-        for v in j:length(b.vs)
-            a.vs[u] = b.vs[v] / 2.0f0
-            u += 1
-        end
+    merged_size += alen - i + 1
+    merged_size += blen - j + 1
 
-        resize!(a.is, length(a.is) + k)
-        copy!(a.is, i, b.is, j, k)
+    if alen < merged_size
+        resize!(a.is, merged_size)
+        resize!(a.vs, merged_size)
     end
+
+    # merge
+    i, j, k = 1, 1, 1
+    while i <= alen || j <= blen
+        if j > blen || (i <= alen && merge_buffer_i[i] < b.is[j])
+            a.is[k] = merge_buffer_i[i]
+            a.vs[k] = merge_buffer_v[i] / 2.0f0
+            i += 1
+            k += 1
+        elseif i > alen || (j <= blen && merge_buffer_i[i] > b.is[j])
+            a.is[k] = b.is[j]
+            a.vs[k] = b.vs[j] / 2.0f0
+            j += 1
+            k += 1
+        else
+            a.is[k] = merge_buffer_i[i]
+            a.vs[k] = (merge_buffer_v[i] + b.vs[j]) / 2.0f0
+            i += 1
+            j += 1
+            k += 1
+        end
+    end
+
+    @assert k == merged_size + 1
+
+    if !issorted(a.is)
+        @show a.is
+        @show b.is
+    end
+
+    @assert issorted(a.is)
 
     node = HClustNode(a.root, b.root)
     a.root.parent = node
@@ -171,26 +205,31 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     union_size = 0
     while i <= length(a.vs) && j <= length(b.vs)
         if a.is[i] < b.is[j]
+            d += 1
             # d += a.vs[i]^2
             # d += a.vs[i]
-            union_size += 1
+            # union_size += 1
             i += 1
         elseif a.is[i] > b.is[j]
+            d += 1
             # d += b.vs[j]^2
             # d += b.vs[j]
-            union_size += 1
+            # union_size += 1
             j += 1
         else
+            has_shared = true
+            d += (a.vs[i] - b.vs[j]) / (a.vs[i] + b.vs[j])
             # d += (a.vs[i] - b.vs[j])^2
             # d += abs(a.vs[i] - b.vs[j])
             intersection_size += 1
-            union_size += 1
+            # union_size += 1
             i += 1
             j += 1
         end
     end
 
-    union_size += length(a.vs) - i + 1
+    d += length(a.vs) - i + 1
+    # union_size += length(a.vs) - i + 1
     # while i <= length(a.vs)
     #     # d += a.vs[i]^2
     #     # d += a.vs[i]
@@ -198,7 +237,8 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     #     i += 1
     # end
 
-    union_size += length(b.vs) - j + 1
+    d += length(b.vs) - j + 1
+    # union_size += length(b.vs) - j + 1
     # while j <= length(b.vs)
     #     # d += b.vs[j]^2
     #     # d += b.vs[j]
@@ -208,9 +248,10 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
-    d = -intersection_size / union_size
+    # d = -intersection_size / union_size
     noise = 1f-20 * rand()
-    return Float32(d + noise)
+    return Float32(abs(d) + noise)
+    # return Float32(noise)
 end
 
 
@@ -303,6 +344,7 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
                 k += 1
             end
             nodes[j] = SubtreeListNode(V[k0:k-1], I[k0:k-1], HClustNode(j))
+            @assert issorted(nodes[j].is)
             j += 1
         end
     end
@@ -355,6 +397,9 @@ function hclust(X::SparseMatrixRSB)
     # K = 100
     queue, queue_idxs = hclust_initalize(X, n, K)
 
+    merge_buffer_v = Float32[]
+    merge_buffer_i = Int32[]
+
     # tic()
     steps = 0
     merge_count = 0
@@ -363,20 +408,21 @@ function hclust(X::SparseMatrixRSB)
     while true
         steps += 1
         d, a, b = pop!(queue)
-        # @show d
         delete!(queue_idxs, (a,b))
 
         if a.merged || b.merged
             continue
         end
 
-        ab = merge!(a, b, queue, queue_idxs, K)
+        # @show d
+
+        ab = merge!(a, b, merge_buffer_v, merge_buffer_i, queue, queue_idxs, K)
         merge_count += 1
         next!(prog)
 
         # all trees have been merged
         if ab.left === ab && ab.right === ab
-            @show (n, steps, merge_count)
+            # @show (n, steps, merge_count)
             # toc()
             # Profile.stop_timer()
             # Profile.print()

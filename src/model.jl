@@ -124,9 +124,9 @@ function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
 
     # @show x_grad
 
-    @show extrema(xs)
-    @show extrema(ws)
-    @show extrema(x_grad)
+    # @show extrema(xs)
+    # @show extrema(ws)
+    # @show extrema(x_grad)
 
     @assert isfinite(lp)
     @assert isfinite(efflen_ladj)

@@ -228,18 +228,36 @@ function approximate_likelihood(s::RNASeqSample)
 
     model = Model(m, n)
 
-    # step size constants
-    ss_τ = 1.0
-    ss_ε = 1e-16
+    # learning rate
+    # adam_learning_rate = 0.02
+    adam_learning_rate = 0.1
+    adam_learning_rate_decay = 4e-5
 
-    # influence of the most recent gradient on step size
-    ss_α_α = 0.2
-    ss_β_α = 0.2
+    # epsilon
+    adam_eps = 1e-8
 
-    ss_η = 1.0
+    # resistance
+    # adam_rv = 0.9
+    # adam_rm = 0.999
+    # adam_rv = 0.8
+    # adam_rm = 0.9
+    adam_rv = 0.7
+    adam_rm = 0.8
+    # adam_rv = 0.1
+    # adam_rm = 0.1
 
-    ss_max_α_step = 1e0
-    ss_max_β_step = 1e0
+    # gradient running mean
+    m_α = Array{Float32}(n-1)
+    m_β = Array{Float32}(n-1)
+
+    # gradient running variances
+    v_α = Array{Float32}(n-1)
+    v_β = Array{Float32}(n-1)
+
+    # step size clamp
+    ss_max_α_step = 1e-1
+    ss_max_β_step = 1e-1
+
     # srand(43241)
 
     # number of monte carlo samples to estimate gradients an elbo at each
@@ -309,10 +327,6 @@ function approximate_likelihood(s::RNASeqSample)
     b_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
     x_grad = Array{Float32}(n)
-
-    # step-size
-    s_α = Array{Float32}(n-1)
-    s_β = Array{Float32}(n-1)
 
     elbo = 0.0
     elbo0 = 0.0
@@ -423,31 +437,46 @@ function approximate_likelihood(s::RNASeqSample)
         @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
-            s_α[:] = α_grad.^2
-            s_β[:] = β_grad.^2
+                m_α[:] = α_grad
+                m_β[:] = β_grad
+
+                v_α[:] = α_grad.^2
+                v_β[:] = β_grad.^2
+        else
+            for i in 1:n-1
+                m_α[i] = adam_rm * m_α[i] + (1 - adam_rm) * α_grad[i]
+                m_β[i] = adam_rm * m_β[i] + (1 - adam_rm) * β_grad[i]
+
+                v_α[i] = adam_rv * v_α[i] + (1 - adam_rv) * α_grad[i]^2
+                v_β[i] = adam_rv * v_β[i] + (1 - adam_rv) * β_grad[i]^2
+            end
         end
 
-        # step size schedule
-        # c = ss_η * (step_num^(-0.5 + ss_ε))::Float64
-        # c = ss_η * (step_num^(-0.5 + 0.01))::Float64
-        c =  ss_η * 1.0/1.02^step_num
+        @show extrema(v_α)
+        @show extrema(m_α)
+
+        @show extrema(v_β)
+        @show extrema(m_β)
 
         max_delta = 0.0
         for i in 1:n-1
             # update a parameters
-            s_α[i] = (1 - ss_α_α) * s_α[i] + ss_α_α * α_grad[i]^2
-            ρ = c / (ss_τ + sqrt(s_α[i]))
-            delta = ρ * α_grad[i]
+            m_α_i = m_α[i] / (1 - adam_rm^step_num)
+            v_α_i = v_α[i] / (1 - adam_rv^step_num)
+            delta = adam_learning_rate * m_α_i / (sqrt(v_α_i) + adam_eps)
             max_delta = max(max_delta, abs(delta))
             αs[i] += clamp(delta, -ss_max_α_step, ss_max_α_step)
 
             # update b parameters
-            s_β[i] = (1 - ss_β_α) * s_β[i] + ss_β_α * β_grad[i]^2
-            ρ = c / (ss_τ + sqrt(s_β[i]))
-            delta = ρ * β_grad[i]
+            m_β_i = m_β[i] / (1 - adam_rm^step_num)
+            v_β_i = v_β[i] / (1 - adam_rv^step_num)
+            delta = adam_learning_rate * m_β_i / (sqrt(v_β_i) + adam_eps)
             max_delta = max(max_delta, abs(delta))
             βs[i] += clamp(delta, -ss_max_β_step, ss_max_β_step)
         end
+
+        adam_learning_rate *= 1 / (1 + adam_learning_rate_decay * step_num)
+        @show adam_learning_rate
 
         @show max_delta
 
@@ -463,7 +492,7 @@ function approximate_likelihood(s::RNASeqSample)
         #     break
         # end
 
-        if step_num > 1000
+        if step_num > 500
             break
         end
     end

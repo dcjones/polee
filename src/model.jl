@@ -36,9 +36,13 @@ end
 # end
 
 
-function log_likelihood_loop1(frag_probs::Vector{Float32}, log_frag_probs::Vector{Float32}, m)
+function log_likelihood_loop1{GRADONLY}(frag_probs::Vector{Float32},
+                                        log_frag_probs::Vector{Float32}, m,
+                                        ::Type{Val{GRADONLY}})
     Threads.@threads for i in 1:m
-        log_frag_probs[i] = log(frag_probs[i])
+        if !GRADONLY
+            log_frag_probs[i] = log(frag_probs[i])
+        end
         frag_probs[i] = inv(frag_probs[i])
     end
     return sum(log_frag_probs)
@@ -46,7 +50,8 @@ end
 
 
 # assumes a flat prior on π
-function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
+function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad,
+                                  ::Type{Val{GRADONLY}})
     frag_probs = model.frag_probs
     ws = model.ws
     m, n = model.m, model.n
@@ -62,12 +67,13 @@ function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
     end
 
     # log jacobian determinate for the effective length transform
-    efflen_ladj = 0.0
-    for i in 1:n
-        efflen_ladj += log(effective_lengths[i])
+    efflen_ladj = 0.0f0
+    if !GRADONLY
+        for i in 1:n
+            efflen_ladj += log(effective_lengths[i])
+        end
+        efflen_ladj -= n * log(scaled_simplex_sum)
     end
-    efflen_ladj -= n * log(scaled_simplex_sum)
-    # @show efflen_ladj
 
     # conditional fragment probabilities
     A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X, ws)
@@ -75,23 +81,8 @@ function log_likelihood(model::Model, X, effective_lengths, xs, x_grad)
         frag_probs[k] = 1.0f0
     end
 
-    # @show sum(X * Float32[1.0, 0.0, 0.0, 0.0])
-    # @show sum(X * Float32[0.0, 1.0, 0.0, 0.0])
-    # @show sum(X * Float32[0.0, 0.0, 1.0, 0.0])
-    # @show sum(X * Float32[0.0, 0.0, 0.0, 1.0])
-    # exit()
-
-    # log-likelihood
-    # frag_probs_v = reinterpret(FloatVec, frag_probs)
-    # lp = log_likelihood_loop1(frag_probs_v)
-
-    # `log_likelihood_loop1` does the below but realy realy fast
-    lp = log_likelihood_loop1(frag_probs, model.log_frag_probs, m)
-    # lp = 0.0
-    # for i in 1:m
-    #     lp += log(frag_probs[i])
-    #     frag_probs[i] = inv(frag_probs[i])
-    # end
+    # log likelihood
+    lp = log_likelihood_loop1(frag_probs, model.log_frag_probs, m, Val{GRADONLY})
 
     # compute df / dw (where w is effective length weighted mixtures)
     At_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))

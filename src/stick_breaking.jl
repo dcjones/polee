@@ -402,7 +402,6 @@ function hclust(X::SparseMatrixRSB)
     merge_buffer_v = Float32[]
     merge_buffer_i = Int32[]
 
-    # tic()
     steps = 0
     merge_count = 0
     # Profile.start_timer()
@@ -425,7 +424,6 @@ function hclust(X::SparseMatrixRSB)
         # all trees have been merged
         if ab.left === ab && ab.right === ab
             # @show (n, steps, merge_count)
-            # toc()
             # Profile.stop_timer()
             # Profile.print()
             # exit()
@@ -567,7 +565,8 @@ function rand_hsb_tree(n)
 end
 
 
-function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
+function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
+                                  ::Type{Val{GRADONLY}})
     nodes = t.nodes
     nodes[1].input_value = 1.0f0
     k = 1 # internal node count
@@ -594,11 +593,13 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         node.left_child.input_value = node.y * node.input_value
         node.right_child.input_value = (1 - node.y) * node.input_value
 
-        # log jacobian determinant term for uniformity biasing
-        ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
+        if !GRADONLY
+            # log jacobian determinant term for uniformity biasing
+            ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
 
-        # log jacobian determinant term for stick breaking
-        ladj += log(node.input_value)
+            # log jacobian determinant term for stick breaking
+            ladj += log(node.input_value)
+        end
 
         k += 1
     end

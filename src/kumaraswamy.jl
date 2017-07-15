@@ -29,9 +29,9 @@ end
 
 # Take uniform random numbers in zs, transform them to Kamaraswamy distributed values
 # in ys according to parameters as and bs. Return the log absolute determinant of the jacobian,
-function kumaraswamy_transform!(as::Vector, bs::Vector,
-                                zs::Vector, ys::Vector,
-                                work::Vector)
+function kumaraswamy_transform!{GRADONLY}(as::Vector, bs::Vector,
+                                          zs::Vector, ys::Vector,
+                                          work::Vector, ::Type{Val{GRADONLY}})
     Threads.@threads for i in 1:length(ys)
         a = Float64(as[i])
         b = Float64(bs[i])
@@ -47,7 +47,9 @@ function kumaraswamy_transform!(as::Vector, bs::Vector,
         ys[i] = min(1.0f0 - eps(Float32), max(eps(Float32), ys[i]))
 
         # ladj term
-        work[i] = (ib - 1) * log(1 - z) + (ia - 1) * log(c) - log(a * b)
+        if !GRADONLY
+            work[i] = (ib - 1) * log(1 - z) + (ia - 1) * log(c) - log(a * b)
+        end
     end
 
     ladj = sum(work)

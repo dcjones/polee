@@ -223,7 +223,8 @@ function diagnostic_samples(model, X, μ, σ, i)
 end
 
 
-function approximate_likelihood{T}(s::RNASeqSample)
+function approximate_likelihood{GRADONLY}(s::RNASeqSample,
+                                          ::Type{Val{GRADONLY}}=Val{true})
     m, n = size(s)
 
     model = Model(m, n)
@@ -282,41 +283,6 @@ function approximate_likelihood{T}(s::RNASeqSample)
     αs = fill(log(10f0), n-1)
     βs = fill(log(921.7f0), n-1)
 
-    #=
-    # choose initial values to avoid underflow
-    # count subtree size and store in the node's input_value field
-    k = n-1
-    nodes = t.nodes
-    for i in length(nodes):-1:1
-        node = nodes[i]
-        if node.j != 0
-            node.input_value = 1
-        else
-            a = beta_a = node.left_child.input_value + 1
-            beta_b = node.right_child.input_value + 1
-
-            u = (1 - beta_a) / (2 - beta_a - beta_b)
-
-            @show beta_a
-            @show beta_b
-            @show u
-
-            b = 1/beta_a + (beta_a - 1) / (beta_a * u^a)
-            b = min(b, 1f16)
-
-            αs[k] = log(a)
-            βs[k] = log(b)
-
-            @show (exp(αs[k]), exp(βs[k]), node.left_child.input_value,
-                   node.right_child.input_value)
-
-            node.input_value =
-                1 + node.left_child.input_value + node.right_child.input_value
-            k -= 1
-        end
-    end
-    =#
-
     as = Array{Float32}(n-1) # exp(αs)
     bs = Array{Float32}(n-1) # exp(βs)
 
@@ -333,9 +299,7 @@ function approximate_likelihood{T}(s::RNASeqSample)
     elbo0 = 0.0
     max_elbo = -Inf # smallest elbo seen so far
 
-    step_num = 0
-    small_step_count = 0
-    fruitless_step_count = 0
+    num_steps = 500
 
     # stopping criteria
     max_small_steps = 2
@@ -344,16 +308,15 @@ function approximate_likelihood{T}(s::RNASeqSample)
     minz = eps(Float32)
     maxz = 1.0f0 - eps(Float32)
 
-    println("Optimizing ELBO: ", -Inf)
+    # println("Optimizing ELBO: ", -Inf)
 
     # I, J, V = findnz(s.X)
     # X = sparse(I, J, V, m, n)
 
     tic()
 
-    while true
-        tic()
-        step_num += 1
+    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
+    for step_num in 1:num_steps
         elbo0 = elbo
         elbo = 0.0
         fill!(α_grad, 0.0f0)
@@ -364,8 +327,6 @@ function approximate_likelihood{T}(s::RNASeqSample)
             bs[i] = exp(βs[i])
         end
 
-        println("-------------------------")
-
         for _ in 1:num_mc_samples
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
@@ -375,31 +336,16 @@ function approximate_likelihood{T}(s::RNASeqSample)
                 zs[i] = min(maxz, max(minz, rand()))
             end
 
-            tic()
-            kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work)  # z -> y
-            toc() # 0.05 seconds
+            kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work,
+                                              Val{GRADONLY})         # z -> y
+            hsp_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})      # y -> x
 
-            tic()
-            hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
-            toc() # 0.07 seconds
-
-            tic()
-            lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
+            lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad,
+                                Val{GRADONLY})
             elbo += lp + kum_ladj + hsp_ladj
-            toc() # 0.25 seconds
 
-            tic()
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
-            toc() # 0.05 seconds
-
-            # negative entropy
-            # for i in 1:n-1
-            #     y_grad[i] += 1/ys[i]
-            # end
-
-            tic()
             kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
-            toc() # 0.06 seconds
 
             # adjust for log transform and accumulate
             for i in 1:n-1
@@ -408,20 +354,12 @@ function approximate_likelihood{T}(s::RNASeqSample)
             end
         end
 
-
         for i in 1:n-1
             α_grad[i] /= num_mc_samples
             β_grad[i] /= num_mc_samples
         end
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
-
-        # @show x_grad
-        # @show y_grad
-        # @show a_grad
-        # @show b_grad
-        # @show α_grad
-        # @show β_grad
 
         # Note: the elbo has a negative entropy term is well, but but we are
         # using uniform values on [0,1] which has entropy of 0, so that term
@@ -430,7 +368,7 @@ function approximate_likelihood{T}(s::RNASeqSample)
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
         # @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
-        @printf("Optimizing ELBO: %.4e\n", elbo)
+        # @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
                 m_α[:] = α_grad
@@ -447,12 +385,6 @@ function approximate_likelihood{T}(s::RNASeqSample)
                 v_β[i] = adam_rv * v_β[i] + (1 - adam_rv) * β_grad[i]^2
             end
         end
-
-        @show extrema(v_α)
-        @show extrema(m_α)
-
-        @show extrema(v_β)
-        @show extrema(m_β)
 
         max_delta = 0.0
         for i in 1:n-1
@@ -472,34 +404,15 @@ function approximate_likelihood{T}(s::RNASeqSample)
         end
 
         adam_learning_rate *= 1 / (1 + adam_learning_rate_decay * step_num)
-        @show adam_learning_rate
+        # @show adam_learning_rate
+        # @show max_delta
 
-        @show max_delta
-
-        toc()
-
-        if elbo < max_elbo
-            fruitless_step_count += 1
-        else
-            fruitless_step_count = 0
-        end
-
-        # if fruitless_step_count > 400
-        #     break
-        # end
-
-        if step_num > 500
-        # if step_num > 20
-            break
-        end
+        next!(prog)
     end
-
-    # Profile.print()
-    # exit()
 
     toc()
 
-    println("Finished in ", step_num, " steps")
+    # println("Finished in ", step_num, " steps")
 
     # Write out point estimates for convenience
     #log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)

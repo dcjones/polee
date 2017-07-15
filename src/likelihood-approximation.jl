@@ -327,6 +327,7 @@ function approximate_likelihood(s::RNASeqSample)
     b_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
     x_grad = Array{Float32}(n)
+    work   = Array{Float32}(n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
     elbo0 = 0.0
@@ -374,36 +375,31 @@ function approximate_likelihood(s::RNASeqSample)
                 zs[i] = min(maxz, max(minz, rand()))
             end
 
-            # tic()
-            kum_ladj = kumaraswamy_transform!(as, bs, zs, ys)  # z -> y
+            tic()
+            kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work)  # z -> y
+            toc() # 0.05 seconds
 
-            # negative entropy
-            # for i in 1:n-1
-            #     elbo += log(ys[i])
-            # end
-            # toc()
-
-            # tic()
+            tic()
             hsp_ladj = hsb_transform!(t, ys, xs)               # y -> x
-            # toc()
+            toc() # 0.07 seconds
 
-            # tic()
+            tic()
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad)
             elbo += lp + kum_ladj + hsp_ladj
-            # toc()
+            toc() # 0.25 seconds
 
-            # tic()
+            tic()
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
-            # toc()
+            toc() # 0.05 seconds
 
             # negative entropy
             # for i in 1:n-1
             #     y_grad[i] += 1/ys[i]
             # end
 
-            # tic()
+            tic()
             kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
-            # toc()
+            toc() # 0.06 seconds
 
             # adjust for log transform and accumulate
             for i in 1:n-1
@@ -493,9 +489,13 @@ function approximate_likelihood(s::RNASeqSample)
         # end
 
         if step_num > 500
+        # if step_num > 20
             break
         end
     end
+
+    # Profile.print()
+    # exit()
 
     toc()
 

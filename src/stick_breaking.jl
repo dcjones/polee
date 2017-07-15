@@ -16,6 +16,7 @@ type HClustNode
 
     subtree_size::Int32
 
+    y::Float32
     input_value::Float32
     grad::Float32
 
@@ -583,19 +584,13 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         @assert node.right_child !== node
 
         # bias so that uniform ys[k] = 0.5 for all k will lead to uniform split
-        nl = node.left_child.subtree_size
-        nr = node.right_child.subtree_size
-        y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
+        yk = Float32(ys[k])
+        nl = Float32(node.left_child.subtree_size)
+        nr = Float32(node.right_child.subtree_size)
+        node.y = yk * nl / (yk * nl + (1 - yk) * nr)
 
-        # y = ys[k]
-
-        node.left_child.input_value = y * node.input_value
-        node.right_child.input_value = (1.0f0 - y) * node.input_value
-
-        if node.left_child.input_value == 0.0 || node.right_child.input_value == 0.0
-            @show (node.input_value, nl, nr, ys[k], y)
-            exit()
-        end
+        node.left_child.input_value = node.y * node.input_value
+        node.right_child.input_value = (1 - node.y) * node.input_value
 
         k += 1
     end
@@ -613,18 +608,13 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         end
 
         # jacobian for the uniformity biasing
-        nl = node.left_child.subtree_size
-        nr = node.right_child.subtree_size
-        y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
-        ladj += log(nl) + log(nr) - 2*log(ys[k] * nl + (1 - ys[k]) * nr)
-        # y = ys[k]
+        yk = Float32(ys[k])
+        nl = Float32(node.left_child.subtree_size)
+        nr = Float32(node.right_child.subtree_size)
+        ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
 
         # jacobian for stick breaking
         ladj += log(node.input_value)
-        if !isfinite(ladj)
-            @show (node.input_value, nl, nr, ys[k])
-            exit()
-        end
         k += 1
     end
 
@@ -644,21 +634,19 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
         if node.j != 0 # leaf node
             node.grad = x_grad[node.j]
         else
-            nl = Int64(node.left_child.subtree_size)
-            nr = Int64(node.right_child.subtree_size)
-            y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
-            dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
+            yk = Float32(ys[k])
+            nl = Float32(node.left_child.subtree_size)
+            nr = Float32(node.right_child.subtree_size)
+            denom = yk * nl + (1 - yk) * nr
+            dy_dyk = (nl / denom) * (nr / denom)
             @assert dy_dyk > 0.0f0
-
-            # y = ys[k]
-            # dy_dyk = 1.0f0
 
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
             y_grad[k] = dy_dyk * node.input_value * (node.left_child.grad - node.right_child.grad)
 
             # store derivative wrt this nodes input_value
-            node.grad = y * node.left_child.grad + (1 - y) * node.right_child.grad
+            node.grad = node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
             k -= 1
         end
     end
@@ -672,16 +660,16 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
         if node.j != 0 # leaf node
             node.grad = 1.0f0
         else
+            yk = Float32(ys[k])
+            nl = Float32(node.left_child.subtree_size)
+            nr = Float32(node.right_child.subtree_size)
+
             # derivatives of log jacobian determinant for uniformity biasing
-            nl = node.left_child.subtree_size
-            nr = node.right_child.subtree_size
             y_grad[k] -= 2 * (nl - nr) / (ys[k] * nl + (1-ys[k]) * nr)
 
-            y = ys[k] * nl / (ys[k] * nl + (1 - ys[k]) * nr)
-            dy_dyk = nl*nr / (ys[k] * nl + (1 - ys[k]) * nr)^2
-
-            # y = ys[k]
-            # dy_dyk = 1.0f0
+            denom = yk * nl + (1 - yk) * nr
+            dy_dyk = (nl / denom) * (nr / denom)
+            @assert dy_dyk > 0.0f0
 
             # derivative of the ladj in this subtree wrt to y[k] which is
             # derived by multipying children's gradient's by contribution to
@@ -690,7 +678,7 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
 
             # store derivative of the ladj wrt to this node's input_value
             node.grad = 1/node.input_value +
-                y * node.left_child.grad + (1 - y) * node.right_child.grad
+                node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
             k -= 1
         end
     end

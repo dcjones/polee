@@ -223,7 +223,7 @@ function diagnostic_samples(model, X, μ, σ, i)
 end
 
 
-function approximate_likelihood(s::RNASeqSample)
+function approximate_likelihood{T}(s::RNASeqSample)
     m, n = size(s)
 
     model = Model(m, n)

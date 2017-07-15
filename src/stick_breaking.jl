@@ -19,6 +19,7 @@ type HClustNode
     y::Float32
     input_value::Float32
     grad::Float32
+    ladj_grad::Float32
 
     function (::Type{HClustNode})(j::Integer)
         node = new(j)
@@ -570,6 +571,7 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
     nodes = t.nodes
     nodes[1].input_value = 1.0f0
     k = 1 # internal node count
+    ladj = 0.0f0
     for i in 1:length(nodes)
         node = nodes[i]
 
@@ -592,31 +594,15 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector)
         node.left_child.input_value = node.y * node.input_value
         node.right_child.input_value = (1 - node.y) * node.input_value
 
+        # log jacobian determinant term for uniformity biasing
+        ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
+
+        # log jacobian determinant term for stick breaking
+        ladj += log(node.input_value)
+
         k += 1
     end
     @assert k == length(ys) + 1
-
-    # Log absolute jacobian determinant calculation. Like the transform itself
-    # this is computed with a simple tree traversal, but we need to specialy
-    # handle every node on the path from right-most leaf to root.
-    ladj = 0.0f0
-    k = 1
-    for i in 1:length(nodes)
-        node = nodes[i]
-        if node.j != 0 # leaf node
-            continue
-        end
-
-        # jacobian for the uniformity biasing
-        yk = Float32(ys[k])
-        nl = Float32(node.left_child.subtree_size)
-        nr = Float32(node.right_child.subtree_size)
-        ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
-
-        # jacobian for stick breaking
-        ladj += log(node.input_value)
-        k += 1
-    end
 
     @assert isfinite(ladj)
     return ladj
@@ -633,6 +619,7 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
 
         if node.j != 0 # leaf node
             node.grad = x_grad[node.j]
+            node.ladj_grad = 1.0f0
         else
             yk = Float32(ys[k])
             nl = Float32(node.left_child.subtree_size)
@@ -643,42 +630,19 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
 
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
-            y_grad[k] = dy_dyk * node.input_value * (node.left_child.grad - node.right_child.grad)
+            y_grad[k] = dy_dyk * node.input_value *
+                ((node.left_child.grad + node.left_child.ladj_grad) -
+                 (node.right_child.grad + node.right_child.ladj_grad))
+
+            # derivatives of log jacobian determinant for uniformity biasing
+            y_grad[k] -= 2 * (nl - nr) / (yk * nl + (1 - yk) * nr)
 
             # store derivative wrt this nodes input_value
             node.grad = node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
-            k -= 1
-        end
-    end
-    @assert k == 0
 
-    # gradients of log absolute jacobian determinant
-    k = length(y_grad)
-    for i in length(nodes):-1:1
-        node = nodes[i]
-
-        if node.j != 0 # leaf node
-            node.grad = 1.0f0
-        else
-            yk = Float32(ys[k])
-            nl = Float32(node.left_child.subtree_size)
-            nr = Float32(node.right_child.subtree_size)
-
-            # derivatives of log jacobian determinant for uniformity biasing
-            y_grad[k] -= 2 * (nl - nr) / (ys[k] * nl + (1-ys[k]) * nr)
-
-            denom = yk * nl + (1 - yk) * nr
-            dy_dyk = (nl / denom) * (nr / denom)
-            @assert dy_dyk > 0.0f0
-
-            # derivative of the ladj in this subtree wrt to y[k] which is
-            # derived by multipying children's gradient's by contribution to
-            # their input values
-            y_grad[k] += dy_dyk * node.input_value * (node.left_child.grad - node.right_child.grad)
-
-            # store derivative of the ladj wrt to this node's input_value
-            node.grad = 1/node.input_value +
-                node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
+            # store derivative wrt to ladj
+            node.ladj_grad = 1/node.input_value +
+                node.y * node.left_child.ladj_grad + (1 - node.y) * node.right_child.ladj_grad
             k -= 1
         end
     end

@@ -129,7 +129,7 @@ function Transcripts(filename::String)
         end
 
         if (i += 1) % prog_step == 0
-            update!(prog, position(reader.state.stream.source))
+            ProgressMeter.update!(prog, position(reader.state.stream.source))
         end
         count += 1
 

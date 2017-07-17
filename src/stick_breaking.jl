@@ -16,8 +16,8 @@ type HClustNode
 
     subtree_size::Int32
 
-    y::Float32
-    input_value::Float32
+    y::Float64
+    input_value::Float64
     grad::Float32
     ladj_grad::Float32
 
@@ -579,26 +579,36 @@ function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
             continue
         end
 
-        @assert 0.0f0 <= node.input_value <= 1.0f0
-        @assert 0.0f0 <= ys[k] <= 1.0f0
+        # @show node.input_value
+
+        # @assert 0.0f0 <= node.input_value <= 1.0f0
+        # @assert 0.0f0 <= ys[k] <= 1.0f0
         @assert node.left_child !== node
         @assert node.right_child !== node
 
         # bias so that uniform ys[k] = 0.5 for all k will lead to uniform split
-        yk = Float32(ys[k])
-        nl = Float32(node.left_child.subtree_size)
-        nr = Float32(node.right_child.subtree_size)
-        node.y = yk * nl / (yk * nl + (1 - yk) * nr)
+        yk = ys[k]
+        nl = Float64(node.left_child.subtree_size)
+        nr = Float64(node.right_child.subtree_size)
+        # node.y = yk * nl / (yk * nl + (1 - yk) * nr)
+        node.y = yk
 
         node.left_child.input_value = node.y * node.input_value
         node.right_child.input_value = (1 - node.y) * node.input_value
 
         if !GRADONLY
             # log jacobian determinant term for uniformity biasing
-            ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
+            # ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
 
             # log jacobian determinant term for stick breaking
             ladj += log(node.input_value)
+            if !isfinite(ladj)
+                @show node.parent.input_value
+                @show node.parent.y
+                @show yk
+                @show node.input_value
+                exit()
+            end
         end
 
         k += 1
@@ -622,11 +632,12 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             node.grad = x_grad[node.j]
             node.ladj_grad = 1.0f0
         else
-            yk = Float32(ys[k])
-            nl = Float32(node.left_child.subtree_size)
-            nr = Float32(node.right_child.subtree_size)
-            denom = yk * nl + (1 - yk) * nr
-            dy_dyk = (nl / denom) * (nr / denom)
+            yk = ys[k]
+            nl = Float64(node.left_child.subtree_size)
+            nr = Float64(node.right_child.subtree_size)
+            # denom = yk * nl + (1 - yk) * nr
+            # dy_dyk = (nl / denom) * (nr / denom)
+            dy_dyk = 1.0
             @assert dy_dyk > 0.0f0
 
             # get derivative wrt y by multiplying children's derivatives by y's
@@ -635,17 +646,46 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
                 ((node.left_child.grad + node.left_child.ladj_grad) -
                  (node.right_child.grad + node.right_child.ladj_grad))
 
+            if isnan(y_grad[k])
+                println("============================")
+                @show yk
+                @show ((node.left_child.grad + node.left_child.ladj_grad) -
+                 (node.right_child.grad + node.right_child.ladj_grad))
+                @show node.input_value
+                @show node.left_child.grad
+                @show node.left_child.ladj_grad
+                @show node.right_child.grad
+                @show node.right_child.ladj_grad
+                @show node.left_child.input_value
+                @show node.right_child.input_value
+                println("============================")
+                exit()
+            end
+
             # derivatives of log jacobian determinant for uniformity biasing
-            y_grad[k] -= 2 * (nl - nr) / (yk * nl + (1 - yk) * nr)
+            # y_grad[k] -= 2 * (nl - nr) / (yk * nl + (1 - yk) * nr)
 
             # store derivative wrt this nodes input_value
             node.grad = node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
+            if isnan(node.grad)
+                node.grad = 0.0
+            end
 
             # store derivative wrt to ladj
             node.ladj_grad = 1/node.input_value +
                 node.y * node.left_child.ladj_grad + (1 - node.y) * node.right_child.ladj_grad
+            if isnan(node.ladj_grad)
+                node.ladj_grad = 0.0
+            end
+
+
+            if node.input_value == 0.0
+                node.grad = Inf
+            end
+
             k -= 1
         end
+
     end
     @assert k == 0
 end

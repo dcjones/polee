@@ -65,7 +65,7 @@ function read_transcript_sequences_from_fasta!(ts, filename)
     while !isnull(tryread!(reader, entry))
         seqname = FASTA.identifier(entry)
         if length(entry.sequence) > 100000
-            update!(prog, position(reader.state.stream.source))
+            ProgressMeter.update!(prog, position(reader.state.stream.source))
         end
 
         if haskey(ts.trees, seqname)
@@ -89,7 +89,7 @@ function read_transcript_sequences_from_twobit!(ts, filename)
     prog = Progress(length(ts.trees), 0.25, "Reading sequences ", 60)
 
     for (i, (name, tree)) in enumerate(ts.trees)
-        update!(prog, i)
+        ProgressMeter.update!(prog, i)
         local refseq
         try
             refseq = reader[name].seq

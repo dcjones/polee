@@ -43,6 +43,10 @@ function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, 
     Threads.@threads for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree)
+            # XXX: For testing purposes
+            if t.metadata.id != 1450 && t.metadata.id != 1451
+                continue
+            end
             fragpr = condfragprob(fm, t, rs, alnpr,
                                   effective_lengths[t.metadata.id])
             if isfinite(fragpr) && fragpr > MIN_FRAG_PROB

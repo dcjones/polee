@@ -70,6 +70,7 @@ function gibbs_sampler(input_filename, output_filename)
                 cs[zs[i]] += 1
             end
         end
+
         # sample mixture
         for j in 1:n
             ys[j] = rand(Gamma(1.0 + cs[j], 1.0))

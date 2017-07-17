@@ -67,7 +67,7 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     end
 
     # log jacobian determinate for the effective length transform
-    efflen_ladj = 0.0f0
+    efflen_ladj = 0.0
     if !GRADONLY
         for i in 1:n
             efflen_ladj += log(effective_lengths[i])
@@ -90,6 +90,7 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     # @show xs
     # @show ws
     # @show x_grad
+    # fill!(x_grad, 0.0f0)
 
     # compute df / dx
     # x_grad[i] now holds df/dw_i where w is the the effective length
@@ -97,7 +98,7 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     # unweighted mixtures.
     c = 0.0
     for i in 1:n
-        c += (ws[i] / scaled_simplex_sum) * x_grad[i]
+        c += (ws[i] / scaled_simplex_sum^2) * x_grad[i]
     end
 
     for i in 1:n-1
@@ -110,7 +111,7 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     # compute terms for derivatives of efflen_ladj (log absolute determinant of the jacobian)
     # for the effective length transform
     for i in 1:n-1
-        x_grad[i] += (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
+        x_grad[i] += n * (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
     end
 
     # @show x_grad
@@ -123,6 +124,8 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     @assert isfinite(efflen_ladj)
 
     return lp + efflen_ladj
+    # return efflen_ladj
+    # return lp
 end
 
 

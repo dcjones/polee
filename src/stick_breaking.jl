@@ -239,7 +239,7 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     #     i += 1
     # end
 
-    d += length(b.vs) - j + 1
+    d -= length(b.vs) - j + 1
     # union_size += length(b.vs) - j + 1
     # while j <= length(b.vs)
     #     # d += b.vs[j]^2
@@ -677,7 +677,6 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             if isnan(node.ladj_grad)
                 node.ladj_grad = 0.0
             end
-
 
             if node.input_value == 0.0
                 node.grad = Inf

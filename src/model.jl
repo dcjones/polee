@@ -87,18 +87,13 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     # compute df / dw (where w is effective length weighted mixtures)
     At_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
 
-    # @show xs
-    # @show ws
-    # @show x_grad
-    # fill!(x_grad, 0.0f0)
-
     # compute df / dx
     # x_grad[i] now holds df/dw_i where w is the the effective length
     # weighted mixtures. Here we update it to hold df/dx_i, where x are
     # unweighted mixtures.
     c = 0.0
     for i in 1:n
-        c += (ws[i] / scaled_simplex_sum^2) * x_grad[i]
+        c += (ws[i] / scaled_simplex_sum) * x_grad[i]
     end
 
     for i in 1:n-1
@@ -114,18 +109,10 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
         x_grad[i] += n * (effective_lengths[n] - effective_lengths[i]) / scaled_simplex_sum
     end
 
-    # @show x_grad
-
-    # @show extrema(xs)
-    # @show extrema(ws)
-    # @show extrema(x_grad)
-
     @assert isfinite(lp)
     @assert isfinite(efflen_ladj)
 
     return lp + efflen_ladj
-    # return efflen_ladj
-    # return lp
 end
 
 

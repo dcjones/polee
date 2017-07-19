@@ -223,7 +223,9 @@ function kumaraswamy_fit_median_var(med, var)
         delta = Jinv * f
         # @show delta
 
-        if ab[2] >= 20 && delta[2] < 0
+        max_b = 15
+
+        if ab[2] >= max_b && delta[2] < 0
             # just update a
             ab[1] -= f[1] / J[1,1]
 
@@ -236,8 +238,8 @@ function kumaraswamy_fit_median_var(med, var)
 
             ab[1] -= jinv * f
         else
-            if ab[2] - delta[2] > 20
-                c = (ab[2] - 20) / delta[2]
+            if ab[2] - delta[2] > max_b
+                c = (ab[2] - max_b) / delta[2]
                 ab .-= c .* delta
             else
                 ab .-= delta

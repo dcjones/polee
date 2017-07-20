@@ -97,9 +97,37 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     end
 
     for i in 1:n-1
+        if !isfinite(x_grad[i])
+            println("============================")
+            println("A")
+            @show effective_lengths[i]
+            @show effective_lengths[n]
+            @show extrema(frag_probs)
+            @show x_grad[i]
+            @show x_grad[n]
+            @show scaled_simplex_sum
+            @show xs[i]
+            exit()
+            println("============================")
+        end
+
         x_grad[i] = (effective_lengths[i] / scaled_simplex_sum) * x_grad[i] -
                     (effective_lengths[n] / scaled_simplex_sum) * x_grad[n] -
                     (effective_lengths[i] - effective_lengths[n]) * c
+
+        if !isfinite(x_grad[i])
+            println("============================")
+            println("B")
+            @show effective_lengths[i]
+            @show effective_lengths[n]
+            @show extrema(frag_probs)
+            @show x_grad[i]
+            @show x_grad[n]
+            @show scaled_simplex_sum
+            @show xs[i]
+            exit()
+            println("============================")
+        end
     end
     x_grad[n] = 0.0
 

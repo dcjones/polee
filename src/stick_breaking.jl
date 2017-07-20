@@ -84,6 +84,12 @@ end
 function merge!(a::SubtreeListNode, b::SubtreeListNode,
                 merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{Int32},
                 queue, queue_idxs, K)
+
+    idxs = [17915]
+    if (a.root.j in idxs) || (b.root.j in idxs)
+        @show (a.root.j, b.root.j, distance(a, b), length(a.vs), length(b.vs))
+    end
+
     # if a.root.j != 0 && b.root.j != 0
     #     println("merge: ", a.root.j, " ", b.root.j)
     #     @show (distance(a, b), length(a.is), length(b.is))
@@ -363,9 +369,6 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
     for (j, node) in enumerate(nodes)
         medreadidx[j] = isempty(nodes[j].is) ? 0 : nodes[j].is[div(length(nodes[j].is) + 1, 2)]
     end
-    # shuffle first so nodes with the same median read idx are in random order,
-    # leading to a more balanced tree on average (TODO: does this actually help?)
-    shuffle!(nodes)
     nodes = nodes[sortperm(medreadidx)]
 
     # @show medreadidx[1:20]
@@ -392,6 +395,9 @@ end
 
 
 function hclust(X::SparseMatrixRSB)
+
+    srand(102030310)
+
     m, n = size(X)
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
@@ -405,7 +411,7 @@ function hclust(X::SparseMatrixRSB)
     steps = 0
     merge_count = 0
     # Profile.start_timer()
-    prog = Progress(n-1, 0.25, "Clustering transcripts ", 60)
+    # prog = Progress(n-1, 0.25, "Clustering transcripts ", 60)
     while true
         steps += 1
         d, a, b = pop!(queue)
@@ -419,7 +425,7 @@ function hclust(X::SparseMatrixRSB)
 
         ab = merge!(a, b, merge_buffer_v, merge_buffer_i, queue, queue_idxs, K)
         merge_count += 1
-        next!(prog)
+        # next!(prog)
 
         # all trees have been merged
         if ab.left === ab && ab.right === ab
@@ -646,9 +652,32 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
                 ((node.left_child.grad + node.left_child.ladj_grad) -
                  (node.right_child.grad + node.right_child.ladj_grad))
 
-            if isnan(y_grad[k])
+
+            # derivatives of log jacobian determinant for uniformity biasing
+            # y_grad[k] -= 2 * (nl - nr) / (yk * nl + (1 - yk) * nr)
+
+            # store derivative wrt this nodes input_value
+            node.grad = node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
+            # if isnan(node.grad)
+            #     node.grad = 0.0
+            # end
+
+            # store derivative wrt to ladj
+            node.ladj_grad = 1/node.input_value +
+                node.y * node.left_child.ladj_grad + (1 - node.y) * node.right_child.ladj_grad
+            # if isnan(node.ladj_grad)
+            #     node.ladj_grad = 0.0
+            # end
+
+            # if node.input_value == 0.0
+            #     node.grad = Inf
+            # end
+
+
+            if !isfinite(y_grad[k]) || !isfinite(node.grad) || !isfinite(node.ladj_grad)
                 println("============================")
                 @show yk
+                @show node.y
                 @show ((node.left_child.grad + node.left_child.ladj_grad) -
                  (node.right_child.grad + node.right_child.ladj_grad))
                 @show node.input_value
@@ -660,26 +689,6 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
                 @show node.right_child.input_value
                 println("============================")
                 exit()
-            end
-
-            # derivatives of log jacobian determinant for uniformity biasing
-            # y_grad[k] -= 2 * (nl - nr) / (yk * nl + (1 - yk) * nr)
-
-            # store derivative wrt this nodes input_value
-            node.grad = node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
-            if isnan(node.grad)
-                node.grad = 0.0
-            end
-
-            # store derivative wrt to ladj
-            node.ladj_grad = 1/node.input_value +
-                node.y * node.left_child.ladj_grad + (1 - node.y) * node.right_child.ladj_grad
-            if isnan(node.ladj_grad)
-                node.ladj_grad = 0.0
-            end
-
-            if node.input_value == 0.0
-                node.grad = Inf
             end
 
             k -= 1

@@ -16,7 +16,6 @@ type HClustNode
 
     subtree_size::Int32
 
-    y::Float64
     input_value::Float64
     grad::Float32
     ladj_grad::Float32
@@ -85,16 +84,6 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode,
                 merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{Int32},
                 queue, queue_idxs, K)
 
-    idxs = [17915]
-    if (a.root.j in idxs) || (b.root.j in idxs)
-        @show (a.root.j, b.root.j, distance(a, b), length(a.vs), length(b.vs))
-    end
-
-    # if a.root.j != 0 && b.root.j != 0
-    #     println("merge: ", a.root.j, " ", b.root.j)
-    #     @show (distance(a, b), length(a.is), length(b.is))
-    # end
-
     # if b has the larger array, let that be reused, and a's array be gced
     if length(b.vs) > length(a.vs)
         a.vs, b.vs = b.vs, a.vs
@@ -159,11 +148,6 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode,
 
     @assert k == merged_size + 1
 
-    if !issorted(a.is)
-        @show a.is
-        @show b.is
-    end
-
     @assert issorted(a.is)
 
     node = HClustNode(a.root, b.root)
@@ -209,57 +193,28 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     d = 0.0f0
     i = 1
     j = 1
-    intersection_size = 0
-    union_size = 0
     while i <= length(a.vs) && j <= length(b.vs)
         if a.is[i] < b.is[j]
             d += 1
-            # d += a.vs[i]^2
-            # d += a.vs[i]
-            # union_size += 1
             i += 1
         elseif a.is[i] > b.is[j]
-            d += 1
-            # d += b.vs[j]^2
-            # d += b.vs[j]
-            # union_size += 1
+            d -= 1
             j += 1
         else
             has_shared = true
             d += (a.vs[i] - b.vs[j]) / (a.vs[i] + b.vs[j])
-            # d += (a.vs[i] - b.vs[j])^2
-            # d += abs(a.vs[i] - b.vs[j])
-            intersection_size += 1
-            # union_size += 1
             i += 1
             j += 1
         end
     end
 
     d += length(a.vs) - i + 1
-    # union_size += length(a.vs) - i + 1
-    # while i <= length(a.vs)
-    #     # d += a.vs[i]^2
-    #     # d += a.vs[i]
-    #     union_size += 1
-    #     i += 1
-    # end
-
     d -= length(b.vs) - j + 1
-    # union_size += length(b.vs) - j + 1
-    # while j <= length(b.vs)
-    #     # d += b.vs[j]^2
-    #     # d += b.vs[j]
-    #     union_size += 1
-    #     j += 1
-    # end
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
-    # d = -intersection_size / union_size
     noise = 1f-20 * rand()
     return Float32(abs(d) + noise)
-    # return Float32(noise)
 end
 
 
@@ -371,8 +326,6 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
     end
     nodes = nodes[sortperm(medreadidx)]
 
-    # @show medreadidx[1:20]
-
     # turn nodes into a linked list
     for i in 2:n
         nodes[i].left = nodes[i-1]
@@ -402,7 +355,6 @@ function hclust(X::SparseMatrixRSB)
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
     K = 5
-    # K = 100
     queue, queue_idxs = hclust_initalize(X, n, K)
 
     merge_buffer_v = Float32[]
@@ -410,8 +362,7 @@ function hclust(X::SparseMatrixRSB)
 
     steps = 0
     merge_count = 0
-    # Profile.start_timer()
-    # prog = Progress(n-1, 0.25, "Clustering transcripts ", 60)
+    prog = Progress(n-1, 0.25, "Clustering transcripts ", 60)
     while true
         steps += 1
         d, a, b = pop!(queue)
@@ -425,14 +376,10 @@ function hclust(X::SparseMatrixRSB)
 
         ab = merge!(a, b, merge_buffer_v, merge_buffer_i, queue, queue_idxs, K)
         merge_count += 1
-        # next!(prog)
+        next!(prog)
 
         # all trees have been merged
         if ab.left === ab && ab.right === ab
-            # @show (n, steps, merge_count)
-            # Profile.stop_timer()
-            # Profile.print()
-            # exit()
             return ab.root
         end
 
@@ -520,7 +467,6 @@ end
 function HSBTransform(X::SparseMatrixRSB)
     m, n = size(X)
     root = hclust(X)
-    @show maxdepth(root)
     nodes = order_nodes(root, n)
     return HSBTransform(nodes)
 end
@@ -585,43 +531,22 @@ function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
             continue
         end
 
-        # @show node.input_value
-
-        # @assert 0.0f0 <= node.input_value <= 1.0f0
-        # @assert 0.0f0 <= ys[k] <= 1.0f0
         @assert node.left_child !== node
         @assert node.right_child !== node
 
-        # bias so that uniform ys[k] = 0.5 for all k will lead to uniform split
-        yk = ys[k]
-        nl = Float64(node.left_child.subtree_size)
-        nr = Float64(node.right_child.subtree_size)
-        # node.y = yk * nl / (yk * nl + (1 - yk) * nr)
-        node.y = yk
-
-        node.left_child.input_value = node.y * node.input_value
-        node.right_child.input_value = (1 - node.y) * node.input_value
+        node.left_child.input_value = ys[k] * node.input_value
+        node.right_child.input_value = (1 - ys[k]) * node.input_value
 
         if !GRADONLY
-            # log jacobian determinant term for uniformity biasing
-            # ladj += log(nl) + log(nr) - 2*log(yk * nl + (1 - yk) * nr)
-
             # log jacobian determinant term for stick breaking
             ladj += log(node.input_value)
-            if !isfinite(ladj)
-                @show node.parent.input_value
-                @show node.parent.y
-                @show yk
-                @show node.input_value
-                exit()
-            end
         end
 
         k += 1
     end
     @assert k == length(ys) + 1
-
     @assert isfinite(ladj)
+
     return ladj
 end
 
@@ -639,57 +564,19 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             node.ladj_grad = 1.0f0
         else
             yk = ys[k]
-            nl = Float64(node.left_child.subtree_size)
-            nr = Float64(node.right_child.subtree_size)
-            # denom = yk * nl + (1 - yk) * nr
-            # dy_dyk = (nl / denom) * (nr / denom)
-            dy_dyk = 1.0
-            @assert dy_dyk > 0.0f0
 
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
-            y_grad[k] = dy_dyk * node.input_value *
+            y_grad[k] = node.input_value *
                 ((node.left_child.grad + node.left_child.ladj_grad) -
                  (node.right_child.grad + node.right_child.ladj_grad))
 
-
-            # derivatives of log jacobian determinant for uniformity biasing
-            # y_grad[k] -= 2 * (nl - nr) / (yk * nl + (1 - yk) * nr)
-
             # store derivative wrt this nodes input_value
-            node.grad = node.y * node.left_child.grad + (1 - node.y) * node.right_child.grad
-            # if isnan(node.grad)
-            #     node.grad = 0.0
-            # end
+            node.grad = ys[k] * node.left_child.grad + (1 - ys[k]) * node.right_child.grad
 
             # store derivative wrt to ladj
             node.ladj_grad = 1/node.input_value +
-                node.y * node.left_child.ladj_grad + (1 - node.y) * node.right_child.ladj_grad
-            # if isnan(node.ladj_grad)
-            #     node.ladj_grad = 0.0
-            # end
-
-            # if node.input_value == 0.0
-            #     node.grad = Inf
-            # end
-
-
-            if !isfinite(y_grad[k]) || !isfinite(node.grad) || !isfinite(node.ladj_grad)
-                println("============================")
-                @show yk
-                @show node.y
-                @show ((node.left_child.grad + node.left_child.ladj_grad) -
-                 (node.right_child.grad + node.right_child.ladj_grad))
-                @show node.input_value
-                @show node.left_child.grad
-                @show node.left_child.ladj_grad
-                @show node.right_child.grad
-                @show node.right_child.ladj_grad
-                @show node.left_child.input_value
-                @show node.right_child.input_value
-                println("============================")
-                exit()
-            end
+                ys[k] * node.left_child.ladj_grad + (1 - ys[k]) * node.right_child.ladj_grad
 
             k -= 1
         end

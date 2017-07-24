@@ -231,41 +231,16 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
 
     num_steps = 500
 
-    # initial learning rate
-
     # good settings for exponential decay
     initial_adam_learning_rate = 1.0
     adam_learning_rate_decay = 2e-2
 
-    # good settings for exponential decay
-    # initial_adam_learning_rate = 1.0
-    # adam_learning_rate_decay = 0.975
-
-
-    # adam_learning_rate_decay = 4e-5
-    # adam_learning_rate_decay = 4e-5
-
-
-    # adam_learning_rate_decay = 0.99
-    # adam_learning_rate_decay = 1.0
     adam_learning_rate = initial_adam_learning_rate
 
-    # num_steps = 1000
-    # adam_learning_rate = 0.2
-    # adam_learning_rate_decay = 3e-6
-
-    # epsilon
     adam_eps = 1e-8
 
-    # resistance
-    # adam_rv = 0.9
-    # adam_rm = 0.999
-    # adam_rv = 0.8
-    # adam_rm = 0.9
     adam_rv = 0.7
     adam_rm = 0.8
-    # adam_rv = 0.1
-    # adam_rm = 0.1
 
     # gradient running mean
     m_α = Array{Float32}(n-1)
@@ -278,8 +253,6 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
     # step size clamp
     ss_max_α_step = 1e-1
     ss_max_β_step = 1e-1
-
-    # srand(43241)
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
@@ -298,10 +271,8 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
     xs = Array{Float32}(n)
 
     # log transformed kumaraswamy parameters
-    # αs = zeros(Float32, n-1)
-    # βs = zeros(Float32, n-1)
-    αs = fill(log(10f0), n-1)
-    βs = fill(log(921.7f0), n-1)
+    αs = zeros(Float32, n-1)
+    βs = zeros(Float32, n-1)
 
     as = Array{Float32}(n-1) # exp(αs)
     bs = Array{Float32}(n-1) # exp(βs)
@@ -342,9 +313,7 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
             nr = node.right_child.subtree_size
 
             mean = max(min(nl / (nl + nr), 0.99), 0.01)
-            # var = max(0.001, 1 / (nl + nr)) # TODO: totally ad-hoc
             var = 0.00001
-            # @show (mean, var)
 
             αs[k], βs[k] = kumaraswamy_fit_median_var(mean, var)
 
@@ -352,30 +321,6 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
         end
     end
     toc()
-
-    @show extrema(αs)
-    @show extrema(βs)
-
-    # I, J, V = findnz(s.X)
-    # X = sparse(I, J, V, m, n)
-    # count1 = 0
-    # count2 = 0
-    # rs = Set()
-    # for (i, j, v) in zip(I, J, V)
-    #     if j == 1450
-    #         count1 += 1
-    #         push!(rs, i)
-    #     elseif j == 1451
-    #         count2 += 1
-    #         push!(rs, i)
-    #     end
-    # end
-
-    # for r in rs
-    #     @show (r, s.X[r,1450], s.X[r,1451])
-    # end
-
-    # exit()
 
     tic()
 
@@ -391,7 +336,6 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
             bs[i] = exp(βs[i])
         end
 
-        println("-----------------------------------------------")
         eps = 1e-10
 
         for _ in 1:num_mc_samples
@@ -405,10 +349,8 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
 
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work, Val{GRADONLY})  # z -> y
             ys = clamp!(ys, eps, 1 - eps)
-            @show extrema(ys)
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, eps, 1 - eps)
-            @show extrema(xs)
 
             lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad,
                                 Val{GRADONLY})
@@ -417,89 +359,12 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
             kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
 
-
-
-            idx = 17915
-            @show xs[idx]
-            @show x_grad[idx]
-            k = 1
-            for node in t.nodes
-                if node.j == 0
-                    if node.left_child.j == idx
-                        @show (node.left_child.grad, node.right_child.grad)
-                        @show (node.input_value, ys[k], y_grad[k], a_grad[k], b_grad[k])
-                        break
-                    elseif node.right_child.j == idx
-                        @show (node.left_child.grad, node.right_child.grad)
-                        @show (node.input_value, 1 - ys[k], y_grad[k], a_grad[k], b_grad[k])
-                        break
-                    end
-                    k += 1
-                end
-            end
-
-
-
-            # @show ys[1]
-            # @show y_grad[1]
-            # @show αs[1]
-            # @show βs[1]
-            # @show α_grad[1]
-            # @show β_grad[1]
-
             # adjust for log transform and accumulate
             for i in 1:n-1
                 α_grad[i] += as[i] * a_grad[i]
                 β_grad[i] += bs[i] * b_grad[i]
             end
-
-            # Checking gradients
-            #=
-            eps = 1e-5
-            # for idx in [1450, 1451]
-            for idx in [rand(1:n-1), rand(1:n-1)]
-            # for idx in [136504]
-            # for idx in [1]
-                ys_idx = ys[idx]
-                ys[idx] += eps
-
-                hsp_ladj_ = hsb_transform!(t, ys, xs, Val{false})      # y -> x
-                lp_ = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad,
-                                     Val{false})
-
-                f0 = lp + hsp_ladj
-                f = lp_ + hsp_ladj_
-
-                # f0 = lp
-                # f = lp_
-
-                @show (idx, xs[idx], f0, f, y_grad[idx], (f - f0) / eps)
-
-                ys[idx] = ys_idx
-            end
-            =#
-
-            # XXX: inspecting a bad failure
-        #     idx = 1450
-        #     @show xs[idx]
-        #     for (i, node) in enumerate(t.nodes)
-        #         if node.j == idx
-        #             u = node
-        #             while true
-        #                 @show (u.input_value, u.y, u.grad)
-        #                 if u.parent === u
-        #                     break
-        #                 end
-        #                 u = u.parent
-        #             end
-
-        #             break
-        #         end
-        #     end
         end
-
-        @show sum(isfinite.(α_grad))
-        @show sum(isfinite.(β_grad))
 
         for i in 1:n-1
             α_grad[i] /= num_mc_samples
@@ -514,8 +379,6 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
 
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
-        # @printf("\e[F\e[JOptimizing ELBO: %.6e\n", elbo)
-        # @printf("Optimizing ELBO: %.4e\n", elbo)
 
         if step_num == 1
                 m_α[:] = α_grad
@@ -551,20 +414,13 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
             βs[i] += clamp(delta, -ss_max_β_step, ss_max_β_step)
         end
 
-        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
-
-
         # exp decay
         adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
 
+        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
+
         # step decay
         # adam_learning_rate = initial_adam_learning_rate * adam_learning_rate_decay ^ step_num
-
-        # adam_learning_rate *= adam_learning_rate_decay
-        @show extrema(αs)
-        @show extrema(βs)
-        @show adam_learning_rate
-        @show max_delta
 
         next!(prog)
     end

@@ -54,7 +54,6 @@ function kumaraswamy_transform!{GRADONLY}(as::Vector, bs::Vector,
 
         c = 1 - (1 - z)^ib
         ys[i] = c^ia
-        # ys[i] = min(1.0f0 - eps(Float32), max(eps(Float32), ys[i]))
 
         # ladj term
         if !GRADONLY
@@ -176,12 +175,8 @@ function kumaraswamy_fit_median_var(med, var)
     J = Array{Float64}(2, 2)
     f = Array{Float64}(2)
 
-    # ab[1] = log(10.0)
-    # ab[2] = log(921.7)
     ab[1] = 1.0
     ab[2] = 1.0
-
-    @show (med, var)
 
     for _ in 1:20
         a, b = exp(ab[1]), exp(ab[2])

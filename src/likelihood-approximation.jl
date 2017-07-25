@@ -226,6 +226,7 @@ end
 function approximate_likelihood{GRADONLY}(s::RNASeqSample,
                                           ::Type{Val{GRADONLY}}=Val{true})
     m, n = size(s)
+    Xt = transpose(s.X)
 
     model = Model(m, n)
 
@@ -349,10 +350,11 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
 
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work, Val{GRADONLY})  # z -> y
             ys = clamp!(ys, eps, 1 - eps)
+
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, eps, 1 - eps)
 
-            lp = log_likelihood(model, s.X, s.effective_lengths, xs, x_grad,
+            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
                                 Val{GRADONLY})
             elbo = lp + kum_ladj + hsb_ladj
 

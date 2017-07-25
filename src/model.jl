@@ -50,7 +50,7 @@ end
 
 
 # assumes a flat prior on π
-function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad,
+function log_likelihood{GRADONLY}(model::Model, X, Xt, effective_lengths, xs, x_grad,
                                   ::Type{Val{GRADONLY}})
     frag_probs = model.frag_probs
     ws = model.ws
@@ -76,7 +76,7 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     end
 
     # conditional fragment probabilities
-    A_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), X, ws)
+    pAt_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), Xt, ws)
     for k in m+1:length(frag_probs)
         frag_probs[k] = 1.0f0
     end
@@ -85,7 +85,7 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     lp = log_likelihood_loop1(frag_probs, model.log_frag_probs, m, Val{GRADONLY})
 
     # compute df / dw (where w is effective length weighted mixtures)
-    At_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
+    pAt_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))
 
     # compute df / dx
     # x_grad[i] now holds df/dw_i where w is the the effective length
@@ -97,37 +97,9 @@ function log_likelihood{GRADONLY}(model::Model, X, effective_lengths, xs, x_grad
     end
 
     for i in 1:n-1
-        if !isfinite(x_grad[i])
-            println("============================")
-            println("A")
-            @show effective_lengths[i]
-            @show effective_lengths[n]
-            @show extrema(frag_probs)
-            @show x_grad[i]
-            @show x_grad[n]
-            @show scaled_simplex_sum
-            @show xs[i]
-            exit()
-            println("============================")
-        end
-
         x_grad[i] = (effective_lengths[i] / scaled_simplex_sum) * x_grad[i] -
                     (effective_lengths[n] / scaled_simplex_sum) * x_grad[n] -
                     (effective_lengths[i] - effective_lengths[n]) * c
-
-        if !isfinite(x_grad[i])
-            println("============================")
-            println("B")
-            @show effective_lengths[i]
-            @show effective_lengths[n]
-            @show extrema(frag_probs)
-            @show x_grad[i]
-            @show x_grad[n]
-            @show scaled_simplex_sum
-            @show xs[i]
-            exit()
-            println("============================")
-        end
     end
     x_grad[n] = 0.0
 

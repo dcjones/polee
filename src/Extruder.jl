@@ -13,17 +13,18 @@ using HATTries
 using HDF5
 using ProgressMeter
 using PyCall
-using RecursiveSparseBlocks
 using SQLite
 using StatsBase
 import SHA
 import YAML
+
 # import TensorFlow
 
 include("fastmath.jl")
 using .FastMath
 
 include("constants.jl")
+include("sparse.jl")
 include("transcripts.jl")
 include("reads.jl")
 include("bias.jl")

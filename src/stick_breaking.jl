@@ -6,7 +6,7 @@
 # Node in the completed tree
 type HClustNode
     # 0 if internal node, >1 for child nodes giving the transcript index
-    j::Int32
+    j::UInt32
 
     # self-loop used to indicate no children
     left_child::HClustNode
@@ -55,7 +55,7 @@ end
 type SubtreeListNode
     # sparse vector contaaining probabilities or averaged probabilities
     vs::Vector{Float32}
-    is::Vector{Int32}
+    is::Vector{UInt32}
     root::HClustNode
 
     # used to mark nodes that have already been merged so they
@@ -64,7 +64,7 @@ type SubtreeListNode
     left::SubtreeListNode
     right::SubtreeListNode
 
-    function (::Type{SubtreeListNode})(vs::Vector{Float32}, is::Vector{Int32},
+    function (::Type{SubtreeListNode})(vs::Vector{Float32}, is::Vector{UInt32},
                                   root::HClustNode)
         node = new(vs, is, root, false)
         node.left = node
@@ -81,7 +81,7 @@ end
 
 
 function merge!(a::SubtreeListNode, b::SubtreeListNode,
-                merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{Int32},
+                merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{UInt32},
                 queue, queue_idxs, K)
 
     # if b has the larger array, let that be reused, and a's array be gced
@@ -282,7 +282,7 @@ function update_distances!(queue, queue_idxs, a, K)
 end
 
 
-function hclust_initalize(X::SparseMatrixRSB, n, K)
+function hclust_initalize(X::SparseMatrixCSC, n, K)
     # construct nodes
     I, J, V = findnz(X)
     p = sortperm(J)
@@ -296,7 +296,7 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
     nodes = Array{SubtreeListNode}(n)
     while j <= n && k <= length(J)
         if j < J[k]
-            nodes[j] = SubtreeListNode(Float32[], Int32[], HClustNode(j))
+            nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j))
             j += 1
         elseif j > J[k]
             error("Error in clustering. This is a bug")
@@ -313,14 +313,14 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
     end
 
     while j <= n
-        nodes[j] = SubtreeListNode(Float32[], Int32[], HClustNode(j))
+        nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j))
         j += 1
     end
     toc() # 0.6 seconds
 
     # order nodes by median compatible read index to group transcripts that
     # tend to share a lot of reads
-    medreadidx = Array{Int32}(n)
+    medreadidx = Array{UInt32}(n)
     for (j, node) in enumerate(nodes)
         medreadidx[j] = isempty(nodes[j].is) ? 0 : nodes[j].is[div(length(nodes[j].is) + 1, 2)]
     end
@@ -347,7 +347,7 @@ function hclust_initalize(X::SparseMatrixRSB, n, K)
 end
 
 
-function hclust(X::SparseMatrixRSB)
+function hclust(X::SparseMatrixCSC)
 
     srand(102030310)
 
@@ -358,7 +358,7 @@ function hclust(X::SparseMatrixRSB)
     queue, queue_idxs = hclust_initalize(X, n, K)
 
     merge_buffer_v = Float32[]
-    merge_buffer_i = Int32[]
+    merge_buffer_i = UInt32[]
 
     steps = 0
     merge_count = 0
@@ -464,7 +464,7 @@ function order_nodes(root::HClustNode, n)
 end
 
 
-function HSBTransform(X::SparseMatrixRSB)
+function HSBTransform(X::SparseMatrixCSC)
     m, n = size(X)
     root = hclust(X)
     nodes = order_nodes(root, n)
@@ -563,8 +563,6 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             node.grad = x_grad[node.j]
             node.ladj_grad = 1.0f0
         else
-            yk = ys[k]
-
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
             y_grad[k] = node.input_value *

@@ -517,6 +517,10 @@ function rand_hsb_tree(n)
 end
 
 
+# TODO: We could likely make these functions fatser if we store everything in
+# flat arrays rather than in node types.
+# We just need the following arrays, then we can throw away the actual tree.
+# left_child, right_child, input_value, grad, and ladj_grad
 function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
                                   ::Type{Val{GRADONLY}})
     nodes = t.nodes

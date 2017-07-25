@@ -17,8 +17,8 @@ end
 function Model(m, n)
     return Model(Int(m), Int(n),
                  Vector{Float32}(n),
-                 fillpadded(FloatVec, 0.0f0, m, 1.0f0),
-                 fillpadded(FloatVec, 0.0f0, m, 1.0f0))
+                 Vector{Float32}(m),
+                 Vector{Float32}(m))
 end
 
 
@@ -64,9 +64,6 @@ function log_likelihood{GRADONLY}(model::Model, X, Xt, effective_lengths, xs, x_
 
     # conditional fragment probabilities
     pAt_mul_B!(unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false), Xt, ws)
-    for k in m+1:length(frag_probs)
-        frag_probs[k] = 1.0f0
-    end
 
     # log likelihood
     lp = 0.0

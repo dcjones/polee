@@ -20,9 +20,6 @@ import YAML
 
 # import TensorFlow
 
-include("fastmath.jl")
-using .FastMath
-
 include("constants.jl")
 include("sparse.jl")
 include("transcripts.jl")

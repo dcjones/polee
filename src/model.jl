@@ -22,30 +22,17 @@ function Model(m, n)
 end
 
 
-# function log_likelihood_loop1(frag_probs_v)
-#     lpv = fill(fill(FloatVec, 0.0f0), Threads.nthreads())
-#     Threads.@threads for i in 1:length(frag_probs_v)
-#         lpv[Threads.threadid()] += log(frag_probs_v[i])
-#         frag_probs_v[i] = inv(frag_probs_v[i])
-#     end
-#     ans = 0.0
-#     for v in lpv
-#         ans += sum(v)
-#     end
-#     return ans
-# end
-
-
-function log_likelihood_loop1{GRADONLY}(frag_probs::Vector{Float32},
-                                        log_frag_probs::Vector{Float32}, m,
-                                        ::Type{Val{GRADONLY}})
+function log!{T}(ys::Vector{T}, xs::Vector{T}, m)
     Threads.@threads for i in 1:m
-        if !GRADONLY
-            log_frag_probs[i] = log(frag_probs[i])
-        end
-        frag_probs[i] = inv(frag_probs[i])
+        ys[i] = log(xs[i])
     end
-    return sum(log_frag_probs)
+end
+
+
+function inv!{T}(xs::Vector{T}, m)
+    Threads.@threads for i in 1:m
+        xs[i] = one(T) / xs[i]
+    end
 end
 
 
@@ -82,7 +69,12 @@ function log_likelihood{GRADONLY}(model::Model, X, Xt, effective_lengths, xs, x_
     end
 
     # log likelihood
-    lp = log_likelihood_loop1(frag_probs, model.log_frag_probs, m, Val{GRADONLY})
+    lp = 0.0
+    if !GRADONLY
+        log!(model.log_frag_probs, frag_probs, m)
+        lp = sum(model.log_frag_probs)
+    end
+    inv!(frag_probs, m)
 
     # compute df / dw (where w is effective length weighted mixtures)
     pAt_mul_B!(x_grad, X, unsafe_wrap(Vector{Float32}, pointer(frag_probs), m, false))

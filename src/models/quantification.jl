@@ -15,8 +15,42 @@ end
 
 
 function estimate_transcript_expression(input::ModelInput)
-    qy_mu_value, qy_sigma_value =
-        estimate_expression(input.likapprox_data, input.y0, input.sample_factors)
+    num_samples, n = input.x0[:get_shape]()[:as_list]()
+    x, x_mu_param, x_sigma_param, x_mu, likapprox_ab =
+        transcript_quantification_model(input)
+
+    println("Estimating...")
+
+    qx_mu_param = tf.Variable(input.x0)
+    qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
+    qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
+
+    qx_mu_mu_param = tf.Variable(input.x0[1])
+    qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
+    qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
+
+    inference = ed.KLqp(PyDict(Dict(x => qx, x_mu => qx_mu)),
+                        data=PyDict(Dict(likapprox_ab => input.likapprox_ab)))
+
+    optimizer = tf.train[:AdamOptimizer](1e-2)
+    #optimizer = tf.train[:MomentumOptimizer](1e-3, 0.99)
+    inference[:run](n_iter=250, optimizer=optimizer)
+
+    sess = ed.get_session()
+    qx_mu_value    = sess[:run](qx_mu_param)
+    qx_sigma_value = sess[:run](qx_sigma_param)
+
+    # reset session and graph to free up memory
+    tf.reset_default_graph()
+    old_sess = ed.get_session()
+    old_sess[:close]()
+    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
+
+    @show minimum(qx_mu_value), median(qx_mu_value), maximum(qx_mu_value)
+    @show minimum(qx_sigma_value), median(qx_sigma_value), maximum(qx_sigma_value)
+    exit()
+
+    return qx_mu_value, qx_sigma_value
 end
 
 
@@ -210,34 +244,37 @@ function estimate_splicing_log_ratio(input::ModelInput)
 end
 
 
-function transcript_quantification_model(likapprox_data, y0)
-    num_samples, n = y0[:get_shape]()[:as_list]()
+function transcript_quantification_model(input::ModelInput)
+    num_samples, n = input.x0[:get_shape]()[:as_list]()
 
     # y_mu: pooled mean
-    y_mu_mu0 = tf.constant(log(1/n), shape=[n])
-    y_mu_sigma0 = tf.constant(10.0, shape=[n])
-    y_mu = edmodels.MultivariateNormalDiag(y_mu_mu0, y_mu_sigma0)
+    x_mu_mu0 = tf.constant(log(1/n), shape=[n])
+    x_mu_sigma0 = tf.constant(10.0, shape=[n])
+    x_mu = edmodels.MultivariateNormalDiag(x_mu_mu0, x_mu_sigma0)
 
-    # y_sigma: variance around pooled mean
-    y_sigma_mu0 = tf.constant(0.0, shape=[n])
-    y_sigma_sigma0 = tf.constant(0.2, shape=[n])
-    y_log_sigma = edmodels.MultivariateNormalDiag(y_sigma_mu0, y_sigma_sigma0)
-    y_sigma = tf.exp(y_log_sigma)
+    # x_sigma: variance around pooled mean
+    x_sigma_mu0 = tf.constant(0.0, shape=[n])
+    x_sigma_sigma0 = tf.constant(0.2, shape=[n])
+    x_log_sigma = edmodels.MultivariateNormalDiag(x_sigma_mu0, x_sigma_sigma0)
+    x_sigma = tf.exp(x_log_sigma)
 
     # y: quantification
-    y_mu_param = tf.matmul(tf.ones([num_samples, 1]),
-                           tf.expand_dims(y_mu, 0))
+    x_mu_param = tf.matmul(tf.ones([num_samples, 1]),
+                           tf.expand_dims(x_mu, 0))
 
-    y_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
-                              tf.expand_dims(y_sigma, 0))
-    y_sigma_param = tf.Print(y_sigma_param, [tf.reduce_min(y_sigma_param), tf.reduce_max(y_sigma_param)], "Y_SIGMA SPAN")
+    x_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
+                              tf.expand_dims(x_sigma, 0))
+    # y_sigma_param = tf.Print(y_sigma_param, [tf.reduce_min(y_sigma_param), tf.reduce_max(y_sigma_param)], "Y_SIGMA SPAN")
 
-    y = edmodels.MultivariateNormalDiag(y_mu_param, y_sigma_param)
+    x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
 
-    likapprox = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                  y=y, value=likapprox_data)
+    likapprox_ab = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+                    x=x,
+                    node_parent_idxs=input.likapprox_parent_idxs,
+                    node_js=input.likapprox_js,
+                    value=input.likapprox_ab)
 
-    return y, y_mu_param, y_sigma_param, y_mu, likapprox
+    return x, x_mu_param, x_sigma_param, x_mu, likapprox_ab
 end
 
 
@@ -346,44 +383,6 @@ function estimate_feature_expression(likapprox_data, y0, sample_factors, feature
     return qy_mu_value, qy_sigma_value
 end
 
-
-function estimate_expression(likapprox_data, y0, sample_factors)
-    num_samples, n = y0[:get_shape]()[:as_list]()
-    y, y_mu_param, y_sigma_param, y_mu, likapprox = transcript_quantification_model(likapprox_data, y0)
-
-    println("Estimating...")
-
-    qy_mu_param = tf.Variable(y0)
-    qy_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
-    qy = edmodels.MultivariateNormalDiag(qy_mu_param, qy_sigma_param)
-
-    qy_mu_mu_param = tf.Variable(y0[1])
-    qy_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
-    qy_mu = edmodels.MultivariateNormalDiag(qy_mu_mu_param, qy_mu_sigma_param)
-
-    inference = ed.KLqp(PyDict(Dict(y => qy, y_mu => qy_mu)),
-                        data=PyDict(Dict(likapprox => likapprox_data)))
-
-    optimizer = tf.train[:AdamOptimizer](1e-2)
-    #optimizer = tf.train[:MomentumOptimizer](1e-3, 0.99)
-    inference[:run](n_iter=250, optimizer=optimizer)
-
-    sess = ed.get_session()
-    qy_mu_value    = sess[:run](qy_mu_param)
-    qy_sigma_value = sess[:run](qy_sigma_param)
-
-    # reset session and graph to free up memory
-    tf.reset_default_graph()
-    old_sess = ed.get_session()
-    old_sess[:close]()
-    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
-
-    @show minimum(qy_mu_value), median(qy_mu_value), maximum(qy_mu_value)
-    @show minimum(qy_sigma_value), median(qy_sigma_value), maximum(qy_sigma_value)
-    exit()
-
-    return qy_mu_value, qy_sigma_value
-end
 
 
 EXTRUDER_MODELS["expression"] = estimate_expression

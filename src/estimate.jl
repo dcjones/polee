@@ -17,13 +17,57 @@ function load_samples_from_specification(experiment_spec_filename, ts_metadata)
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    n, likapprox_data, y0 = load_samples(filenames, ts_metadata)
+    likapprox_ab, likapprox_parent_idxs, likapprox_js, x0 = load_samples(filenames, ts_metadata)
     println("Sample data loaded")
 
-    return likapprox_data, y0, sample_factors, names
+    return (likapprox_ab, likapprox_parent_idxs, likapprox_js, x0, sample_factors, names)
 end
 
 
+function load_samples(filenames, ts_metadata)
+    ab_tensors = []
+    x0_tensors = []
+    node_parent_idxs_tensors = []
+    node_js_tensors = []
+
+    for filename in filenames
+        input = h5open(filename, "r")
+
+        n = read(input["n"])
+
+        αs = read(input["alpha"])
+        βs = read(input["beta"])
+
+        node_parent_idxs = read(input["node_parent_idxs"])
+        node_js = read(input["node_js"])
+
+        as = exp.(αs)
+        bs = exp.(βs)
+
+        # choose kumaraswamy median as initial value
+        y0 = Array{Float32}(n-1)
+        x0 = Array{Float32}(n)
+        for i in 1:n-1
+            y0[i] = (1 - 2^(-1/bs[i]))^(1/as[i])
+        end
+        t = HSBTransform(node_parent_idxs, node_js)
+        hsb_transform!(t, y0, x0, Val{true})
+        push!(x0_tensors, x0)
+
+        tf_a = tf.constant(as)
+        tf_b = tf.constant(bs)
+        tf_ab = tf.stack([tf_a, tf_b])
+        push!(ab_tensors, tf_ab)
+        push!(node_parent_idxs_tensors, node_parent_idxs)
+        push!(node_js_tensors, node_js)
+    end
+
+    return (tf.stack(ab_tensors), hcat(node_parent_idxs_tensors...),
+            hcat(node_js_tensors...), tf.stack(x0_tensors))
+end
+
+
+#=
 function load_samples(filenames, ts_metadata)
     n = nothing
 
@@ -87,11 +131,14 @@ function load_samples(filenames, ts_metadata)
 
     return (n, musigma, y0)
 end
+=#
 
 
 immutable ModelInput
-    likapprox_data::PyCall.PyObject
-    y0::PyCall.PyObject
+    likapprox_ab::PyCall.PyObject
+    likapprox_parent_idxs::Array
+    likapprox_js::Array
+    x0::PyCall.PyObject
     sample_factors::Vector{Vector{String}}
     sample_names::Vector{String}
     feature::Symbol

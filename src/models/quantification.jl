@@ -21,7 +21,7 @@ function estimate_transcript_expression(input::ModelInput)
 
     println("Estimating...")
 
-    qx_mu_param = tf.Variable(input.x0)
+    qx_mu_param = tf.Variable(tf.log(input.x0))
     qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
     qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
 
@@ -33,7 +33,7 @@ function estimate_transcript_expression(input::ModelInput)
                         data=PyDict(Dict(likapprox_ab => input.likapprox_ab)))
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    #optimizer = tf.train[:MomentumOptimizer](1e-3, 0.99)
+    # optimizer = tf.train[:MomentumOptimizer](1e-7, 0.8)
     inference[:run](n_iter=250, optimizer=optimizer)
 
     sess = ed.get_session()

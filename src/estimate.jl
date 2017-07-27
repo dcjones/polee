@@ -45,14 +45,21 @@ function load_samples(filenames, ts_metadata)
         bs = exp.(βs)
 
         # choose kumaraswamy median as initial value
-        y0 = Array{Float32}(n-1)
+        y0 = Array{Float64}(n-1)
         x0 = Array{Float32}(n)
         for i in 1:n-1
-            y0[i] = (1 - 2^(-1/bs[i]))^(1/as[i])
+            a = Float64(as[i])
+            b = Float64(bs[i])
+            y0[i] = (1 - 2^(-1/b))^(1/a)
         end
         t = HSBTransform(node_parent_idxs, node_js)
         hsb_transform!(t, y0, x0, Val{true})
         push!(x0_tensors, x0)
+
+        @show x0[1:10]
+        @show sum(x0)
+        @show y0[1:10]
+        @show y0[1]
 
         tf_a = tf.constant(as)
         tf_b = tf.constant(bs)

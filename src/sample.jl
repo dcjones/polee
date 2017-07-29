@@ -101,9 +101,8 @@ function RNASeqSample(transcripts_filename::String,
                       excluded_seqs::Set{String},
                       output=Nullable{String}())
 
-    ts, ts_metadata = Transcripts(transcripts_filename)
-    rs = Reads(reads_filename, excluded_seqs)
-    exit()
+    @time ts, ts_metadata = Transcripts(transcripts_filename)
+    @time rs = Reads(reads_filename, excluded_seqs)
     println("reading transcript sequences")
     read_transcript_sequences!(ts, genome_filename)
     println("done")
@@ -141,7 +140,6 @@ function RNASeqSample(transcripts_filename::String,
     parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
 
     toc()
-
     exit()
 
     # reassign indexes to remove any zero rows, which would lead to a

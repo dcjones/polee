@@ -58,7 +58,7 @@ end
 const AlignmentPair = Interval{AlignmentPairMetadata}
 
 
-function Base.isless(a::Alignment, b::Alignment)
+function group_alignments_isless(a::Alignment, b::Alignment)
     if a.refidx < b.refidx
         return true
     elseif a.refidx == b.refidx
@@ -121,11 +121,11 @@ end
 function Reads(filename::String, excluded_seqs::Set{String})
     if filename == "-"
         reader = BAM.Reader(STDIN)
-        prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
+        prog = Progress(0, 0.25, "Reading BAM file ", 60)
         from_file = false
     else
         reader = open(BAM.Reader, filename)
-        prog = Progress(0, 0.25, "Reading BAM file ", 60)
+        prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
         from_file = true
     end
     return Reads(reader, prog, from_file, excluded_seqs)
@@ -195,7 +195,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
             length(readnames), length(alignments))
 
     # group alignments into alignment pair intervals
-    @time sort!(alignments)
+    sort!(alignments, lt=group_alignments_isless)
 
     tic()
     # first partition alignments by reference sequence
@@ -213,18 +213,17 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     end
 
     trees = Array{GenomicFeatures.ICTree{AlignmentPairMetadata}}(length(blocks))
-    alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees, cigardata)
+    @time alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees, cigardata)
 
     return Reads(alignments, alignment_pairs, cigardata)
 end
 
 
 function make_interval_collection(alignments, seqnames, blocks, trees, cigardata)
-    # Threads.@threads for blockidx in 1:length(blocks)
-    for blockidx in 1:length(blocks)
+    Threads.@threads for blockidx in 1:length(blocks)
         block = blocks[blockidx]
         seqname = seqnames[alignments[block.start].refidx]
-        tree = GenomicFeatures.ICTree{AlignmentPairMetadata}()
+        alnprs = AlignmentPair[]
 
         i, j = block.start, block.start
         while i <= block.stop
@@ -272,7 +271,7 @@ function make_interval_collection(alignments, seqnames, blocks, trees, cigardata
                     alnpr = AlignmentPair(
                         seqname, minpos, maxpos, strand,
                         AlignmentPairMetadata(k1, k2))
-                    push!(tree, alnpr)
+                    push!(alnprs, alnpr)
                 end
             end
 
@@ -293,7 +292,7 @@ function make_interval_collection(alignments, seqnames, blocks, trees, cigardata
                     alnpr = AlignmentPair(
                         seqname, minpos, maxpos, strand,
                         AlignmentPairMetadata(k, 0))
-                    push!(tree, alnpr)
+                    push!(alnprs, alnpr)
                     alncnt += 1
                 end
             end
@@ -301,6 +300,8 @@ function make_interval_collection(alignments, seqnames, blocks, trees, cigardata
             i = j2 + 1
         end
 
+        sort!(alnprs, lt=IntervalTrees.basic_isless)
+        tree = GenomicFeatures.ICTree{AlignmentPairMetadata}(alnprs)
         trees[blockidx] = tree
     end
 

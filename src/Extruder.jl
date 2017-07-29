@@ -15,6 +15,7 @@ using ProgressMeter
 using PyCall
 using SQLite
 using StatsBase
+import IntervalTrees
 import SHA
 import YAML
 

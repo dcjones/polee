@@ -46,8 +46,8 @@ function sample_training_examples(rs::Reads, n::Int)
 end
 
 
-function FragModel(rs::Reads, ts::Transcripts, n::Int=50000,
-                   bias_upctx::Int=50, bias_downctx::Int=50)
+function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
+                   bias_upctx::Int=15, bias_downctx::Int=15)
     examples = sample_training_examples(rs, n)
 
     # TODO: positional bias

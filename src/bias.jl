@@ -27,7 +27,7 @@ function push_alignment_context!(
 
     tseq = t.metadata.seq
 
-    strand = ifelse(aln.flag & SAM_FLAG_REVERSE == 0, STRAND_POS, STRAND_NEG)
+    strand = ifelse(aln.flag & SAM.FLAG_REVERSE == 0, STRAND_POS, STRAND_NEG)
     pos = genomic_to_transcriptomic(t,
                 ifelse(strand == STRAND_POS, aln.leftpos, aln.rightpos))
     if pos < 1

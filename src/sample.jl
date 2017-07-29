@@ -40,13 +40,39 @@ function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, 
 
     # process pairs of trees in parallel
     mut = Threads.Mutex()
+    # Threads.@threads for treepair_idx in 1:length(treepairs)
+    # @profile for treepair_idx in 1:length(treepairs)
+    #     ts_tree, rs_tree = treepairs[treepair_idx]
+    #     for (t, alnpr) in intersect(ts_tree, rs_tree)
+    #         fragpr = condfragprob(fm, t, rs, alnpr,
+    #                               effective_lengths[t.metadata.id])
+    #         if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
+    #             i_ = alnpr.metadata.mate1_idx > 0 ?
+    #                     rs.alignments[alnpr.metadata.mate1_idx].id :
+    #                     rs.alignments[alnpr.metadata.mate2_idx].id
+    #             i = aln_idx_map[i_]
+
+    #             lock(mut)
+    #             push!(I, i)
+    #             push!(J, t.metadata.id)
+    #             push!(V, fragpr)
+    #             unlock(mut)
+    #         end
+    #     end
+    # end
+    parallel_intersection_loop_inner(treepairs, mut, rs, fm, effective_lengths, aln_idx_map, I, J, V)
+
+    # out = open("profile.txt", "w")
+    # Profile.print(out)
+    # close(out)
+end
+
+
+function parallel_intersection_loop_inner(treepairs, mut, rs, fm, effective_lengths, aln_idx_map, I, J, V)
     Threads.@threads for treepair_idx in 1:length(treepairs)
+    # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree)
-            # XXX: For testing purposes
-            # if t.metadata.id != 1450 && t.metadata.id != 1451
-            #     continue
-            # end
             fragpr = condfragprob(fm, t, rs, alnpr,
                                   effective_lengths[t.metadata.id])
             if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
@@ -77,6 +103,7 @@ function RNASeqSample(transcripts_filename::String,
 
     ts, ts_metadata = Transcripts(transcripts_filename)
     rs = Reads(reads_filename, excluded_seqs)
+    exit()
     println("reading transcript sequences")
     read_transcript_sequences!(ts, genome_filename)
     println("done")
@@ -115,6 +142,8 @@ function RNASeqSample(transcripts_filename::String,
 
     toc()
 
+    exit()
+
     # reassign indexes to remove any zero rows, which would lead to a
     # -Inf log likelihood
     p = sortperm(I)
@@ -135,9 +164,9 @@ function RNASeqSample(transcripts_filename::String,
 
     m = maximum(I)
     n = length(ts)
+    M = sparse(I, J, V, m, n)
 
     if !isnull(output)
-        M = sparse(I, J, V, m, n)
         h5open(get(output), "w") do out
             out["m"] = M.m
             out["n"] = M.n
@@ -152,8 +181,7 @@ function RNASeqSample(transcripts_filename::String,
         end
     end
 
-    return RNASeqSample(m, n, SparseMatrixRSB(I, J, V, m, n),
-                        effective_lengths, ts_metadata)
+    return RNASeqSample(m, n, M, effective_lengths, ts_metadata)
 end
 
 

@@ -17,9 +17,9 @@ end
 # SAM/BAM spec says pos should be the first matching position, which is hugely
 # inconvenient. We compute the actual start position here.
 function _leftposition(rec::BAM.Record)
-    pos = Align.leftposition(rec)
-    offset = Align.seqname_length(rec)
-    for i in offset+1:4:offset+Align.n_cigar_op(rec)*4
+    pos = leftposition(rec)
+    offset = BAM.seqname_length(rec)
+    for i in offset+1:4:offset+BAM.n_cigar_op(rec)*4
         x = unsafe_load(Ptr{UInt32}(pointer(rec.data, i)))
         op = Operation(x & 0x0f)
         if op != OP_MATCH
@@ -33,9 +33,9 @@ end
 
 
 function _alignment_length(rec::BAM.Record)
-    offset = Align.seqname_length(rec)
+    offset = BAM.seqname_length(rec)
     length::Int = 0
-    for i in offset+1:4:offset+Align.n_cigar_op(rec)*4
+    for i in offset+1:4:offset+BAM.n_cigar_op(rec)*4
         x = unsafe_load(Ptr{UInt32}(pointer(rec.data, i)))
         op = Operation(x & 0x0f)
         if ismatchop(op) || isdeleteop(op) || op == OP_SOFT_CLIP
@@ -65,10 +65,41 @@ function Base.isless(a::Alignment, b::Alignment)
         if a.id < b.id
             return true
         elseif a.id == b.id
-            return (a.flag & SAM_FLAG_READ2) < (b.flag & SAM_FLAG_READ2)
+            a_flag = a.flag & SAM.FLAG_READ2
+            b_flag = b.flag & SAM.FLAG_READ2
+
+            if a_flag == b_flag
+                return a.leftpos < b.leftpos
+            else
+                return a_flag < b_flag
+            end
+        else
+            return false
         end
     end
     return false
+end
+
+
+"""
+Check that alignments are equal except for presense/absense of the secondary alignment flag.
+"""
+function isequiv(cigardata, a::Alignment, b::Alignment)
+    if a.id != b.id  ||
+       a.refidx != b.refidx ||
+       a.leftpos != b.leftpos ||
+       (a.flag & (~SAM.FLAG_SECONDARY)) != (b.flag & (~SAM.FLAG_SECONDARY)) ||
+       length(a.cigaridx) != length(b.cigaridx)
+        return false
+    end
+
+    for (i, j) in zip(a.cigaridx, b.cigaridx)
+        if cigardata[i] != cigardata[j]
+            return false
+        end
+    end
+
+    return true
 end
 
 
@@ -118,7 +149,15 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     end
 
     i = 0
-    while !isnull(tryread!(reader, entry))
+    while !eof(reader)
+        try
+            read!(reader, entry)
+        catch ex
+            if isa(ex, EOFError)
+                break
+            end
+        end
+
         if from_file && (i += 1) % prog_step == 0
             ProgressMeter.update!(prog, position(reader.stream.io))
         end
@@ -133,8 +172,8 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
 
         # copy cigar data over if there are any non-match operations
         cigarptr = Ptr{UInt32}(pointer(
-                entry.data, 1 + Align.seqname_length(entry)))
-        cigarlen = Align.n_cigar_op(entry)
+                entry.data, 1 + BAM.seqname_length(entry)))
+        cigarlen = BAM.n_cigar_op(entry)
 
         N = UInt32(length(cigardata))
         cigaridx = N+1:N
@@ -145,7 +184,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
                          cigarptr, cigarlen)
         end
 
-        id = get!(readnames, Align.seqname(entry), length(readnames) + 1)
+        id = get!(readnames, BioAlignments.seqname(entry), length(readnames) + 1)
         push!(alignments, Alignment(id, entry.refid + 1,
                                     _leftposition(entry), _rightposition(entry),
                                     BAM.flag(entry), cigaridx))
@@ -174,14 +213,15 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     end
 
     trees = Array{GenomicFeatures.ICTree{AlignmentPairMetadata}}(length(blocks))
-    alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees)
+    alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees, cigardata)
 
     return Reads(alignments, alignment_pairs, cigardata)
 end
 
 
-function make_interval_collection(alignments, seqnames, blocks, trees)
-    Threads.@threads for blockidx in 1:length(blocks)
+function make_interval_collection(alignments, seqnames, blocks, trees, cigardata)
+    # Threads.@threads for blockidx in 1:length(blocks)
+    for blockidx in 1:length(blocks)
         block = blocks[blockidx]
         seqname = seqnames[alignments[block.start].refidx]
         tree = GenomicFeatures.ICTree{AlignmentPairMetadata}()
@@ -191,7 +231,7 @@ function make_interval_collection(alignments, seqnames, blocks, trees)
             j1 = i
             while j1 + 1 <= block.stop &&
                   alignments[i].id == alignments[j1+1].id &&
-                  (alignments[j1+1].flag & SAM_FLAG_READ2) == 0
+                  (alignments[j1+1].flag & SAM.FLAG_READ2) == 0
                 j1 += 1
             end
 
@@ -204,10 +244,20 @@ function make_interval_collection(alignments, seqnames, blocks, trees)
             # now i:j1 are mate1 alignments, and j1+1:j2 are mate2 alignments
 
             # examine every potential mate1, mate2 pair
+            alncnt = 0
             for k1 in i:j1
                 m1 = alignments[k1]
+
+                if k1 > i && isequiv(cigardata, m1, alignments[k1-1])
+                    continue
+                end
+
                 for k2 in j1+1:j2
                     m2 = alignments[k2]
+
+                    if k2 > j1+1 && isequiv(cigardata, m2, alignments[k2-1])
+                        continue
+                    end
 
                     minpos = min(m1.leftpos, m2.leftpos)
                     maxpos = max(m1.rightpos, m2.rightpos)
@@ -216,7 +266,7 @@ function make_interval_collection(alignments, seqnames, blocks, trees)
                         continue
                     end
 
-                    strand = m1.flag & SAM_FLAG_REVERSE != 0 ?
+                    strand = m1.flag & SAM.FLAG_REVERSE != 0 ?
                                 STRAND_NEG : STRAND_POS
 
                     alnpr = AlignmentPair(
@@ -230,11 +280,21 @@ function make_interval_collection(alignments, seqnames, blocks, trees)
             if isempty(j1+1:j2)
                 for k in i:j1
                     m = alignments[k]
-                    if m.flag & SAM_FLAG_READ1 != 0
+                    if m.flag & SAM.FLAG_READ1 != 0
                         continue
                     end
 
-                    # TODO
+                    minpos = m.leftpos
+                    maxpos = m.rightpos
+
+                    strand = m.flag & SAM.FLAG_REVERSE != 0 ?
+                                STRAND_NEG : STRAND_POS
+
+                    alnpr = AlignmentPair(
+                        seqname, minpos, maxpos, strand,
+                        AlignmentPairMetadata(k, 0))
+                    push!(tree, alnpr)
+                    alncnt += 1
                 end
             end
 

@@ -3,8 +3,8 @@
 module Extruder
 
 using ArgParse
-using Bio.Align
 using GenomicFeatures
+using BioAlignments
 using Bio.Seq
 using Bio.StringFields
 using DataStructures

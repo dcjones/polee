@@ -20,6 +20,8 @@ type HClustNode
     grad::Float32
     ladj_grad::Float32
 
+    k::Int
+
     function (::Type{HClustNode})(j::Integer)
         node = new(j)
         node.left_child = node
@@ -48,6 +50,28 @@ function maxdepth(root::HClustNode)
     return 1 +
         max(root.left_child === root ? 0 : maxdepth(root.left_child),
             root.right_child === root ? 0 : maxdepth(root.right_child))
+end
+
+
+function height(node::HClustNode)
+    h = 1
+    while node.parent !== node
+        h += 1
+        node = node.parent
+    end
+    return h
+end
+
+
+function write_node_heights(nodes::Vector{HClustNode})
+    out = open("node-heights.csv", "w")
+    for i in 1:length(nodes)
+        node = nodes[i]
+        if node.j != 0 # leaf node
+            println(out, Int(node.j), ",", height(node))
+        end
+    end
+    close(out)
 end
 
 
@@ -215,6 +239,7 @@ function distance(a::SubtreeListNode, b::SubtreeListNode)
     # balanced tree
     noise = 1f-20 * rand()
     return Float32(abs(d) + noise)
+    # return rand(Float32)
 end
 
 
@@ -348,9 +373,6 @@ end
 
 
 function hclust(X::SparseMatrixCSC)
-
-    srand(102030310)
-
     m, n = size(X)
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
@@ -459,7 +481,8 @@ function order_nodes(root::HClustNode, n)
 
     # check_node_ordering(nodes)
     set_subtree_sizes!(nodes)
-
+    # write_node_heights(nodes)
+    # exit()
     return nodes
 end
 
@@ -538,6 +561,7 @@ function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
         @assert node.left_child !== node
         @assert node.right_child !== node
 
+        node.k = k # this is dumb
         node.left_child.input_value = ys[k] * node.input_value
         node.right_child.input_value = (1 - ys[k]) * node.input_value
 
@@ -565,7 +589,7 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
 
         if node.j != 0 # leaf node
             node.grad = x_grad[node.j]
-            node.ladj_grad = 1.0f0
+            node.ladj_grad = 0.0f0
         else
             # get derivative wrt y by multiplying children's derivatives by y's
             # contribution to their input values
@@ -576,7 +600,7 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
             # store derivative wrt this nodes input_value
             node.grad = ys[k] * node.left_child.grad + (1 - ys[k]) * node.right_child.grad
 
-            # store derivative wrt to ladj
+            # store ladj derivative wrt to input_value
             node.ladj_grad = 1/node.input_value +
                 ys[k] * node.left_child.ladj_grad + (1 - ys[k]) * node.right_child.ladj_grad
 

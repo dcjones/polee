@@ -119,6 +119,8 @@ end
 
 
 function main()
+    srand(1234567)
+
     if isempty(ARGS)
         print_usage()
         exit(1)

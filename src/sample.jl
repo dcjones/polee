@@ -23,6 +23,19 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
     effective_lengths = read(input["effective_lengths"])
 
+    # debugging junk
+    # idx = 49194
+    # idx = 92300
+    # @show length(findnz(X[:,idx])[1])
+    # connected_ts = Set{Int}()
+    # for i in findnz(X[:,idx])[1]
+    #     for j in findnz(X[i,:])[1]
+    #         push!(connected_ts, j)
+    #     end
+    # end
+    # @show connected_ts
+    # exit()
+
     return RNASeqSample(m, n, X, effective_lengths, TranscriptsMetadata())
 end
 
@@ -140,7 +153,6 @@ function RNASeqSample(transcripts_filename::String,
     parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
 
     toc()
-    exit()
 
     # reassign indexes to remove any zero rows, which would lead to a
     # -Inf log likelihood

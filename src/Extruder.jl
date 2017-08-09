@@ -119,7 +119,7 @@ end
 
 
 function main()
-    srand(1234567)
+    srand(12345678)
 
     if isempty(ARGS)
         print_usage()

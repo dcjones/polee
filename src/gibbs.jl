@@ -79,13 +79,6 @@ function gibbs_sampler(input_filename, output_filename)
         end
         ys ./= sum(ys)
 
-
-        # idx = 49194
-        # @show cs[idx]
-        # @show ys[idx]
-        @show cs
-        @show ys
-
         if sample_num > num_burnin_samples &&
             ((sample_num - num_burnin_samples - 1) % sample_stride) == 0
 
@@ -93,8 +86,6 @@ function gibbs_sampler(input_filename, output_filename)
                 xs[j] = ys[j] / els[j]
             end
             xs ./= sum(xs)
-            # @show xs[idx]
-            # @show els[idx]
 
             for (i, x) in enumerate(xs)
                 @printf(out, "%e", x)

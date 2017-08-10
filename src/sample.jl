@@ -27,7 +27,7 @@ function Base.read(filename::String, ::Type{RNASeqSample})
 end
 
 
-function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
+function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
     # join matching trees from ts and rs
     T = Tuple{GenomicFeatures.ICTree{TranscriptMetadata},
               GenomicFeatures.ICTree{AlignmentPairMetadata}}
@@ -38,41 +38,26 @@ function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, 
         end
     end
 
-    # process pairs of trees in parallel
-    mut = Threads.Mutex()
-    # Threads.@threads for treepair_idx in 1:length(treepairs)
-    # @profile for treepair_idx in 1:length(treepairs)
-    #     ts_tree, rs_tree = treepairs[treepair_idx]
-    #     for (t, alnpr) in intersect(ts_tree, rs_tree)
-    #         fragpr = condfragprob(fm, t, rs, alnpr,
-    #                               effective_lengths[t.metadata.id])
-    #         if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
-    #             i_ = alnpr.metadata.mate1_idx > 0 ?
-    #                     rs.alignments[alnpr.metadata.mate1_idx].id :
-    #                     rs.alignments[alnpr.metadata.mate2_idx].id
-    #             i = aln_idx_map[i_]
-
-    #             lock(mut)
-    #             push!(I, i)
-    #             push!(J, t.metadata.id)
-    #             push!(V, fragpr)
-    #             unlock(mut)
-    #         end
-    #     end
-    # end
-    parallel_intersection_loop_inner(treepairs, mut, rs, fm, effective_lengths, aln_idx_map, I, J, V)
-
-    # out = open("profile.txt", "w")
-    # Profile.print(out)
-    # close(out)
+    return parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, aln_idx_map)
 end
 
 
-function parallel_intersection_loop_inner(treepairs, mut, rs, fm, effective_lengths, aln_idx_map, I, J, V)
+"""
+True if b is contained in a.
+"""
+function intersect_contains(a, b)
+    return a.first <= b.first && b.last <= a.last
+end
+
+
+function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, aln_idx_map)
+    Is = [UInt32[] for _ in 1:Threads.nthreads()]
+    Js = [UInt32[] for _ in 1:Threads.nthreads()]
+    Vs = [Float32[] for _ in 1:Threads.nthreads()]
+
     Threads.@threads for treepair_idx in 1:length(treepairs)
-    # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
-        for (t, alnpr) in intersect(ts_tree, rs_tree)
+        for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
                                   effective_lengths[t.metadata.id])
             if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
@@ -81,14 +66,15 @@ function parallel_intersection_loop_inner(treepairs, mut, rs, fm, effective_leng
                         rs.alignments[alnpr.metadata.mate2_idx].id
                 i = aln_idx_map[i_]
 
-                lock(mut)
-                push!(I, i)
-                push!(J, t.metadata.id)
-                push!(V, fragpr)
-                unlock(mut)
+                thrid = Threads.threadid()
+                push!(Is[thrid], i)
+                push!(Js[thrid], t.metadata.id)
+                push!(Vs[thrid], fragpr)
             end
         end
     end
+
+    return (vcat(Is...), vcat(Js...), vcat(Vs...))
 end
 
 
@@ -109,11 +95,6 @@ function RNASeqSample(transcripts_filename::String,
     fm = FragModel(rs, ts)
 
     println("intersecting reads and transcripts...")
-
-    # sparse matrix indexes and values
-    I = UInt32[]
-    J = UInt32[]
-    V = Float32[]
 
     # reassign indexes to alignments to group by position
     aln_idx_map = zeros(Int, length(rs.alignments))
@@ -137,7 +118,7 @@ function RNASeqSample(transcripts_filename::String,
     tic()
 
     effective_lengths = Float32[effective_length(fm, t) for t in ts]
-    parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map, I, J, V)
+    I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
 
     toc()
 

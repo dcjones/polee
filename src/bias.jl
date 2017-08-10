@@ -157,7 +157,7 @@ function write_statistics(out::IO, bm::BiasModel)
         ("first-strand", "background", bm.fs_background),
         ("second-strand", "foreground", bm.ss_foreground),
         ("second-strand", "background", bm.ss_background)]
-    freqs = Dict{DNANucleotide, Float64}(
+    freqs = Dict{DNA, Float64}(
         DNA_A => 0.0, DNA_C => 0.0, DNA_G => 0.0, DNA_T => 0.0)
 
     n = bm.upctx + 1 + bm.downctx

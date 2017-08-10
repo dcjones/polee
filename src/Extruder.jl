@@ -5,8 +5,7 @@ module Extruder
 using ArgParse
 using GenomicFeatures
 using BioAlignments
-using Bio.Seq
-using Bio.StringFields
+using BioSequences
 using DataStructures
 using Distributions
 using HATTries
@@ -33,7 +32,6 @@ include("kumaraswamy.jl")
 include("logitnormal.jl")
 include("likelihood-approximation.jl")
 include("estimate.jl")
-include("hattrie_stringfield.jl")
 include("gibbs.jl")
 include("stick_breaking.jl")
 

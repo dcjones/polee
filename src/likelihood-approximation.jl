@@ -11,7 +11,7 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
     # optimize_likelihood(sample)
     # optimize_likelihood_ab(sample)
     mu, omega, t = approximate_likelihood(sample)
-    # αs, βs, t = approximate_likelihood_kumaraswamy(sample)
+    # mu, omega, t = approximate_likelihood_kumaraswamy(sample)
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
@@ -809,8 +809,8 @@ function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
 
     adam_eps = 1e-8
 
-    adam_rv = 0.7
-    adam_rm = 0.8
+    adam_rv = 0.9
+    adam_rm = 0.7
 
     # gradient running mean
     m_α = Array{Float32}(n-1)
@@ -826,7 +826,7 @@ function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
-    num_mc_samples = 4
+    num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
     @time t = HSBTransform(s.X)

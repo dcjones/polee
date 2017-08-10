@@ -1,6 +1,45 @@
 
 
+"""
+Generate samples from an approximated likelihood stored in the given file.
+"""
+function sample_likap_kumaraswamy(input_filename::String, num_samples)
+    input = h5open(input_filename)
+    as = exp.(read(input["mu"]))
+    bs = exp.(read(input["omega"]))
+    effective_lengths = read(input["effective_lengths"])
+    t = HSBTransform(read(input["node_parent_idxs"]),
+                     read(input["node_js"]))
+    close(input)
+    n = length(as) + 1
 
+    zs = Array{Float32}(n-1)
+    ys = Array{Float64}(n-1)
+    xs = Array{Float32}(n)
+    work = Array{Float64}(n-1)
+    samples = Array{Float32}(num_samples, n)
+
+    minz = eps(Float32)
+    maxz = 1.0f0 - eps(Float32)
+
+    for i in 1:num_samples
+        for j in 1:n-1
+            zs[j] = min(maxz, max(minz, rand()))
+        end
+        kumaraswamy_transform!(as, bs, zs, ys, work, Val{true})  # z -> y
+        hsb_transform!(t, ys, xs, Val{true})
+        clamp!(xs, 1e-10, 1 - 1e-10)
+
+        for j in 1:n
+            xs[j] /= effective_lengths[j]
+        end
+        xs ./= sum(xs)
+
+        samples[i,:] = xs
+    end
+
+    return samples
+end
 
 
 """

@@ -4,6 +4,9 @@
 # Disallow fragments longer than this
 const MAX_FRAG_LEN = 1500
 
+# Don't use emperical distribution if fewer than this many paired-end reads
+const MIN_FRAG_LEN_COUNT = 1000
+
 # Effective lengths are set to max(ef, MIN_EFFECTIVE_LENGTH). Very small
 # effective lengths can give very high and probably erroneous expression estimates.
 const MIN_EFFECTIVE_LENGTH = 10.0f0
@@ -11,4 +14,3 @@ const MIN_EFFECTIVE_LENGTH = 10.0f0
 # Fragment is considered incompatible with a transcript if it has a conditional
 # probability less than this.
 const MIN_FRAG_PROB = 1e-10
-

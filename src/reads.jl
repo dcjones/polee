@@ -524,7 +524,7 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 
     # alignment is compatible, but single-ended
     if isnull(a2)
-        return Nullable{Int}()
+        return Nullable{Int}(0)
     end
 
     e2_sup_e1 = false # marks with e2 > e1

@@ -55,7 +55,8 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
     Js = [UInt32[] for _ in 1:Threads.nthreads()]
     Vs = [Float32[] for _ in 1:Threads.nthreads()]
 
-    Threads.@threads for treepair_idx in 1:length(treepairs)
+    # Threads.@threads for treepair_idx in 1:length(treepairs)
+    for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
@@ -129,18 +130,23 @@ function RNASeqSample(transcripts_filename::String,
     J = J[p]
     V = V[p]
 
-    last_i = I[1]
-    I[1] = 1
-    for k in 2:length(I)
-        if I[k] == last_i
-            I[k] = I[k-1]
-        else
-            last_i = I[k]
-            I[k] = I[k-1] + 1
+    if isempty(I)
+        warn("No compatible reads found.")
+        m = 0
+    else
+        last_i = I[1]
+        I[1] = 1
+        for k in 2:length(I)
+            if I[k] == last_i
+                I[k] = I[k-1]
+            else
+                last_i = I[k]
+                I[k] = I[k-1] + 1
+            end
         end
+        m = maximum(I)
     end
 
-    m = maximum(I)
     n = length(ts)
     M = sparse(I, J, V, m, n)
 

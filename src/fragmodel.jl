@@ -3,6 +3,8 @@
 type FragModel
     fraglen_pmf::Vector{Float32}
     fraglen_cdf::Vector{Float32}
+    fallback_fraglen_dist::Normal
+    use_fallback_fraglen_dist::Bool
     strand_specificity::Float32
     bm::BiasModel
 end
@@ -127,6 +129,7 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
             fraglen_pmf[fl] += 1
         end
     end
+    fraglen_pmf_count = sum(fraglen_pmf) - MAX_FRAG_LEN
     fraglen_pmf ./= sum(fraglen_pmf)
     out = open("fraglen.csv", "w")
     println(out, "fraglen,freq")
@@ -139,7 +142,9 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
         fraglen_cdf[i] += fraglen_cdf[i-1]
     end
 
-    return FragModel(fraglen_pmf, fraglen_cdf, strand_specificity, bm)
+    use_fallback_fraglen_dist = fraglen_pmf_count < MIN_FRAG_LEN_COUNT
+    return FragModel(fraglen_pmf, fraglen_cdf, Normal(200, 100),
+                     use_fallback_fraglen_dist, strand_specificity, bm)
 end
 
 
@@ -153,16 +158,28 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
 
     # single-end read
     if fraglen <= 0
-        # TODO: decide what to do about this
+        aln = alnpr.metadata.mate1_idx > 0 ?
+                    rs.alignments[alnpr.metadata.mate1_idx] : rs.alignments[alnpr.metadata.mate2_idx]
+        if aln.flag == SAM.FLAG_REVERSE != 0
+            max_frag_len = aln.rightpos - t.first + 1
+        else
+            max_frag_len = t.last - aln.leftpos + 1
+        end
+
+        frag_len = min(max_frag_len, round(Int, mean(fm.fallback_fraglen_dist)))
     end
 
-    # TODO: look at FragWeightEstimationThread::fragment_weight for how to
-    # handle all this shit
+    if fraglen <= MAX_FRAG_LEN
+        if fm.use_fallback_fraglen_dist
+            fraglenpr = Float32(pdf(fm.fallback_fraglen_dist, fraglen))
+        else
+            fraglenpr = fm.fraglen_pmf[fraglen]
+        end
+    else
+        fraglenpr = 0.0f0
+    end
 
-    tlen = exonic_length(t)
-    fraglenpr = fraglen <= MAX_FRAG_LEN ? fm.fraglen_pmf[fraglen] : 0.0f0
-
-    # TODO: use simplistic probabilities for the time being
+    # TODO: use more sophisticated fragment probability model
     #fragpr = fraglenpr / (tlen <= MAX_FRAG_LEN ? fm.fraglen_cdf[tlen] : 1.0f0)
     #fragpr = fraglenpr / (tlen - fraglen)
     fragpr = fraglenpr / effective_length

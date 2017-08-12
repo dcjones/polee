@@ -7,7 +7,7 @@ import edward
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, x, node_parent_idxs, node_js,
+    def __init__(self, x, efflens, node_parent_idxs, node_js,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
@@ -17,6 +17,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             framework.assert_same_float_dtype([self.x])
         parameters = locals()
 
+        self.efflens = efflens
         self.node_parent_idxs = node_parent_idxs
         self.node_js = node_js
 
@@ -38,21 +39,32 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         print(self.x.get_shape())
         return self.x.get_shape()[:-1]
 
-    def _log_prob(self, as_bs):
+    def _log_prob(self, musigma):
         n = int(self.x.get_shape()[-1])
 
         num_samples = self.node_parent_idxs.shape[1]
         num_nodes = self.node_parent_idxs.shape[0]
 
         y_tensors = []
-        lp_tensors = []
 
+        # TODO: This shit makes me real uncomfortable. This is not a bijection,
+        # and there is no jacobian term. Suggests we are doing things wrong. I
+        # could do something like exp(x_i) / (1 + sum(x_i)) which should be a
+        # bijection with a well defined jacobian.
         x = tf.nn.softmax(self.x)
-        # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X SPAN")
-        # x = tf.Print(x, [x[0, 0:10]], "X")
-        # x = tf.Print(x, [tf.reduce_sum(x), "X SUM"])
+
+        # effective length transform
+        x_scaled = tf.multiply(x, self.efflens)
+        x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
+        x_efflen = tf.divide(x_scaled, x_scaled_sum)
+        efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
 
         # x -> y transformation
+        # It's not really practical or efficient to try to build and traverse
+        # the HSB tree in tensorflow, but we can accomplish the same thing with
+        # some redundant computation using sparse matrix multiplication, which
+        # we construct here.
+        hsb_ladj_tensors = []
         for h in range(num_samples):
             # set child indexes
             left_child = np.repeat(-1, num_nodes)
@@ -87,7 +99,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             values = np.ones([entry_count], dtype=np.float32)
             A = tf.SparseTensor(indices, values, [num_nodes, n])
 
-            input_values = tf.squeeze(tf.sparse_tensor_dense_matmul(A, tf.expand_dims(x[h,:], -1)))
+            input_values = tf.squeeze(tf.sparse_tensor_dense_matmul(A, tf.expand_dims(x_efflen[h,:], -1)))
 
             k = 0
             internal_node_indexes = []
@@ -99,7 +111,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                     k += 1
 
             internal_node_values = tf.gather(input_values, internal_node_indexes)
-            lp_tensors.append(-tf.reduce_sum(tf.log(internal_node_values)))
+            hsb_ladj_tensors.append(-tf.reduce_sum(tf.log(internal_node_values)))
 
             y_h = tf.divide(tf.to_double(tf.gather(input_values, internal_node_left_indexes)),
                             tf.to_double(internal_node_values))
@@ -112,36 +124,20 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # y = tf.Print(y, [tf.reduce_min(y), tf.reduce_max(y)], "Y SPAN")
         # y = tf.Print(y, [y[0, 0:10]], "Y")
 
-        a = tf.identity(as_bs[...,0,:], name="a")
-        b = tf.identity(as_bs[...,1,:], name="b")
+        # TODO: evaluate prob
+        # This is just logit-normal
 
-        ad = tf.to_double(a)
-        bd = tf.to_double(b)
+        y_div_omy = tf.divide(y, (1-y))
+        y_logit = tf.to_float(tf.log(y_div_omy))
+        mu = tf.identity(musigma[...,0,:], name="mu")
+        sigma = tf.identity(musigma[...,1,:], name="sigma")
 
-        # y -> z transformation
-        z = tf.identity(1.0 - tf.pow(1.0 - tf.pow(y, ad), bd), name="z")
-        z = tf.clip_by_value(z, 1e-7, 1 - 1e-7)
-        z = tf.to_float(z)
-        # z = tf.Print(z, [tf.reduce_min(z), tf.reduce_max(z)], "Z SPAN")
-        # z = tf.Print(z, [z[0, 0]], "Z0")
+        lp_y = y_logit - tf.log(sigma * np.sqrt(2*np.pi)) - \
+            tf.divide(tf.square(tf.subtract(y_logit, mu)), 2*tf.square(sigma))
+        lp = tf.reduce_sum(lp_y, axis=1)
 
-
-        ia = 1.0 / a
-        ib = 1.0 / b
-        # ib = tf.Print(ib, [tf.reduce_min(ib), tf.reduce_max(ib)], "IB SPAN")
-
-        omz = 1.0 - z
-        # omz = tf.Print(omz, [tf.reduce_min(omz), tf.reduce_max(omz)], "OMZ SPAN")
-
-        pow_omz_ib = tf.pow(tf.to_double(omz), tf.to_double(ib))
-        # pow_omz_ib = tf.Print(pow_omz_ib, [tf.reduce_min(pow_omz_ib), tf.reduce_max(pow_omz_ib)], "OMZ^IB SPAN")
-
-        logc = tf.to_float(tf.log1p(-pow_omz_ib))
-
-        lp = tf.stack(lp_tensors, name="lp")
-        lp -= tf.reduce_sum((ib - 1.0) * tf.log(omz) + (ia - 1.0) * logc - tf.log(tf.multiply(a, b)))
-
-        # lp = tf.Print(lp, [tf.reduce_min(lp), tf.reduce_max(lp)], "LP HSB SPAN")
+        lp += efflen_ladj
+        lp += tf.stack(hsb_ladj_tensors)
 
         return lp
 

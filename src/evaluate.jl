@@ -92,11 +92,34 @@ end
 
 
 """
+"""
+function read_transcript_gene_nums(genes_db_filename)
+    db = SQLite.DB(genes_db_filename)
+
+    results = SQLite.query(db, "select transcript_num, gene_num from transcripts")
+    transcript_gene_num = Dict{Int, Int}()
+    for (transcript_num, gene_num) in zip(results[:transcript_num], results[:gene_num])
+        transcript_gene_num[get(transcript_num)] = get(gene_num)
+    end
+
+    return transcript_gene_num
+end
+
+
+"""
 Compute feature marginals given a feature dictionary mapping every transcript
 numbers to some feature number.
 """
 function feature_marginals(samples::Matrix{Float32}, features::Dict{Int, Int})
-    # TODO
+    num_samples, n1 = size(samples)
+    n2 = maximum(values(features))
+
+    marginal_samples = zeros(Float32, num_samples, n2)
+    for i in 1:num_samples, j in 1:n1
+        marginal_samples[i, features[j]] += samples[i, j]
+    end
+
+    return marginal_samples
 end
 
 
@@ -128,7 +151,7 @@ function log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
         lfc_expect_gibbs /= num_samples
         lfc_expect_likap /= num_samples
 
-        losses[i] = abs(lfc_expect_gibbs - lfc_expect_likap)
+        losses[i] = lfc_expect_likap - lfc_expect_gibbs
     end
 
     return losses

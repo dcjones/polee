@@ -17,15 +17,18 @@ function load_samples_from_specification(experiment_spec_filename, ts_metadata)
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    likapprox_ab, likapprox_parent_idxs, likapprox_js, x0 = load_samples(filenames, ts_metadata)
+    (likapprox_musigma, likapprox_efflen,
+     likapprox_parent_idxs, likapprox_js, x0) = load_samples(filenames, ts_metadata)
     println("Sample data loaded")
 
-    return (likapprox_ab, likapprox_parent_idxs, likapprox_js, x0, sample_factors, names)
+    return (likapprox_musigma, likapprox_efflen,
+            likapprox_parent_idxs, likapprox_js, x0, sample_factors, names)
 end
 
 
 function load_samples(filenames, ts_metadata)
-    ab_tensors = []
+    musigma_tensors = []
+    efflen_tensors = []
     x0_tensors = []
     node_parent_idxs_tensors = []
     node_js_tensors = []
@@ -35,41 +38,41 @@ function load_samples(filenames, ts_metadata)
 
         n = read(input["n"])
 
-        αs = read(input["alpha"])
-        βs = read(input["beta"])
+        mu = read(input["mu"])
+        sigma = read(input["omega"])
+        map!(exp, sigma, sigma)
 
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
+        effective_lengths = read(input["effective_lengths"])
 
-        as = exp.(αs)
-        bs = exp.(βs)
-
-        # choose kumaraswamy median as initial value
+        # choose logit-normal mean (actually: not really the mean)
         y0 = Array{Float64}(n-1)
         x0 = Array{Float32}(n)
         for i in 1:n-1
-            a = Float64(as[i])
-            b = Float64(bs[i])
-            y0[i] = (1 - 2^(-1/b))^(1/a)
+            y0[i] = logistic(mu[i])
         end
         t = HSBTransform(node_parent_idxs, node_js)
         hsb_transform!(t, y0, x0, Val{true})
         push!(x0_tensors, x0)
 
-        @show x0[1:10]
-        @show sum(x0)
-        @show y0[1:10]
-        @show y0[1]
+        # @show x0[1:10]
+        # @show sum(x0)
+        # @show y0[1:10]
+        # @show y0[1]
 
-        tf_a = tf.constant(as)
-        tf_b = tf.constant(bs)
-        tf_ab = tf.stack([tf_a, tf_b])
-        push!(ab_tensors, tf_ab)
+        tf_mu = tf.constant(mu)
+        tf_sigma = tf.constant(sigma)
+        tf_musigma = tf.stack([tf_mu, tf_sigma])
+        tf_efflen = tf.constant(effective_lengths)
+        push!(musigma_tensors, tf_musigma)
+        push!(efflen_tensors, tf_efflen)
         push!(node_parent_idxs_tensors, node_parent_idxs)
         push!(node_js_tensors, node_js)
     end
 
-    return (tf.stack(ab_tensors), hcat(node_parent_idxs_tensors...),
+    return (tf.stack(musigma_tensors), tf.stack(efflen_tensors),
+            hcat(node_parent_idxs_tensors...),
             hcat(node_js_tensors...), tf.stack(x0_tensors))
 end
 
@@ -142,7 +145,8 @@ end
 
 
 immutable ModelInput
-    likapprox_ab::PyCall.PyObject
+    likapprox_musigma::PyCall.PyObject
+    likapprox_efflen::PyCall.PyObject
     likapprox_parent_idxs::Array
     likapprox_js::Array
     x0::PyCall.PyObject

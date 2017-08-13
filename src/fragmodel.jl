@@ -166,7 +166,7 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
             max_frag_len = t.last - aln.leftpos + 1
         end
 
-        frag_len = min(max_frag_len, round(Int, mean(fm.fallback_fraglen_dist)))
+        fraglen = min(max_frag_len, round(Int, mean(fm.fallback_fraglen_dist)))
     end
 
     if fraglen <= MAX_FRAG_LEN

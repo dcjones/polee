@@ -4,6 +4,8 @@ import tensorflow as tf
 from tensorflow.contrib import distributions
 from tensorflow.contrib import framework
 import edward
+from queue import Queue
+import sys
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
@@ -58,54 +60,88 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
         x_efflen = tf.divide(x_scaled, x_scaled_sum)
         efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
-
-        # x -> y transformation
-        # It's not really practical or efficient to try to build and traverse
-        # the HSB tree in tensorflow, but we can accomplish the same thing with
-        # some redundant computation using sparse matrix multiplication, which
-        # we construct here.
         hsb_ladj_tensors = []
-        for h in range(num_samples):
+
+        # TODO: It may make more sense to build this on the julia side so we
+        # can save memory by passing it as a placeholder. Let's just build it
+        # here first so we can see if memory use is improved at all.
+        # x -> y transformation
+        for sample_num in range(num_samples):
+            print(sample_num)
+            # breadth first traversal of the tree, separating out nodes by height
+
             # set child indexes
             left_child = np.repeat(-1, num_nodes)
             right_child = np.repeat(-1, num_nodes)
+            x_index = np.zeros((n,1), dtype=int)
             for i in range(1, num_nodes):
-                parent_idx = self.node_parent_idxs[i, h]-1
+                parent_idx = self.node_parent_idxs[i, sample_num]-1
                 if right_child[parent_idx] == -1:
                     right_child[parent_idx] = i
                 else:
                     left_child[parent_idx] = i
 
-            # arrays of arrays of indexes
-            J = [None] * (num_nodes)
-            for i in range(num_nodes-1, -1, -1):
-                if self.node_js[i, h] == 0:
-                    J[i] = J[left_child[i]] + J[right_child[i]]
-                else:
-                    J[i] = [self.node_js[i, h] - 1]
+                if self.node_js[i, sample_num] != 0:
+                    x_index[self.node_js[i, sample_num] - 1] = i
 
-            entry_count = 0
-            for i, js in enumerate(J):
-                entry_count += len(js)
+            q = Queue()
+            q.put((0,0))
+            As = []
+            i_indexes = []
+            j_indexes = []
+            last_height = 0
+            # passthrough = set()
+            while not q.empty():
+                if q.queue[0][0] != last_height:
+                    indexes = np.transpose(np.array([i_indexes, j_indexes]))
+                    values = np.ones([len(indexes)], dtype=np.float32)
+                    A = tf.SparseTensor(indexes, values, [num_nodes, num_nodes])
+                    As.append(A)
 
-            indices = np.zeros([entry_count, 2], dtype=int)
-            entry_num = 0
-            for i, js in enumerate(J):
-                for j in js:
-                    indices[entry_num, 0] = i
-                    indices[entry_num, 1] = j
-                    entry_num += 1
+                    i_indexes.clear()
+                    j_indexes.clear()
+                    last_height += 1
 
-            values = np.ones([entry_count], dtype=np.float32)
-            A = tf.SparseTensor(indices, values, [num_nodes, n])
+                height, i = q.get()
+                assert(height == last_height)
 
-            input_values = tf.squeeze(tf.sparse_tensor_dense_matmul(A, tf.expand_dims(x_efflen[h,:], -1)))
+                if left_child[i] != -1:
+                    j = left_child[i]
+                    i_indexes.append(i)
+                    j_indexes.append(j)
+                    q.put((height+1, j))
+
+                if right_child[i] != -1:
+                    j = right_child[i]
+                    i_indexes.append(i)
+                    j_indexes.append(j)
+                    q.put((height+1, j))
+
+            if len(i_indexes) > 0:
+                for i in passthrough:
+                    i_indexes.append(i)
+                    j_indexes.append(i)
+                indexes = np.transpose(np.array([i_indexes, j_indexes]))
+                values = np.ones([len(indexes)], dtype=np.float32)
+                A = tf.SparseTensor(indexes, values, [num_nodes, num_nodes])
+                As.append(A)
+
+            As.reverse()
+            x_ = tf.expand_dims(tf.scatter_nd(x_index, x_efflen[sample_num,:], [num_nodes]), -1)
+            Axs = [tf.sparse_tensor_dense_matmul(As[0], x_)]
+            for i in range(1, len(As)):
+                A = As[i]
+                Ax_i = tf.add(tf.sparse_tensor_dense_matmul(A, Axs[i-1]),
+                        tf.sparse_tensor_dense_matmul(A, x_))
+                Axs.append(Ax_i)
+
+            input_values = tf.squeeze(tf.reduce_sum(tf.stack(Axs), axis=0))
 
             k = 0
             internal_node_indexes = []
             internal_node_left_indexes = []
             for i in range(num_nodes):
-                if self.node_js[i, h] == 0:
+                if self.node_js[i, sample_num] == 0:
                     internal_node_indexes.append(i)
                     internal_node_left_indexes.append(left_child[i])
                     k += 1
@@ -121,11 +157,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         y = tf.stack(y_tensors, name="y")
         y = tf.clip_by_value(y, 1e-10, 1 - 1e-10)
-        # y = tf.Print(y, [tf.reduce_min(y), tf.reduce_max(y)], "Y SPAN")
-        # y = tf.Print(y, [y[0, 0:10]], "Y")
-
-        # TODO: evaluate prob
-        # This is just logit-normal
 
         y_div_omy = tf.divide(y, (1-y))
         y_logit = tf.to_float(tf.log(y_div_omy))

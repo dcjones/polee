@@ -56,11 +56,6 @@ function load_samples(filenames, ts_metadata)
         hsb_transform!(t, y0, x0, Val{true})
         push!(x0_tensors, x0)
 
-        # @show x0[1:10]
-        # @show sum(x0)
-        # @show y0[1:10]
-        # @show y0[1]
-
         tf_mu = tf.constant(mu)
         tf_sigma = tf.constant(sigma)
         tf_musigma = tf.stack([tf_mu, tf_sigma])

@@ -40,6 +40,8 @@ function estimate_transcript_expression(input::ModelInput)
     qx_mu_value    = sess[:run](qx_mu_param)
     qx_sigma_value = sess[:run](qx_sigma_param)
 
+    est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
+
     # reset session and graph to free up memory
     tf.reset_default_graph()
     old_sess = ed.get_session()
@@ -48,6 +50,12 @@ function estimate_transcript_expression(input::ModelInput)
 
     @show minimum(qx_mu_value), median(qx_mu_value), maximum(qx_mu_value)
     @show minimum(qx_sigma_value), median(qx_sigma_value), maximum(qx_sigma_value)
+
+    # TODO: this should be a temporary measure until we decide exactly how
+    # results should be reported. Probably in sqlite or something.
+
+    write_estimates("estimates.csv", input.sample_names, est)
+
     exit()
 
     return qx_mu_value, qx_sigma_value

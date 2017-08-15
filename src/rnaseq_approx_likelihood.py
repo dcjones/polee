@@ -59,6 +59,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_scaled = tf.multiply(x, self.efflens)
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
         x_efflen = tf.divide(x_scaled, x_scaled_sum)
+        # x_efflen = x
+        # x_scaled_sum = tf.reduce_sum(x)
         efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
         hsb_ladj_tensors = []
 
@@ -81,6 +83,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                 else:
                     left_child[parent_idx] = i
 
+            for i in range(num_nodes):
                 if self.node_js[i, sample_num] != 0:
                     x_index[self.node_js[i, sample_num] - 1] = i
 
@@ -90,7 +93,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             i_indexes = []
             j_indexes = []
             last_height = 0
-            # passthrough = set()
             while not q.empty():
                 if q.queue[0][0] != last_height:
                     indexes = np.transpose(np.array([i_indexes, j_indexes]))
@@ -128,6 +130,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
             As.reverse()
             x_ = tf.expand_dims(tf.scatter_nd(x_index, x_efflen[sample_num,:], [num_nodes]), -1)
+            # x_ = tf.Print(x_, [x_], "X_", summarize=5)
             Axs = [tf.sparse_tensor_dense_matmul(As[0], x_)]
             for i in range(1, len(As)):
                 A = As[i]
@@ -135,7 +138,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                         tf.sparse_tensor_dense_matmul(A, x_))
                 Axs.append(Ax_i)
 
-            input_values = tf.squeeze(tf.reduce_sum(tf.stack(Axs), axis=0))
+            input_values = tf.squeeze(tf.add(tf.reduce_sum(tf.stack(Axs), axis=0), x_))
+            # input_values = tf.Print(input_values, [input_values], "INPUT VALUES", summarize=5)
 
             k = 0
             internal_node_indexes = []
@@ -147,9 +151,12 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                     k += 1
 
             internal_node_values = tf.gather(input_values, internal_node_indexes)
+            # internal_node_values = tf.Print(internal_node_values, [input_values], "INTERNAL NODE VALUES")
             hsb_ladj_tensors.append(-tf.reduce_sum(tf.log(internal_node_values)))
 
-            y_h = tf.divide(tf.to_double(tf.gather(input_values, internal_node_left_indexes)),
+            left_node_values = tf.gather(input_values, internal_node_left_indexes)
+            # left_node_values = tf.Print(left_node_values, [left_node_values], "LEFT NODE VALUES")
+            y_h = tf.divide(tf.to_double(left_node_values),
                             tf.to_double(internal_node_values))
             y_tensors.append(y_h)
 
@@ -160,8 +167,12 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         y_div_omy = tf.divide(y, (1-y))
         y_logit = tf.to_float(tf.log(y_div_omy))
+        y_logit = tf.Print(y_logit, [y_logit], "Y_LOGIT", summarize=10)
         mu = tf.identity(musigma[...,0,:], name="mu")
+        mu = tf.Print(mu, [mu], "MU", summarize=10)
         sigma = tf.identity(musigma[...,1,:], name="sigma")
+        sigma = tf.Print(sigma, [sigma], "SIGMA")
+
 
         lp_y = y_logit - tf.log(sigma * np.sqrt(2*np.pi)) - \
             tf.divide(tf.square(tf.subtract(y_logit, mu)), 2*tf.square(sigma))

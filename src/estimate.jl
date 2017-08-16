@@ -56,6 +56,8 @@ function load_samples(filenames, ts_metadata)
         hsb_transform!(t, y0, x0, Val{true})
         push!(x0_tensors, x0)
 
+        @show extrema(effective_lengths)
+
         tf_mu = tf.constant(mu)
         tf_sigma = tf.constant(sigma)
         tf_musigma = tf.stack([tf_mu, tf_sigma])

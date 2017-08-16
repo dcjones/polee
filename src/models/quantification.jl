@@ -34,13 +34,20 @@ function estimate_transcript_expression(input::ModelInput)
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
     # optimizer = tf.train[:MomentumOptimizer](1e-7, 0.8)
-    inference[:run](n_iter=250, optimizer=optimizer)
+    # inference[:run](n_iter=250, optimizer=optimizer)
+    inference[:run](n_iter=500, optimizer=optimizer)
 
     sess = ed.get_session()
     qx_mu_value    = sess[:run](qx_mu_param)
     qx_sigma_value = sess[:run](qx_sigma_param)
 
     est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
+    # est = sess[:run](tf.divide(input.x0, input.likapprox_efflen))
+
+    # est = sess[:run](input.x0)
+    # efflens = sess[:run](input.likapprox_efflen)
+    # @show extrema(est)
+    # @show extrema(efflens)
 
     # reset session and graph to free up memory
     tf.reset_default_graph()
@@ -55,6 +62,14 @@ function estimate_transcript_expression(input::ModelInput)
     # results should be reported. Probably in sqlite or something.
 
     write_estimates("estimates.csv", input.sample_names, est)
+
+    # open("efflen.csv", "w") do out
+    #     println(out, "transcript_num,efflen")
+    #     for (i, efflen) in enumerate(efflens)
+    #         println(out, i, ",", efflen)
+    #     end
+    # end
+
 
     exit()
 
@@ -262,7 +277,7 @@ function transcript_quantification_model(input::ModelInput)
 
     # x_sigma: variance around pooled mean
     x_sigma_mu0 = tf.constant(0.0, shape=[n])
-    x_sigma_sigma0 = tf.constant(0.2, shape=[n])
+    x_sigma_sigma0 = tf.constant(1.0, shape=[n])
     x_log_sigma = edmodels.MultivariateNormalDiag(x_sigma_mu0, x_sigma_sigma0)
     x_sigma = tf.exp(x_log_sigma)
 
@@ -276,7 +291,6 @@ function transcript_quantification_model(input::ModelInput)
 
     x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
 
-    # TODO: change 
     likapprox_musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,

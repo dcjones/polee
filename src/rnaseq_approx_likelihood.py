@@ -173,8 +173,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         sigma = tf.identity(musigma[...,1,:], name="sigma")
         sigma = tf.Print(sigma, [sigma], "SIGMA")
 
-
-        lp_y = y_logit - tf.log(sigma * np.sqrt(2*np.pi)) - \
+        logit_ladj = tf.to_float(-tf.log(y) - tf.log(1 - y))
+        lp_y = logit_ladj - tf.log(sigma * np.sqrt(2*np.pi)) - \
             tf.divide(tf.square(tf.subtract(y_logit, mu)), 2*tf.square(sigma))
         lp = tf.reduce_sum(lp_y, axis=1)
 

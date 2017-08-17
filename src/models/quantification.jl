@@ -22,16 +22,23 @@ function estimate_transcript_expression(input::ModelInput)
     println("Estimating...")
 
     qx_mu_param = tf.Variable(tf.log(input.x0))
+    qx_mu_param = tf.Print(qx_mu_param,
+                        [tf.reduce_min(qx_mu_param), tf.reduce_max(qx_mu_param)],
+                        "QX_MU_PARAM SPAN")
     qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
     qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
 
-    qx_mu_mu_param = tf.Variable(input.x0[1])
+    qx_mu_mu_param = tf.Variable(tf.log(input.x0[1]))
+    qx_mu_mu_param = tf.Print(qx_mu_mu_param,
+                        [tf.reduce_min(qx_mu_mu_param), tf.reduce_max(qx_mu_mu_param)],
+                        "QX_MU_MU_PARAM SPAN")
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
     inference = ed.KLqp(PyDict(Dict(x => qx, x_mu => qx_mu)),
                         data=PyDict(Dict(likapprox_musigma => input.likapprox_musigma)))
 
+    # optimizer = tf.train[:AdamOptimizer](1e-2)
     optimizer = tf.train[:AdamOptimizer](1e-2)
     # optimizer = tf.train[:MomentumOptimizer](1e-7, 0.8)
     # inference[:run](n_iter=250, optimizer=optimizer)
@@ -41,9 +48,9 @@ function estimate_transcript_expression(input::ModelInput)
     qx_mu_value    = sess[:run](qx_mu_param)
     qx_sigma_value = sess[:run](qx_sigma_param)
 
-    # est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
+    est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
     # est = sess[:run](tf.divide(input.x0, input.likapprox_efflen))
-    est = sess[:run](input.x0)
+    # est = sess[:run](input.x0)
     efflens = sess[:run](input.likapprox_efflen)
     @show extrema(est)
     @show extrema(efflens)
@@ -270,8 +277,11 @@ function transcript_quantification_model(input::ModelInput)
     num_samples, n = input.x0[:get_shape]()[:as_list]()
 
     # y_mu: pooled mean
-    x_mu_mu0 = tf.constant(log(1/n), shape=[n])
-    x_mu_sigma0 = tf.constant(10.0, shape=[n])
+    # x_mu_mu0 = tf.constant(log(1/n), shape=[n])
+    # x_mu_sigma0 = tf.constant(10.0, shape=[n])
+    # TODO: 
+    x_mu_mu0 = tf.constant(log(0.01 * 1/n), shape=[n])
+    x_mu_sigma0 = tf.constant(5.0, shape=[n])
     x_mu = edmodels.MultivariateNormalDiag(x_mu_mu0, x_mu_sigma0)
 
     # x_sigma: variance around pooled mean

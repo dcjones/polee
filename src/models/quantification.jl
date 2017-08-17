@@ -41,13 +41,12 @@ function estimate_transcript_expression(input::ModelInput)
     qx_mu_value    = sess[:run](qx_mu_param)
     qx_sigma_value = sess[:run](qx_sigma_param)
 
-    est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
+    # est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
     # est = sess[:run](tf.divide(input.x0, input.likapprox_efflen))
-
-    # est = sess[:run](input.x0)
-    # efflens = sess[:run](input.likapprox_efflen)
-    # @show extrema(est)
-    # @show extrema(efflens)
+    est = sess[:run](input.x0)
+    efflens = sess[:run](input.likapprox_efflen)
+    @show extrema(est)
+    @show extrema(efflens)
 
     # reset session and graph to free up memory
     tf.reset_default_graph()
@@ -63,12 +62,12 @@ function estimate_transcript_expression(input::ModelInput)
 
     write_estimates("estimates.csv", input.sample_names, est)
 
-    # open("efflen.csv", "w") do out
-    #     println(out, "transcript_num,efflen")
-    #     for (i, efflen) in enumerate(efflens)
-    #         println(out, i, ",", efflen)
-    #     end
-    # end
+    open("efflen.csv", "w") do out
+        println(out, "transcript_num,efflen")
+        for (i, efflen) in enumerate(efflens)
+            println(out, i, ",", efflen)
+        end
+    end
 
 
     exit()
@@ -294,6 +293,7 @@ function transcript_quantification_model(input::ModelInput)
     likapprox_musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,
+                    As=input.likapprox_As,
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
                     value=input.likapprox_musigma)

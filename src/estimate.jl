@@ -17,12 +17,13 @@ function load_samples_from_specification(experiment_spec_filename, ts_metadata)
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    (likapprox_musigma, likapprox_efflen,
+    (likapprox_musigma, likapprox_efflen, likapprox_As,
      likapprox_parent_idxs, likapprox_js, x0) = load_samples(filenames, ts_metadata)
     println("Sample data loaded")
 
     return (likapprox_musigma, likapprox_efflen,
-            likapprox_parent_idxs, likapprox_js, x0, sample_factors, names)
+            likapprox_As, likapprox_parent_idxs, likapprox_js,
+            x0, sample_factors, names)
 end
 
 
@@ -32,6 +33,7 @@ function load_samples(filenames, ts_metadata)
     x0_tensors = []
     node_parent_idxs_tensors = []
     node_js_tensors = []
+    As_tensors = []
 
     for filename in filenames
         input = h5open(filename, "r")
@@ -46,6 +48,9 @@ function load_samples(filenames, ts_metadata)
         node_js = read(input["node_js"])
         effective_lengths = read(input["effective_lengths"])
 
+        As = inverse_hsb_matrices(node_parent_idxs, node_js)
+        push!(As_tensors, As)
+
         # choose logit-normal mean (actually: not really the mean)
         y0 = Array{Float64}(n-1)
         x0 = Array{Float32}(n)
@@ -55,8 +60,6 @@ function load_samples(filenames, ts_metadata)
         t = HSBTransform(node_parent_idxs, node_js)
         hsb_transform!(t, y0, x0, Val{true})
         push!(x0_tensors, x0)
-
-        @show extrema(effective_lengths)
 
         tf_mu = tf.constant(mu)
         tf_sigma = tf.constant(sigma)
@@ -69,7 +72,7 @@ function load_samples(filenames, ts_metadata)
     end
 
     return (tf.stack(musigma_tensors), tf.stack(efflen_tensors),
-            hcat(node_parent_idxs_tensors...),
+            As_tensors, hcat(node_parent_idxs_tensors...),
             hcat(node_js_tensors...), tf.stack(x0_tensors))
 end
 
@@ -144,6 +147,7 @@ end
 immutable ModelInput
     likapprox_musigma::PyCall.PyObject
     likapprox_efflen::PyCall.PyObject
+    likapprox_As::Vector{PyCall.PyObject}
     likapprox_parent_idxs::Array
     likapprox_js::Array
     x0::PyCall.PyObject

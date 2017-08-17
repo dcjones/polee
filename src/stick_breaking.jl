@@ -607,3 +607,64 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
     @assert k == 0
 end
 
+
+"""
+This are used by the tenorflow implementation of inverse HSB. It's faster to
+build these matrices in julia than in python, so it's done here.
+"""
+function inverse_hsb_matrices(node_parent_idxs, node_js)
+    num_nodes = length(node_parent_idxs)
+
+    left_child = fill(-1, num_nodes)
+    right_child = fill(-1, num_nodes)
+    for i in 2:num_nodes
+        parent_idx = node_parent_idxs[i]
+        if right_child[parent_idx] == -1
+            right_child[parent_idx] = i
+        else
+            left_child[parent_idx] = i
+        end
+    end
+
+    # TODO: we can make this more efficient by collapsing some small matrices
+    # by some kind of heuristic.
+
+    # As = Tuple{Vector{Int}, Vector{Int}}[]
+    As = PyObject[] # sparse tensors
+    q = Queue(Tuple{Int, Int})
+    I = Int[]
+    J = Int[]
+    last_height = 1
+    enqueue!(q, (last_height, 1))
+    while !isempty(q)
+        if front(q)[1] != last_height
+            push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
+            I = Int[]
+            J = Int[]
+            last_height += 1
+        end
+        height, i = dequeue!(q)
+        @assert height == last_height
+
+        if left_child[i] != -1
+            j = left_child[i]
+            push!(I, i-1)
+            push!(J, j-1)
+            enqueue!(q, (height+1, j))
+        end
+
+        if right_child[i] != -1
+            j = right_child[i]
+            push!(I, i-1)
+            push!(J, j-1)
+            enqueue!(q, (height+1, j))
+        end
+    end
+
+    if !isempty(I)
+        push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
+    end
+    reverse!(As)
+
+    return As
+end

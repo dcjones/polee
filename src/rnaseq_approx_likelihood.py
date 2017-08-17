@@ -9,7 +9,7 @@ import sys
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, x, efflens, node_parent_idxs, node_js,
+    def __init__(self, x, efflens, As, node_parent_idxs, node_js,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
@@ -20,6 +20,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         parameters = locals()
 
         self.efflens = efflens
+        self.As = As
         self.node_parent_idxs = node_parent_idxs
         self.node_js = node_js
 
@@ -44,8 +45,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
     def _log_prob(self, musigma):
         n = int(self.x.get_shape()[-1])
 
-        num_samples = self.node_parent_idxs.shape[1]
-        num_nodes = self.node_parent_idxs.shape[0]
+        num_samples = len(self.As)
+        num_nodes = self.node_js.shape[0]
 
         y_tensors = []
 
@@ -70,65 +71,23 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # x -> y transformation
         for sample_num in range(num_samples):
             print(sample_num)
-            # breadth first traversal of the tree, separating out nodes by height
 
-            # set child indexes
             left_child = np.repeat(-1, num_nodes)
             right_child = np.repeat(-1, num_nodes)
-            x_index = np.zeros((n,1), dtype=int)
             for i in range(1, num_nodes):
-                parent_idx = self.node_parent_idxs[i, sample_num]-1
+                parent_idx = self.node_parent_idxs[i, sample_num] - 1
                 if right_child[parent_idx] == -1:
                     right_child[parent_idx] = i
                 else:
                     left_child[parent_idx] = i
 
+            # set child indexes
+            x_index = np.zeros((n,1), dtype=int)
             for i in range(num_nodes):
                 if self.node_js[i, sample_num] != 0:
                     x_index[self.node_js[i, sample_num] - 1] = i
 
-            q = Queue()
-            q.put((0,0))
-            As = []
-            i_indexes = []
-            j_indexes = []
-            last_height = 0
-            while not q.empty():
-                if q.queue[0][0] != last_height:
-                    indexes = np.transpose(np.array([i_indexes, j_indexes]))
-                    values = np.ones([len(indexes)], dtype=np.float32)
-                    A = tf.SparseTensor(indexes, values, [num_nodes, num_nodes])
-                    As.append(A)
-
-                    i_indexes.clear()
-                    j_indexes.clear()
-                    last_height += 1
-
-                height, i = q.get()
-                assert(height == last_height)
-
-                if left_child[i] != -1:
-                    j = left_child[i]
-                    i_indexes.append(i)
-                    j_indexes.append(j)
-                    q.put((height+1, j))
-
-                if right_child[i] != -1:
-                    j = right_child[i]
-                    i_indexes.append(i)
-                    j_indexes.append(j)
-                    q.put((height+1, j))
-
-            if len(i_indexes) > 0:
-                for i in passthrough:
-                    i_indexes.append(i)
-                    j_indexes.append(i)
-                indexes = np.transpose(np.array([i_indexes, j_indexes]))
-                values = np.ones([len(indexes)], dtype=np.float32)
-                A = tf.SparseTensor(indexes, values, [num_nodes, num_nodes])
-                As.append(A)
-
-            As.reverse()
+            As = self.As[sample_num]
             x_ = tf.expand_dims(tf.scatter_nd(x_index, x_efflen[sample_num,:], [num_nodes]), -1)
             # x_ = tf.Print(x_, [x_], "X_", summarize=5)
             Axs = [tf.sparse_tensor_dense_matmul(As[0], x_)]

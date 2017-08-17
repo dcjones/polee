@@ -613,6 +613,12 @@ This are used by the tenorflow implementation of inverse HSB. It's faster to
 build these matrices in julia than in python, so it's done here.
 """
 function inverse_hsb_matrices(node_parent_idxs, node_js)
+
+    # matrices with fewer than this many entries get merged into the adjacent
+    # one. The tradeoff is that merged matrices use more memory and involve
+    # redundant computation, but reduce overhead.
+    MERGE_THRESHOLD = 5000
+
     num_nodes = length(node_parent_idxs)
 
     left_child = fill(-1, num_nodes)
@@ -626,19 +632,15 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
         end
     end
 
-    # TODO: we can make this more efficient by collapsing some small matrices
-    # by some kind of heuristic.
-
-    # As = Tuple{Vector{Int}, Vector{Int}}[]
-    As = PyObject[] # sparse tensors
     q = Queue(Tuple{Int, Int})
     I = Int[]
     J = Int[]
+    IJs = Tuple{Vector{Int}, Vector{Int}}[]
     last_height = 1
     enqueue!(q, (last_height, 1))
     while !isempty(q)
         if front(q)[1] != last_height
-            push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
+            push!(IJs, (I, J))
             I = Int[]
             J = Int[]
             last_height += 1
@@ -662,9 +664,57 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
     end
 
     if !isempty(I)
-        push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
+        push!(IJs, (I, J))
     end
-    reverse!(As)
+
+    # post-process, merging very small matrices
+    As = PyObject[]
+    k = length(IJs)
+    while k > 0
+        if length(IJs[k][1]) < MERGE_THRESHOLD && k > 1
+            I, J = merge_inverse_hsb_matrices(IJs[k-1][1], IJs[k-1][2], IJs[k][1], IJs[k][2])
+            IJs[k-1] = (I, J)
+        else
+            I, J = IJs[k]
+            push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
+        end
+        k -= 1
+    end
 
     return As
+end
+
+
+"""
+If (Ia, Ja) and (Ib, Jb) represent two inverse hsb matrices, merge (Ib, Jb)
+into (Ia, Ja) return a new result (Ic, Jc).
+"""
+function merge_inverse_hsb_matrices(Ia, Ja, Ib, Jb)
+    p = sortperm(Ib)
+    Ib = Ib[p]
+    Jb = Jb[p]
+
+    Ic = Int[]
+    Jc = Int[]
+
+    for (ia, ja) in zip(Ia, Ja)
+        ks = searchsorted(Ib, ja)
+        if isempty(ks)
+            push!(Ic, ia)
+            push!(Jc, ja)
+        else
+            for k in ks
+                push!(Ic, ia)
+                push!(Jc, Jb[k])
+            end
+        end
+    end
+
+    # We also need to include everything in Ib, Jb
+    for (ib, jb) in zip(Ib, Jb)
+        push!(Ic, ib)
+        push!(Jc, jb)
+    end
+
+    return (Ic, Jc)
 end

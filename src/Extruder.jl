@@ -43,6 +43,7 @@ include("models/simple-mode.jl")
 include("models/logistic-regression.jl")
 include("models/simple-logistic-regression.jl")
 include("models/quantification.jl")
+include("models/pca.jl")
 
 
 function read_transcript_sequences!(ts, filename)

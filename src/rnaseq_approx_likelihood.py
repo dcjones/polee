@@ -19,6 +19,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             framework.assert_same_float_dtype([self.x])
         parameters = locals()
 
+        # print(self.x)
+        # print(self.x.get_shape())
+
         self.efflens = efflens
         self.As = As
         self.node_parent_idxs = node_parent_idxs
@@ -43,7 +46,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         return self.x.get_shape()[:-1]
 
     def _log_prob(self, musigma):
+        print(self.x)
         n = int(self.x.get_shape()[-1])
+        print(n)
 
         num_samples = len(self.As)
         num_nodes = self.node_js.shape[0]

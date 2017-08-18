@@ -22,6 +22,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # print(self.x)
         # print(self.x.get_shape())
 
+        # self.x = x
         self.efflens = efflens
         self.As = As
         self.node_parent_idxs = node_parent_idxs
@@ -98,8 +99,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             Axs = [tf.sparse_tensor_dense_matmul(As[0], x_)]
             for i in range(1, len(As)):
                 A = As[i]
-                Ax_i = tf.add(tf.sparse_tensor_dense_matmul(A, Axs[i-1]),
-                        tf.sparse_tensor_dense_matmul(A, x_))
+                Ax_i = tf.sparse_tensor_dense_matmul(A, tf.add(Axs[i-1], x_))
                 Axs.append(Ax_i)
 
             input_values = tf.squeeze(tf.add(tf.reduce_sum(tf.stack(Axs), axis=0), x_))

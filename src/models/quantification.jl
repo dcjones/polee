@@ -22,16 +22,16 @@ function estimate_transcript_expression(input::ModelInput)
     println("Estimating...")
 
     qx_mu_param = tf.Variable(tf.log(input.x0))
-    qx_mu_param = tf.Print(qx_mu_param,
-                        [tf.reduce_min(qx_mu_param), tf.reduce_max(qx_mu_param)],
-                        "QX_MU_PARAM SPAN")
+    # qx_mu_param = tf.Print(qx_mu_param,
+    #                     [tf.reduce_min(qx_mu_param), tf.reduce_max(qx_mu_param)],
+    #                     "QX_MU_PARAM SPAN")
     qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
     qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
 
     qx_mu_mu_param = tf.Variable(tf.log(input.x0[1]))
-    qx_mu_mu_param = tf.Print(qx_mu_mu_param,
-                        [tf.reduce_min(qx_mu_mu_param), tf.reduce_max(qx_mu_mu_param)],
-                        "QX_MU_MU_PARAM SPAN")
+    # qx_mu_mu_param = tf.Print(qx_mu_mu_param,
+    #                     [tf.reduce_min(qx_mu_mu_param), tf.reduce_max(qx_mu_mu_param)],
+    #                     "QX_MU_MU_PARAM SPAN")
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 

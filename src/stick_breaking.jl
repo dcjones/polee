@@ -617,7 +617,7 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
     # matrices with fewer than this many entries get merged into the adjacent
     # one. The tradeoff is that merged matrices use more memory and involve
     # redundant computation, but reduce overhead.
-    MERGE_THRESHOLD = 5000
+    MERGE_THRESHOLD = 25000
 
     num_nodes = length(node_parent_idxs)
 
@@ -680,6 +680,8 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
         end
         k -= 1
     end
+
+    @show length(As)
 
     return As
 end

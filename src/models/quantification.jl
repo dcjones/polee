@@ -38,10 +38,8 @@ function estimate_transcript_expression(input::ModelInput)
     inference = ed.KLqp(PyDict(Dict(x => qx, x_mu => qx_mu)),
                         data=PyDict(Dict(likapprox_musigma => input.likapprox_musigma)))
 
-    # optimizer = tf.train[:AdamOptimizer](1e-2)
     optimizer = tf.train[:AdamOptimizer](1e-2)
     # optimizer = tf.train[:MomentumOptimizer](1e-7, 0.8)
-    # inference[:run](n_iter=250, optimizer=optimizer)
     inference[:run](n_iter=500, optimizer=optimizer)
 
     sess = ed.get_session()

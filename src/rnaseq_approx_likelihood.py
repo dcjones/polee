@@ -47,12 +47,13 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         return self.x.get_shape()[:-1]
 
     def _log_prob(self, musigma):
+        print("RNA-SEQ LOG PROB")
         print(self.x)
         n = int(self.x.get_shape()[-1])
-        print(n)
 
         num_samples = len(self.As)
         num_nodes = self.node_js.shape[0]
+        print(num_nodes)
 
         y_tensors = []
 
@@ -60,15 +61,24 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # and there is no jacobian term. Suggests we are doing things wrong. I
         # could do something like exp(x_i) / (1 + sum(x_i)) which should be a
         # bijection with a well defined jacobian.
+        # self_x = tf.Print(self.x, [tf.reduce_min(self.x), tf.reduce_max(self.x)], "X SPAN")
         x = tf.nn.softmax(self.x)
+        # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "SOFTMAX X SPAN")
+        # x = tf.Print(x, [tf.reduce_sum(tf.cast(tf.logical_not(tf.is_finite(x)), tf.float32))],
+        #              "SOFTMAX X NON-FINITE COUNT")
 
         # effective length transform
         x_scaled = tf.multiply(x, self.efflens)
+        # x_scaled = tf.Print(x_scaled, [tf.reduce_min(x_scaled), tf.reduce_max(x_scaled)], "X_SCALED SPAN")
+        # x_scaled = tf.Print(x_scaled, [tf.reduce_sum(tf.cast(tf.logical_not(tf.is_finite(x_scaled)), tf.float32))],
+        #                     "X_SCALED NON-FINITE COUNT")
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
+        # x_scaled_sum = tf.Print(x_scaled_sum, [x_scaled_sum], "X_SCALED_SUM", summarize=10)
         x_efflen = tf.divide(x_scaled, x_scaled_sum)
         # x_efflen = x
         # x_scaled_sum = tf.reduce_sum(x)
         efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
+        # efflen_ladj = tf.Print(efflen_ladj, [efflen_ladj], "EFFLEN LADJ", summarize=10)
         hsb_ladj_tensors = []
 
         # TODO: It may make more sense to build this on the julia side so we
@@ -141,9 +151,11 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         lp_y = logit_ladj - tf.log(sigma * np.sqrt(2*np.pi)) - \
             tf.divide(tf.square(tf.subtract(y_logit, mu)), 2*tf.square(sigma))
         lp = tf.reduce_sum(lp_y, axis=1)
-
+        # lp = tf.Print(lp, [lp], "LP 1", summarize=10)
         lp += efflen_ladj
+        # lp = tf.Print(lp, [lp], "LP 2", summarize=10)
         lp += tf.stack(hsb_ladj_tensors)
+        # lp = tf.Print(lp, [lp], "LP 3", summarize=10)
 
         return lp
 

@@ -906,8 +906,6 @@ function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
             bs[i] = exp(βs[i])
         end
 
-        eps = 1e-10
-
         for _ in 1:num_mc_samples
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
@@ -918,10 +916,10 @@ function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
             end
 
             kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work, Val{GRADONLY})  # z -> y
-            ys = clamp!(ys, eps, 1 - eps)
+            ys = clamp!(ys, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
-            xs = clamp!(xs, eps, 1 - eps)
+            xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
             lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
                                 Val{GRADONLY})

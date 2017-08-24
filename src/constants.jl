@@ -14,3 +14,6 @@ const MIN_EFFECTIVE_LENGTH = 10.0f0
 # Fragment is considered incompatible with a transcript if it has a conditional
 # probability less than this.
 const MIN_FRAG_PROB = 1e-10
+
+# Epsilon used to clamp the y variable during likelihood approximation
+const LIKAP_Y_EPS = 1e-10

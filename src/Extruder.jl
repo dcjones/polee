@@ -171,6 +171,8 @@ function main()
         parsed_args = parse_args(subcmd_args, arg_settings)
         approximate_likelihood(parsed_args["likelihood_matrix_filename"],
                                parsed_args["output"])
+        # approximate_likelihood_logitnorm(parsed_args["likelihood_matrix_filename"],
+        #                                  parsed_args["output"])
         return
 
     elseif subcmd == "prepare-sample" || subcmd == "prep"

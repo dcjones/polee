@@ -43,6 +43,53 @@ end
 
 
 """
+Generate samples from likelihood approximated with a multivariate logit-normal
+"""
+function sample_likap_logitnorm(input_filename::String, num_samples)
+    input = h5open(input_filename)
+    mu = read(input["mu"])
+    sigma = exp.(read(input["omega"]))
+    effective_lengths = read(input["effective_lengths"])
+    close(input)
+    n = length(mu) + 1
+    @show n
+
+    zs = Array{Float32}(n-1)
+    ys = Array{Float64}(n-1)
+    xs = Array{Float32}(n)
+    samples = Array{Float32}(num_samples, n)
+    eps = 1e-10
+    for i in 1:num_samples
+        for j in 1:n-1
+            zs[j] = randn(Float32)
+            ys[j] = zs[j] * sigma[j] + mu[j]
+        end
+
+        # transform to multivariate logit-normal
+        xs[n] = 1.0f0
+        exp_y_sum = 1.0f0
+        for j in 1:n-1
+            xs[j] = exp(ys[j])
+            exp_y_sum += xs[j]
+        end
+        for j in 1:n
+            xs[j] /= exp_y_sum
+        end
+        xs = clamp!(xs, eps, 1 - eps)
+
+        for j in 1:n
+            xs[j] /= effective_lengths[j]
+        end
+        xs ./= sum(xs)
+
+        samples[i,:] = xs
+    end
+
+    return samples
+end
+
+
+"""
 Generate samples from an approximated likelihood stored in the given file.
 """
 function sample_likap(input_filename::String, num_samples)

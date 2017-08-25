@@ -37,6 +37,30 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
 end
 
 
+function approximate_likelihood_logitnorm(input_filename::String, output_filename::String)
+    sample = read(input_filename, RNASeqSample)
+    approximate_likelihood_logitnorm(sample, output_filename)
+end
+
+
+function approximate_likelihood_logitnorm(sample::RNASeqSample, output_filename::String)
+    mu, omega, t = approximate_likelihood_logitnorm(sample)
+
+    h5open(output_filename, "w") do out
+        n = sample.n
+        out["n"] = sample.n
+        out["mu", "compress", 1] = mu
+        out["omega", "compress", 1]  = omega
+        out["effective_lengths", "compress", 1] = sample.effective_lengths
+
+        g = g_create(out, "metadata")
+        attrs(g)["gfffilename"] = sample.transcript_metadata.filename
+        attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
+        attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
+    end
+end
+
+
 function approximate_likelihood_from_rsem(input_filename, output_filename)
     input = open(input_filename)
 
@@ -596,6 +620,225 @@ function optimize_likelihood_ab{GRADONLY}(s::RNASeqSample,
 
     return αs, βs
 end
+
+
+function approximate_likelihood_logitnorm{GRADONLY}(s::RNASeqSample,
+                                                    ::Type{Val{GRADONLY}}=Val{false})
+    m, n = size(s)
+    Xt = transpose(s.X)
+
+    model = Model(m, n)
+
+    num_steps = 500
+
+    # good settings for exponential decay
+    initial_adam_learning_rate = 1.0
+    adam_learning_rate_decay = 2e-2
+
+    adam_learning_rate = initial_adam_learning_rate
+
+    adam_eps = 1e-8
+
+    adam_rv = 0.9
+    adam_rm = 0.7
+
+    # gradient running mean
+    m_mu    = Array{Float32}(n-1)
+    m_omega = Array{Float32}(n-1)
+
+    # gradient running variances
+    v_mu    = Array{Float32}(n-1)
+    v_omega = Array{Float32}(n-1)
+
+    # step size clamp
+    ss_max_mu_step    = 2e-2
+    ss_max_omega_step = 2e-2
+
+    # number of monte carlo samples to estimate gradients an elbo at each
+    # iteration
+    num_mc_samples = 6
+
+    # Normal distributed values
+    zs = Array{Float32}(n-1)
+
+    # zs transformed to Kumaraswamy distributed values
+    ys = Array{Float64}(n-1)
+
+    # ys transformed by hierarchical stick breaking
+    xs = Array{Float32}(n)
+
+    mu = fill(0.0f0, n-1)
+    omega = fill(0.1f0, n-1)
+
+    # exp(omega)
+    sigma = Array{Float32}(n-1)
+
+    # various intermediate gradients
+    mu_grad    = Array{Float32}(n-1)
+    omega_grad = Array{Float32}(n-1)
+    sigma_grad = Array{Float32}(n-1)
+    y_grad = Array{Float32}(n-1)
+    x_grad = Array{Float32}(n)
+    work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
+
+    elbo = 0.0
+    elbo0 = 0.0
+    max_elbo = -Inf # smallest elbo seen so far
+
+    tic()
+    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
+    for step_num in 1:num_steps
+        elbo0 = elbo
+        elbo = 0.0
+        fill!(mu_grad, 0.0f0)
+        fill!(omega_grad, 0.0f0)
+
+        for i in 1:n-1
+            sigma[i] = exp(omega[i])
+        end
+
+        eps = 1e-10
+
+        for _ in 1:num_mc_samples
+            fill!(x_grad, 0.0f0)
+            fill!(y_grad, 0.0f0)
+            fill!(sigma_grad, 0.0f0)
+
+            # generate log-normal
+            zsum = 1.0f0
+            for i in 1:n-1
+                zs[i] = randn(Float32)
+                ys[i] = zs[i] * sigma[i] + mu[i]
+            end
+
+            # transform to multivariate logit-normal
+            xs[n] = 1.0f0
+            exp_y_sum = 1.0f0
+            for i in 1:n-1
+                xs[i] = exp(ys[i])
+                exp_y_sum += xs[i]
+            end
+            for i in 1:n
+                xs[i] /= exp_y_sum
+            end
+            xs = clamp!(xs, eps, 1 - eps)
+
+            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
+                                Val{GRADONLY})
+
+            c = 0.0f0
+            for i in 1:n
+                c += xs[i] * x_grad[i]
+            end
+
+            for i in 1:n-1
+                y_grad[i] = xs[i] * x_grad[i] - xs[i] * c
+            end
+
+            # ladj gradients
+            xsum = 0.0f0
+            for i in 1:n-1
+                xsum += xs[i]
+            end
+
+            for i in 1:n-1
+                y_grad[i] += (1 / (1 + xsum)) * (xs[i] - xs[i] * xsum) + 1 - xs[i] * (n-1)
+            end
+
+            ln_ladj = log(1 + xsum)
+            for i in 1:n-1
+                ln_ladj += log(xs[i])
+            end
+
+            elbo = lp + ln_ladj
+
+            for i in 1:n-1
+                mu_grad[i] = y_grad[i]
+                sigma_grad[i] = zs[i] * y_grad[i]
+            end
+
+            # adjust for log transform and accumulate
+            for i in 1:n-1
+                omega_grad[i] += sigma[i] * sigma_grad[i]
+            end
+        end
+
+        for i in 1:n-1
+            mu_grad[i]    /= num_mc_samples
+            omega_grad[i] /= num_mc_samples
+        end
+
+        elbo /= num_mc_samples # get estimated expectation over mc samples
+
+        # Note: the elbo has a negative entropy term is well, but but we are
+        # using uniform values on [0,1] which has entropy of 0, so that term
+        # goes away.
+
+        @show elbo
+
+        max_elbo = max(max_elbo, elbo)
+        @assert isfinite(elbo)
+
+        if step_num == 1
+            m_mu[:]    = mu_grad
+            m_omega[:] = omega_grad
+
+            v_mu[:]    = mu_grad.^2
+            v_omega[:] = omega_grad.^2
+        else
+            for i in 1:n-1
+                m_mu[i]    = adam_rm * m_mu[i]    + (1 - adam_rm) * mu_grad[i]
+                m_omega[i] = adam_rm * m_omega[i] + (1 - adam_rm) * omega_grad[i]
+
+                v_mu[i]    = adam_rv * v_mu[i]    + (1 - adam_rv) * mu_grad[i]^2
+                v_omega[i] = adam_rv * v_omega[i] + (1 - adam_rv) * omega_grad[i]^2
+            end
+        end
+
+        max_delta = 0.0
+        for i in 1:n-1
+            # update mu parameters
+            m_mu_i = m_mu[i] / (1 - adam_rm^step_num)
+            v_mu_i = v_mu[i] / (1 - adam_rv^step_num)
+            delta = adam_learning_rate * m_mu_i / (sqrt(v_mu_i) + adam_eps)
+            max_delta = max(max_delta, abs(delta))
+            mu[i] += clamp(delta, -ss_max_mu_step, ss_max_mu_step)
+
+            # update b parameters
+            m_omega_i = m_omega[i] / (1 - adam_rm^step_num)
+            v_omega_i = v_omega[i] / (1 - adam_rv^step_num)
+            delta = adam_learning_rate * m_omega_i / (sqrt(v_omega_i) + adam_eps)
+            max_delta = max(max_delta, abs(delta))
+            omega[i] += clamp(delta, -ss_max_omega_step, ss_max_omega_step)
+        end
+        # @show max_delta
+
+        # exp decay
+        adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
+
+        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
+
+        # step decay
+        # adam_learning_rate = initial_adam_learning_rate * adam_learning_rate_decay ^ step_num
+
+        next!(prog)
+    end
+
+    toc()
+
+    # println("Finished in ", step_num, " steps")
+
+    # Write out point estimates for convenience
+    #log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
+    #open("point-estimates.csv", "w") do out
+        #for i in 1:n
+            #@printf(out, "%e\n", model.π_simplex[i])
+        #end
+    #end
+
+    return mu, omega, nothing
+end
+
 
 
 

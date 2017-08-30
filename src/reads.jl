@@ -193,6 +193,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
 
     @printf("Read %9d reads\nwith %9d alignments\n",
             length(readnames), length(alignments))
+    finalize(readnames)
 
     # group alignments into alignment pair intervals
     sort!(alignments, lt=group_alignments_isless)

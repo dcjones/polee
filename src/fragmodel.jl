@@ -19,15 +19,15 @@ function sample_training_examples(rs::Reads, n::Int)
 
     # count unique alignment start positions, ignoring sequence name for
     # simplicity
-    starts = IntSet()
-    for alnpr in rs.alignment_pairs
-        if alnpr.first > 0
+    starts = Set{Int}()
+    for tree in values(rs.alignment_pairs.trees)
+        for alnpr in tree
             push!(starts, alnpr.first)
         end
     end
 
-    starts_subset = IntSet()
-    starts_subset_idxs = IntSet(sample(1:length(starts), n, replace=false))
+    starts_subset = Set{Int}()
+    starts_subset_idxs = Set{Int}(sample(1:length(starts), n, replace=false))
     for (i, start) in enumerate(starts)
         if i in starts_subset_idxs
             push!(starts_subset, start)
@@ -35,12 +35,15 @@ function sample_training_examples(rs::Reads, n::Int)
     end
 
     last_start = 0
-    for alnpr in rs.alignment_pairs
-        if alnpr.first != last_start
-            if alnpr.first > 0 && alnpr.first in starts_subset
-                push!(examples, alnpr)
+    # for alnpr in rs.alignment_pairs
+    for tree in values(rs.alignment_pairs.trees)
+        for alnpr in tree
+            if alnpr.first != last_start
+                if alnpr.first > 0 && alnpr.first in starts_subset
+                    push!(examples, alnpr)
+                end
+                last_start = alnpr.first
             end
-            last_start = alnpr.first
         end
     end
 

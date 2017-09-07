@@ -34,6 +34,7 @@ include("likelihood-approximation.jl")
 include("estimate.jl")
 include("gibbs.jl")
 include("stick_breaking.jl")
+include("isometric_log_ratios.jl")
 include("sequences.jl")
 
 # TODO: automate including everything under models

@@ -522,7 +522,7 @@ end
 
 
 # generate a random HSBTransform tree with n leaf nodes.
-function rand_hsb_tree(n)
+function rand_tree_nodes(n)
     stack = [HClustNode(j) for j in 1:n]
 
     while length(stack) > 1
@@ -536,7 +536,12 @@ function rand_hsb_tree(n)
     root = stack[1]
 
     nodes = order_nodes(root, n)
-    return HSBTransform(nodes)
+    return nodes
+end
+
+
+function rand_hsb_tree(n)
+    return HSBTransform(rand_tree_nodes(n))
 end
 
 

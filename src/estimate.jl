@@ -47,6 +47,8 @@ function load_samples(filenames, ts_metadata)
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
         effective_lengths = read(input["effective_lengths"])
+        @show filename
+        @show effective_lengths[122776]
 
         As = inverse_hsb_matrices(node_parent_idxs, node_js)
         push!(As_tensors, As)

@@ -47,8 +47,10 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         return self.x.get_shape()[:-1]
 
     def _log_prob(self, musigma):
-        print("RNA-SEQ LOG PROB")
-        print(self.x)
+
+        # self.x = tf.Print(self.x, [tf.reduce_min(self.x[0,:]), tf.reduce_max(self.x[0,:])], "X[0,:] SPAN", summarize=10)
+        self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "SCALE", summarize=10)
+
         n = int(self.x.get_shape()[-1])
 
         num_samples = len(self.As)
@@ -63,6 +65,17 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # bijection with a well defined jacobian.
         # self_x = tf.Print(self.x, [tf.reduce_min(self.x), tf.reduce_max(self.x)], "X SPAN")
         x = tf.nn.softmax(self.x)
+
+        # TODO: Let's see if this is sufficient adjustment
+        x_softmax_ladj = tf.reduce_sum(self.x, axis=1)
+        x_softmax_ladj = tf.Print(x_softmax_ladj, [tf.reduce_min(x_softmax_ladj), tf.reduce_max(x_softmax_ladj)], "SOFTMAX LADJ SPAN")
+
+        x = tf.Print(x, [tf.reduce_min(x[0,:]), tf.reduce_max(x[0,:])], "SFTMX X[0,:] SPAN", summarize=10)
+        # idx = 198973 - 1
+        idx = 194630 - 1
+        # x = tf.Print(x, [tf.reduce_min(x[:,idx]), tf.reduce_max(x[:,idx])], "X[:,IDX] SPAN", summarize=10)
+        x = tf.Print(x, [x[:,idx]], "X[:,IDX]", summarize=10)
+
         # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "SOFTMAX X SPAN")
         # x = tf.Print(x, [tf.reduce_sum(tf.cast(tf.logical_not(tf.is_finite(x)), tf.float32))],
         #              "SOFTMAX X NON-FINITE COUNT")
@@ -75,6 +88,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
         # x_scaled_sum = tf.Print(x_scaled_sum, [x_scaled_sum], "X_SCALED_SUM", summarize=10)
         x_efflen = tf.divide(x_scaled, x_scaled_sum)
+        # x_efflen = tf.Print(x_efflen, [tf.reduce_min(x_efflen[:,122775]), tf.reduce_max(x_efflen[:,122775])],"X_EFFLEN[:,IDX] SPAN", summarize=10)
         # x_efflen = x
         # x_scaled_sum = tf.reduce_sum(x)
         efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
@@ -156,6 +170,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # lp = tf.Print(lp, [lp], "LP 2", summarize=10)
         lp += tf.stack(hsb_ladj_tensors)
         # lp = tf.Print(lp, [lp], "LP 3", summarize=10)
+
+        # TODO: not clear if this helps or hurts
+        # lp += x_softmax_ladj
 
         return lp
 

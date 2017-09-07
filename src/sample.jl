@@ -55,8 +55,8 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
     Js = [UInt32[] for _ in 1:Threads.nthreads()]
     Vs = [Float32[] for _ in 1:Threads.nthreads()]
 
-    # Threads.@threads for treepair_idx in 1:length(treepairs)
-    for treepair_idx in 1:length(treepairs)
+    Threads.@threads for treepair_idx in 1:length(treepairs)
+    # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
@@ -90,9 +90,7 @@ function RNASeqSample(transcripts_filename::String,
 
     @time ts, ts_metadata = Transcripts(transcripts_filename)
     @time rs = Reads(reads_filename, excluded_seqs)
-    println("reading transcript sequences")
     read_transcript_sequences!(ts, genome_filename)
-    println("done")
     fm = FragModel(rs, ts)
 
     println("intersecting reads and transcripts...")
@@ -100,18 +98,22 @@ function RNASeqSample(transcripts_filename::String,
     # reassign indexes to alignments to group by position
     aln_idx_map = zeros(Int, length(rs.alignments))
     nextidx = 1
-    for alnpr in rs.alignment_pairs
-        if alnpr.metadata.mate1_idx > 0
-            id = rs.alignments[alnpr.metadata.mate1_idx].id
-            if aln_idx_map[id] == 0
-                aln_idx_map[id] = nextidx
-                nextidx += 1
-            end
-        else
-            id = rs.alignments[alnpr.metadata.mate2_idx].id
-            if aln_idx_map[id] == 0
-                aln_idx_map[id] = nextidx
-                nextidx += 1
+    # for alnpr in rs.alignment_pairs
+    # for alnpr in rs.alignment_pairs
+    for tree in values(rs.alignment_pairs.trees)
+        for alnpr in tree
+            if alnpr.metadata.mate1_idx > 0
+                id = rs.alignments[alnpr.metadata.mate1_idx].id
+                if aln_idx_map[id] == 0
+                    aln_idx_map[id] = nextidx
+                    nextidx += 1
+                end
+            else
+                id = rs.alignments[alnpr.metadata.mate2_idx].id
+                if aln_idx_map[id] == 0
+                    aln_idx_map[id] = nextidx
+                    nextidx += 1
+                end
             end
         end
     end

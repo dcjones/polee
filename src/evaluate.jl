@@ -137,8 +137,43 @@ function sample_likap(approx_type::Type{KumaraswamyHSBApprox},
     return samples
 end
 
-# TODO: NormalILRApprox
-# TODO: KumaraswamyHSBApprox
+
+function sample_likap(approx_type::Type{NormalILRApprox},
+                      input, num_samples)
+
+    mu = read(input["mu"])
+    sigma = exp.(read(input["omega"]))
+    effective_lengths = read(input["effective_lengths"])
+    t = ILRTransform(read(input["node_parent_idxs"]),
+                     read(input["node_js"]))
+    close(input)
+    n = length(mu) + 1
+    eps = 1e-10
+
+    zs = Array{Float32}(n-1)
+    ys = Array{Float64}(n-1)
+    xs = Array{Float32}(n)
+    samples = Array{Float32}(num_samples, n)
+
+    for i in 1:num_samples
+        for j in 1:n-1
+            zs[j] = randn(Float32)
+            ys[j] = mu[j] + sigma[j] * zs[j]
+        end
+
+        ilr_ladj = ilr_transform!(t, ys, xs, Val{true})                     # y -> x
+        xs = clamp!(xs, eps, 1 - eps)
+
+        for j in 1:n
+            xs[j] /= effective_lengths[j]
+        end
+        xs ./= sum(xs)
+
+        samples[i,:] = xs
+    end
+
+    return samples
+end
 
 
 """

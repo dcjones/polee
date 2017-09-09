@@ -1,31 +1,52 @@
 
 # isometric log-ratio transformation
-type ISRTransform
+type ILRTransform
     # tree nodes in depth first traversal order
     nodes::Vector{HClustNode}
     xs_sum::Float64
 end
 
-function ISRTransform(nodes::Vector{HClustNode})
-    return ISRTransform(nodes, 0.0)
+
+function flattened_tree(t::ILRTransform)
+    return flattened_tree(t.nodes)
 end
 
-function rand_isr_tree(n)
-    return ISRTransform(rand_tree_nodes(n))
+
+function ILRTransform(nodes::Vector{HClustNode})
+    return ILRTransform(nodes, 0.0)
+end
+
+
+function ILRTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
+    m, n = size(X)
+    root = hclust(X)
+    nodes = order_nodes(root, n)
+    return ILRTransform(nodes)
+end
+
+
+function ILRTransform(parent_idxs, js)
+    nodes = deserialize_tree(parent_idxs, js)
+    return ILRTransform(nodes)
+end
+
+
+function rand_ilr_tree(n)
+    return ILRTransform(rand_tree_nodes(n))
 end
 
 
 """
 Transfrom real numbers ys to simplex constrain vector xs. (This is actually
-the inverse isr transformation, if we follew the literature.)
+the inverse ilr transformation, if we follew the literature.)
 """
-function isr_transform!{GRADONLY}(t::ISRTransform, ys::Vector, xs::Vector,
+function ilr_transform!{GRADONLY}(t::ILRTransform, ys::Vector, xs::Vector,
                                   ::Type{Val{GRADONLY}})
 
     nodes = t.nodes
     nodes[1].input_value = 0.0f0
     k = 1 # internal node count
-    ladj = 0.0f0
+    ladj = 0.0
 
     for i in 1:length(nodes)
         node = nodes[i]
@@ -38,8 +59,8 @@ function isr_transform!{GRADONLY}(t::ISRTransform, ys::Vector, xs::Vector,
         @assert node.left_child !== node
         @assert node.right_child !== node
 
-        r = node.left_child.subtree_size
-        s = node.right_child.subtree_size
+        r = Int(node.left_child.subtree_size)
+        s = Int(node.right_child.subtree_size)
 
         a =  sqrt(s / (r*(r+s)))
         b = -sqrt(r / (s*(r+s)))
@@ -65,9 +86,9 @@ function isr_transform!{GRADONLY}(t::ISRTransform, ys::Vector, xs::Vector,
 end
 
 """
-Compute ISR transform gradients.
+Compute ILR transform gradients.
 """
-function isr_transform_gradients!(t::ISRTransform, xs::Vector, y_grad::Vector,
+function ilr_transform_gradients!(t::ILRTransform, xs::Vector, y_grad::Vector,
                                   x_grad::Vector)
 
     # constant used in gradients wrt x prior to normalization
@@ -88,8 +109,8 @@ function isr_transform_gradients!(t::ISRTransform, xs::Vector, y_grad::Vector,
             node.grad = (1/xs_sum) * (x_grad[node.j] + dladj_dxi) - c   # normalization
             node.grad = exp(node.input_value) * node.grad # exp transforation
         else
-            r = node.left_child.subtree_size
-            s = node.right_child.subtree_size
+            r = Int(node.left_child.subtree_size)
+            s = Int(node.right_child.subtree_size)
 
             a =  sqrt(s / (r*(r+s)))
             b = -sqrt(r / (s*(r+s)))
@@ -112,7 +133,7 @@ Transorm simplex constrained vector xs to unconstrained real numbers ys.
 
 This is only for testing purposes, so it doesn't compute the jacobian determinant.
 """
-function inverse_isr_transform!{GRADONLY}(t::ISRTransform, xs::Vector, ys::Vector,
+function inverse_ilr_transform!{GRADONLY}(t::ILRTransform, xs::Vector, ys::Vector,
                                           ::Type{Val{GRADONLY}})
 
     nodes = t.nodes
@@ -123,8 +144,8 @@ function inverse_isr_transform!{GRADONLY}(t::ISRTransform, xs::Vector, ys::Vecto
         if node.j != 0 # leaf node
             node.input_value = log(xs[node.j])
         else
-            r = node.left_child.subtree_size
-            s = node.right_child.subtree_size
+            r = Int(node.left_child.subtree_size)
+            s = Int(node.right_child.subtree_size)
 
             a =  sqrt(s / (r*(r+s)))
             b = -sqrt(r / (s*(r+s)))

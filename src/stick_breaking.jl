@@ -505,6 +505,11 @@ end
 
 # rebuild tree from serialization
 function HSBTransform(parent_idxs, js)
+    return HSBTransform(deserialize_tree(parent_idxs, js))
+end
+
+
+function deserialize_tree(parent_idxs, js)
     @assert length(parent_idxs) == length(js)
     nodes = [HClustNode(0) for i in 1:length(parent_idxs)]
     nodes[1].j = js[1]
@@ -525,7 +530,7 @@ function HSBTransform(parent_idxs, js)
 
     set_subtree_sizes!(nodes)
 
-    return HSBTransform(nodes)
+    return nodes
 end
 
 
@@ -534,10 +539,15 @@ Reduce the tree structure to two arrays: on giving parent indexes, one giving
 leaf indexes.
 """
 function flattened_tree(t::HSBTransform)
-    node_parent_idxs = Array{Int32}(length(t.nodes))
-    node_js          = Array{Int32}(length(t.nodes))
-    for i in 1:length(t.nodes)
-        node = t.nodes[i]
+    return flattened_tree(t.nodes)
+end
+
+
+function flattened_tree(nodes::Vector{HClustNode})
+    node_parent_idxs = Array{Int32}(length(nodes))
+    node_js          = Array{Int32}(length(nodes))
+    for i in 1:length(nodes)
+        node = nodes[i]
         node_parent_idxs[i] = node.parent_idx
         node_js[i] = node.j
     end

@@ -17,3 +17,12 @@ const MIN_FRAG_PROB = 1e-10
 
 # Epsilon used to clamp the y variable during likelihood approximation
 const LIKAP_Y_EPS = 1e-10
+
+
+# Constants used for optimization with ADAM
+const ADAM_INITIAL_LEARNING_RATE = 1.0
+const ADAM_LEARNING_RATE_DECAY = 2e-2
+const ADAM_EPS = 1e-8
+const ADAM_RV = 0.9
+const ADAM_RM = 0.7
+

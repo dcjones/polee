@@ -1,35 +1,67 @@
 
-include("randn.jl")
 
-function approximate_likelihood(input_filename::String, output_filename::String)
+abstract type LikelihoodApproximation end
+
+"""
+Optimize point estimates using HSB transformation.
+"""
+struct OptimizeHSBApprox <: LikelihoodApproximation end
+
+"""
+Logistic-normal distribution.
+"""
+struct LogisticNormalApprox <: LikelihoodApproximation end
+
+"""
+Hierarchical stick breaking with Kumaraswamy distributed balances.
+"""
+struct KumaraswamyHSBApprox <: LikelihoodApproximation
+    treemethod::Symbol # [one of :sequential, :random, :clustered]
+end
+KumaraswamyHSBApprox() = KumaraswamyHSBApprox(:clustered)
+
+"""
+Hierarchical stick breaking with Logit-Normal distributed balances.
+"""
+struct LogitNormalHSBApprox <: LikelihoodApproximation
+    treemethod::Symbol # [one of :sequential, :random, :clustered]
+end
+LogitNormalHSBApprox() = LogitNormalHSBApprox(:clustered)
+
+"""
+Isometric Log-ratio transformed normal distribution.
+"""
+struct NormalILRApprox <: LikelihoodApproximation
+    treemethod::Symbol # [one of :sequential, :random, :clustered]
+end
+NormalILRApprox() = NormalILRApprox(:clustered)
+
+# Other approximations we could implement, but would require a different
+# optimization method.
+#   - Dirichlet
+#   - HSB with Beta distributed balances
+
+function approximate_likelihood(approximation::LikelihoodApproximation,
+                                input_filename::String, output_filename::String)
     sample = read(input_filename, RNASeqSample)
-    approximate_likelihood(sample, output_filename)
+    approximate_likelihood(approximation, sample, output_filename)
 end
 
 
-function approximate_likelihood(sample::RNASeqSample, output_filename::String)
-    # optimize_likelihood(sample)
-    # optimize_likelihood_ab(sample)
-    mu, omega, t = approximate_likelihood(sample)
-    # mu, omega, t = approximate_likelihood_kumaraswamy(sample)
+function approximate_likelihood(approximation::LikelihoodApproximation,
+                                sample::RNASeqSample, output_filename::String)
+    params = approximate_likelihood(approximation, sample)
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
-        out["mu", "compress", 1] = mu
-        out["omega", "compress", 1]  = omega
         out["effective_lengths", "compress", 1] = sample.effective_lengths
 
-        node_parent_idxs = Array{Int32}(length(t.nodes))
-        node_js          = Array{Int32}(length(t.nodes))
-        for i in 1:length(t.nodes)
-            node = t.nodes[i]
-            node_parent_idxs[i] = node.parent_idx
-            node_js[i] = node.j
+        for (key, val) in params
+            out[key, "compress", 1] = val
         end
-        out["node_parent_idxs"] = node_parent_idxs
-        out["node_js"] = node_js
 
         g = g_create(out, "metadata")
+        attrs(g)["approximation"] = string(typeof(approximation))
         attrs(g)["gfffilename"] = sample.transcript_metadata.filename
         attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
         attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
@@ -37,231 +69,42 @@ function approximate_likelihood(sample::RNASeqSample, output_filename::String)
 end
 
 
-function approximate_likelihood_logitnorm(input_filename::String, output_filename::String)
-    sample = read(input_filename, RNASeqSample)
-    approximate_likelihood_logitnorm(sample, output_filename)
+function adam_learning_rate(step_num)
+    return ADAM_INITIAL_LEARNING_RATE * exp(-ADAM_LEARNING_RATE_DECAY * step_num)
 end
 
 
-function approximate_likelihood_logitnorm(sample::RNASeqSample, output_filename::String)
-    mu, omega, t = approximate_likelihood_logitnorm(sample)
-
-    h5open(output_filename, "w") do out
-        n = sample.n
-        out["n"] = sample.n
-        out["mu", "compress", 1] = mu
-        out["omega", "compress", 1]  = omega
-        out["effective_lengths", "compress", 1] = sample.effective_lengths
-
-        g = g_create(out, "metadata")
-        attrs(g)["gfffilename"] = sample.transcript_metadata.filename
-        attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
-        attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
-    end
-end
-
-
-function approximate_likelihood_from_rsem(input_filename, output_filename)
-    input = open(input_filename)
-
-    mat = match(r"^(\d+)\s+(\d+)", readline(input))
-    n = parse(Int, mat.captures[1])
-    m0 = parse(Int, mat.captures[2])
-
-    I = Array(Int, 0)
-    J = Array(Int, 0)
-    V = Array(Float32, 0)
-    println("reading rsem likelihood matrix...")
-    i = 0
-    for line in eachline(input)
-        i += 1
-
-        toks = split(line, ' ')
-        k = 1
-        while k < length(toks)
-            j = 1 + parse(Int, toks[k])
-            v = parse(Float64, toks[k+1])
-
-            if v > MIN_FRAG_PROB
-                push!(I, i)
-                push!(J, j)
-                push!(V, Float32(v))
-            end
-
-            k += 2
+function adam_update_mv!(ms, vs, grad, step_num)
+    @assert length(ms) == length(vs) == length(grad)
+    n = length(ms)
+    if step_num == 1
+        for i in 1:n
+            ms[i] = grad[i]
+            vs[i] = grad[i]^2
         end
-    end
-    @show maximum(I)
-    @show maximum(J)
-    m = i
-    close(input)
-    @show (minimum(I), maximum(I), minimum(J), maximum(J), m, n)
-    println("making SparseMatrixCSC")
-    X = sparse(I, J, V, m, n)
-    println("making SparseMatrixRSB")
-    rsbX = SparseMatrixRSB(X)
-    println("done")
-    @show size(X)
-
-    effective_lengths = ones(Float32, n)
-    sample = RNASeqSample(m, n, rsbX, effective_lengths, TranscriptsMetadata())
-
-    @time μ, σ, w = approximate_likelihood(sample)
-
-    h5open(output_filename, "w") do out
-        n = sample.n
-        out["n"] = sample.n
-        out["mu", "compress", 1] = μ[1:n-1]
-        out["sigma", "compress", 1] = σ[1:n-1]
-        out["w", "compress", 1] = w
+    else
+        for i in 1:n
+            ms[i] = ADAM_RM * ms[i] + (1 - ADAM_RM) * grad[i]
+            vs[i] = ADAM_RV * vs[i] + (1 - ADAM_RV) * grad[i]^2
+        end
     end
 end
 
 
-function approximate_likelihood_from_isolator(input_filename,
-                                              effective_lengths_filename,
-                                              output_filename)
-    input = open(input_filename)
+function adam_update_params!(params, ms, vs, learning_rate, step_num, max_step_size)
+    m_denom = (1 - ADAM_RM^step_num)
+    v_denom = (1 - ADAM_RV^step_num)
 
-    n = parse(Int, readline(input))
-
-    m = parse(Int, readline(input))
-    @show (m, n)
-    I = Array{Int}(0)
-    J = Array{Int}(0)
-    V = Array{Float32}(0)
-    println("reading isolator likelihood matrix...")
-    for line in eachline(input)
-        j_, i_, v_ = split(line, ',')
-        i = 1 + parse(Int, i_)
-        j = 1 + parse(Int, j_)
-        v = parse(Float32, v_)
-
-        push!(I, i)
-        push!(J, j)
-        push!(V, v)
-    end
-    X = sparse(I, J, V, m, n)
-    rsbX = SparseMatrixRSB(X)
-    println("done")
-
-    println("reading isolator transcript weights...")
-    effective_lengths = Float32[]
-    open(effective_lengths_filename) do input
-        for line in eachline(input)
-            push!(effective_lengths, parse(Float32, line))
-        end
-    end
-    println("done")
-
-    sample = RNASeqSample(m, n, rsbX, effective_lengths, TranscriptsMetadata())
-
-    # measure and dump connectivity info
-    #=
-    p = sortperm(I)
-    I = I[p]
-    J = J[p]
-    v = V[p]
-    edge_count = Dict{Tuple{Int, Int}, Int}()
-    a = 1
-    while a <= length(I)
-        if I[a] % 1000 == 0
-            @show I[a]
-        end
-
-        b = a
-        while b <= length(I) && I[a] == I[b]
-            b += 1
-        end
-
-        for k in a:b-1
-            for l in k+1:b-1
-                key = J[k] < J[l] ? (J[k], J[l]) : (J[l], J[k])
-                if haskey(edge_count, key)
-                    edge_count[key] += 1
-                else
-                    edge_count[key] = 1
-                end
-            end
-        end
-        a = b
-    end
-
-    open("connectivity.csv", "w") do out
-        for ((u,v), c) in edge_count
-            println(out, u, ",", v, ",", c)
-        end
-    end
-    =#
-
-    #@profile μ, σ = approximate_likelihood(sample)
-    #Profile.print()
-
-    @time μ, σ = approximate_likelihood(sample)
-
-    h5open(output_filename, "w") do out
-        n = sample.n
-        out["n"] = sample.n
-        out["mu", "compress", 1] = μ[1:n-1]
-        out["sigma", "compress", 1] = σ[1:n-1]
+    for i in 1:length(params)
+        param_m = ms[i] / m_denom
+        param_v = vs[i] / v_denom
+        delta = learning_rate * param_m / (sqrt(param_v) + ADAM_EPS)
+        params[i] += clamp(delta, -max_step_size, max_step_size)
     end
 end
 
 
-"""
-Compute the entropy of a multivariate normal distribution along with gradients
-wrt σ.
-
-Note: when σ² does not have length divisible by the simd vector length it needs
-to be padded with extra 1s
-"""
-function normal_entropy!(grad, σ, n)
-    vs = reinterpret(FloatVec, σ)
-    vs_sumlogs = sum(mapreduce(log, +, zero(FloatVec), vs))
-    entropy = 0.5 * n * log(2 * π * e) + vs_sumlogs
-
-    return entropy
-end
-
-
-"""
-Sample from the variational distribution and evaluate the true likelihood
-function at these samples.
-"""
-function diagnostic_samples(model, X, μ, σ, i)
-    n = length(μ)
-
-    num_samples = 500
-    samples = Array(Float32, num_samples)
-    weights = Array(Float32, num_samples)
-    π = Array(Float32, n)
-    π_grad = Array(Float32, n)
-
-    for k in 1:num_samples
-        for j in 1:n
-            π[j] = rand(Normal(μ[j], σ[j]))
-        end
-
-        ll = log_likelihood(model, X, π, π_grad)
-        samples[k] = model.π_simplex[i]
-        weights[k] = ll
-    end
-
-    return (samples, weights)
-end
-
-
-# function show_node(node, xs, ys)
-#     if node.j != 0
-#         @show (Int(node.j), xs[node.j])
-#     else
-#         @show (node.k, ys[node.k])
-#         show_node(node.left_child, xs, ys)
-#         show_node(node.right_child, xs, ys)
-#     end
-# end
-
-
+# Some debugging utilities
 function node_label(node)
     if node.j != 0
         return @sprintf("L%d", node.j)
@@ -285,8 +128,8 @@ end
 
 
 
-function optimize_likelihood{GRADONLY}(s::RNASeqSample,
-                            ::Type{Val{GRADONLY}}=Val{true})
+function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, s::RNASeqSample,
+                                          ::Type{Val{GRADONLY}}=Val{true})
     m, n = size(s)
     Xt = transpose(s.X)
 
@@ -294,22 +137,8 @@ function optimize_likelihood{GRADONLY}(s::RNASeqSample,
 
     num_steps = 500
 
-    # good settings for exponential decay
-    initial_adam_learning_rate = 1.0
-    adam_learning_rate_decay = 2e-2
-    # initial_adam_learning_rate = 0.1
-    # initial_adam_learning_rate = 1e-2
-    # adam_learning_rate_decay = 2e-4
-
-    adam_learning_rate = initial_adam_learning_rate
-
-    adam_eps = 1e-8
-
-    adam_rv = 0.7
-    adam_rm = 0.8
-
     # cluster transcripts for hierachrical stick breaking
-    @time t = HSBTransform(s.X)
+    t = HSBTransform(s.X)
 
     m_z = Array{Float32}(n-1)
     v_z = Array{Float32}(n-1)
@@ -327,7 +156,6 @@ function optimize_likelihood{GRADONLY}(s::RNASeqSample,
     z_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
     x_grad = Array{Float32}(n)
-    work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     # initial values for y
     k = 1
@@ -372,6 +200,7 @@ function optimize_likelihood{GRADONLY}(s::RNASeqSample,
             z_grad[i] += (1 - expz) / (1 + expz)
         end
 
+        # TODO: use adam_...
         if step_num == 1
                 m_z[:] = z_grad
                 v_z[:] = z_grad.^2
@@ -395,252 +224,25 @@ function optimize_likelihood{GRADONLY}(s::RNASeqSample,
         # exp decay
         adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
 
-        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
-
-        # step decay
-        # adam_learning_rate = initial_adam_learning_rate * adam_learning_rate_decay ^ step_num
-
-        # debug junk
-        idx = 66844
-        @show xs[idx]
-        println("---------------------------")
-        isleft = false
-        for node in t.nodes
-            if node.j == idx
-                while node.parent !== node
-                    isleft = node.parent.left_child === node
-                    node = node.parent
-                    k = node.k
-                    if isleft
-                        @show (k, y_grad[k], node.grad, node.ladj_grad, ys[k])
-                    else
-                        @show (k, y_grad[k], node.grad, node.ladj_grad, 1 - ys[k])
-                    end
-                end
-
-                break
-            end
-        end
-
-        # for node in t.nodes
-        #     if node.k == 43911
-        #         show_node(node, xs, ys)
-        #         break
-        #     end
-        # end
-
         next!(prog)
     end
 
-    exit()
+    for i in 1:n-1
+        ys[i] = logistic(zs[i])
+    end
+    hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})
+    xs = clamp!(xs, eps, 1 - eps)
+    return Dict("x" => xs)
 end
 
 
-function optimize_likelihood_ab{GRADONLY}(s::RNASeqSample,
-                                          ::Type{Val{GRADONLY}}=Val{true})
+function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, s::RNASeqSample,
+                                          ::Type{Val{GRADONLY}}=Val{false})
     m, n = size(s)
     Xt = transpose(s.X)
-
     model = Model(m, n)
 
     num_steps = 500
-
-    # good settings for exponential decay
-    initial_adam_learning_rate = 1.0
-    adam_learning_rate_decay = 2e-2
-    # adam_learning_rate_decay = 5e-3
-
-    adam_learning_rate = initial_adam_learning_rate
-
-    adam_eps = 1e-8
-
-    adam_rv = 0.7
-    adam_rm = 0.8
-
-    # gradient running mean
-    m_mu    = Array{Float32}(n-1)
-    m_omega = Array{Float32}(n-1)
-
-    # gradient running variances
-    v_mu    = Array{Float32}(n-1)
-    v_omega = Array{Float32}(n-1)
-
-    # step size clamp
-    ss_max_mu_step    = 1e-1
-    ss_max_omega_step = 1e-1
-
-    # cluster transcripts for hierachrical stick breaking
-    @time t = HSBTransform(s.X)
-
-    # Unifom distributed values
-    zs = fill(0.5f0, n-1)
-
-    # zs transformed to Kumaraswamy distributed values
-    ys = Array{Float64}(n-1)
-
-    # ys transformed by hierarchical stick breaking
-    xs = Array{Float32}(n)
-
-    mu    = fill(0.0f0, n-1)
-    k = 1
-    for node in t.nodes
-        if node.j == 0
-            nl = node.left_child.subtree_size
-            nr = node.right_child.subtree_size
-            mu[k] = logit(nl / (nl + nr))
-            k += 1
-        end
-    end
-
-    omega = fill(0.1f0, n-1)
-
-    # exp(omega)
-    sigma = Array{Float32}(n-1)
-
-
-    # various intermediate gradients
-    mu_grad    = Array{Float32}(n-1)
-    omega_grad = Array{Float32}(n-1)
-    sigma_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
-    work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
-
-    elbo = 0.0
-    elbo0 = 0.0
-    max_elbo = -Inf # smallest elbo seen so far
-
-    # mark the step in which we first find a solution with finite gradients
-    first_finite_step = 0
-
-    # stopping criteria
-    minz = eps(Float32)
-    maxz = 1.0f0 - eps(Float32)
-
-    tic()
-
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
-        elbo0 = elbo
-        elbo = 0.0
-        fill!(mu_grad, 0.0f0)
-        fill!(omega_grad, 0.0f0)
-
-        for i in 1:n-1
-            sigma[i] = exp(omega[i])
-        end
-
-        eps = 1e-10
-
-        fill!(x_grad, 0.0f0)
-        fill!(y_grad, 0.0f0)
-        fill!(sigma_grad, 0.0f0)
-
-        ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY})
-        ys = clamp!(ys, eps, 1 - eps)
-
-        hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
-        xs = clamp!(xs, eps, 1 - eps)
-
-        lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
-                            Val{GRADONLY})
-        elbo = lp + ln_ladj + hsb_ladj
-
-        hsb_transform_gradients!(t, ys, y_grad, x_grad)
-        logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, mu_grad, sigma_grad)
-
-        # adjust for log transform and accumulate
-        for i in 1:n-1
-            omega_grad[i] += sigma[i] * sigma_grad[i]
-        end
-
-        max_elbo = max(max_elbo, elbo)
-        @assert isfinite(elbo)
-
-        if step_num == 1
-            m_mu[:]    = mu_grad
-            m_omega[:] = omega_grad
-
-            v_mu[:]    = mu_grad.^2
-            v_omega[:] = omega_grad.^2
-        else
-            for i in 1:n-1
-                m_mu[i]    = adam_rm * m_mu[i]    + (1 - adam_rm) * mu_grad[i]
-                m_omega[i] = adam_rm * m_omega[i] + (1 - adam_rm) * omega_grad[i]
-
-                v_mu[i]    = adam_rv * v_mu[i]    + (1 - adam_rv) * mu_grad[i]^2
-                v_omega[i] = adam_rv * v_omega[i] + (1 - adam_rv) * omega_grad[i]^2
-            end
-        end
-
-        idx = 66844
-        @show xs[idx]
-        @show (ys[1], y_grad[1], sigma[1])
-
-        max_delta = 0.0
-        effective_step_num = step_num - first_finite_step + 1
-        for i in 1:n-1
-            # update mu parameters
-            m_mu_i = m_mu[i] / (1 - adam_rm^effective_step_num)
-            v_mu_i = v_mu[i] / (1 - adam_rv^effective_step_num)
-            delta = adam_learning_rate * m_mu_i / (sqrt(v_mu_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            mu[i] += clamp(delta, -ss_max_mu_step, ss_max_mu_step)
-
-            # update b parameters
-            m_omega_i = m_omega[i] / (1 - adam_rm^effective_step_num)
-            v_omega_i = v_omega[i] / (1 - adam_rv^effective_step_num)
-            delta = adam_learning_rate * m_omega_i / (sqrt(v_omega_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            omega[i] += clamp(delta, -ss_max_omega_step, ss_max_omega_step)
-        end
-
-        # exp decay
-        adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
-
-        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
-
-        # step decay
-        # adam_learning_rate = initial_adam_learning_rate * adam_learning_rate_decay ^ step_num
-
-        next!(prog)
-    end
-
-    toc()
-
-    # println("Finished in ", step_num, " steps")
-
-    # Write out point estimates for convenience
-    #log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
-    #open("point-estimates.csv", "w") do out
-        #for i in 1:n
-            #@printf(out, "%e\n", model.π_simplex[i])
-        #end
-    #end
-
-    return αs, βs
-end
-
-
-function approximate_likelihood_logitnorm{GRADONLY}(s::RNASeqSample,
-                                                    ::Type{Val{GRADONLY}}=Val{false})
-    m, n = size(s)
-    Xt = transpose(s.X)
-
-    model = Model(m, n)
-
-    num_steps = 500
-
-    # good settings for exponential decay
-    initial_adam_learning_rate = 1.0
-    adam_learning_rate_decay = 2e-2
-
-    adam_learning_rate = initial_adam_learning_rate
-
-    adam_eps = 1e-8
-
-    adam_rv = 0.9
-    adam_rm = 0.7
 
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
@@ -688,6 +290,8 @@ function approximate_likelihood_logitnorm{GRADONLY}(s::RNASeqSample,
     tic()
     prog = Progress(num_steps, 0.25, "Optimizing ", 60)
     for step_num in 1:num_steps
+        learning_rate = adam_learning_rate(step_num - 1)
+
         elbo0 = elbo
         elbo = 0.0
         fill!(mu_grad, 0.0f0)
@@ -753,7 +357,7 @@ function approximate_likelihood_logitnorm{GRADONLY}(s::RNASeqSample,
             elbo = lp + ln_ladj
 
             for i in 1:n-1
-                mu_grad[i] = y_grad[i]
+                mu_grad[i] += y_grad[i]
                 sigma_grad[i] = zs[i] * y_grad[i]
             end
 
@@ -779,88 +383,33 @@ function approximate_likelihood_logitnorm{GRADONLY}(s::RNASeqSample,
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
 
-        if step_num == 1
-            m_mu[:]    = mu_grad
-            m_omega[:] = omega_grad
+        adam_update_mv!(m_mu, v_mu, mu_grad, step_num)
+        adam_update_mv!(m_omega, v_omega, omega_grad, step_num)
 
-            v_mu[:]    = mu_grad.^2
-            v_omega[:] = omega_grad.^2
-        else
-            for i in 1:n-1
-                m_mu[i]    = adam_rm * m_mu[i]    + (1 - adam_rm) * mu_grad[i]
-                m_omega[i] = adam_rm * m_omega[i] + (1 - adam_rm) * omega_grad[i]
-
-                v_mu[i]    = adam_rv * v_mu[i]    + (1 - adam_rv) * mu_grad[i]^2
-                v_omega[i] = adam_rv * v_omega[i] + (1 - adam_rv) * omega_grad[i]^2
-            end
-        end
-
-        max_delta = 0.0
-        for i in 1:n-1
-            # update mu parameters
-            m_mu_i = m_mu[i] / (1 - adam_rm^step_num)
-            v_mu_i = v_mu[i] / (1 - adam_rv^step_num)
-            delta = adam_learning_rate * m_mu_i / (sqrt(v_mu_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            mu[i] += clamp(delta, -ss_max_mu_step, ss_max_mu_step)
-
-            # update b parameters
-            m_omega_i = m_omega[i] / (1 - adam_rm^step_num)
-            v_omega_i = v_omega[i] / (1 - adam_rv^step_num)
-            delta = adam_learning_rate * m_omega_i / (sqrt(v_omega_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            omega[i] += clamp(delta, -ss_max_omega_step, ss_max_omega_step)
-        end
-        # @show max_delta
-
-        # exp decay
-        adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
-
-        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
-
-        # step decay
-        # adam_learning_rate = initial_adam_learning_rate * adam_learning_rate_decay ^ step_num
+        adam_update_params!(mu, m_mu, v_mu, learning_rate, step_num, ss_max_mu_step)
+        adam_update_params!(omega, m_omega, v_omega, learning_rate, step_num, ss_max_omega_step)
 
         next!(prog)
     end
 
     toc()
 
-    # println("Finished in ", step_num, " steps")
-
-    # Write out point estimates for convenience
-    #log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
-    #open("point-estimates.csv", "w") do out
-        #for i in 1:n
-            #@printf(out, "%e\n", model.π_simplex[i])
-        #end
-    #end
-
-    return mu, omega, nothing
+    return Dict(
+        "mu" => mu,
+        "omega" => omega)
 end
 
 
 
 
-function approximate_likelihood{GRADONLY}(s::RNASeqSample,
+function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
+                                          s::RNASeqSample,
                                           ::Type{Val{GRADONLY}}=Val{true})
     m, n = size(s)
     Xt = transpose(s.X)
-
     model = Model(m, n)
 
     num_steps = 500
-
-    # good settings for exponential decay
-    initial_adam_learning_rate = 1.0
-    adam_learning_rate_decay = 2e-2
-
-    adam_learning_rate = initial_adam_learning_rate
-
-    adam_eps = 1e-8
-
-    adam_rv = 0.9
-    adam_rm = 0.7
 
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
@@ -879,7 +428,8 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
     num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
-    @time t = HSBTransform(s.X)
+    # TODO: build tree according to approx.treemethod
+    t = HSBTransform(s.X)
 
     # Unifom distributed values
     zs = Array{Float32}(n-1)
@@ -901,7 +451,7 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
         end
     end
 
-    omega = fill(0.1f0, n-1)
+    omega = fill(log(0.1f0), n-1)
 
     # exp(omega)
     sigma = Array{Float32}(n-1)
@@ -921,6 +471,8 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
     tic()
     prog = Progress(num_steps, 0.25, "Optimizing ", 60)
     for step_num in 1:num_steps
+        learning_rate = adam_learning_rate(step_num - 1)
+
         elbo0 = elbo
         elbo = 0.0
         fill!(mu_grad, 0.0f0)
@@ -967,93 +519,33 @@ function approximate_likelihood{GRADONLY}(s::RNASeqSample,
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
 
-        # Note: the elbo has a negative entropy term is well, but but we are
-        # using uniform values on [0,1] which has entropy of 0, so that term
-        # goes away.
-
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
 
-        if step_num == 1
-            m_mu[:]    = mu_grad
-            m_omega[:] = omega_grad
+        adam_update_mv!(m_mu, v_mu, mu_grad, step_num)
+        adam_update_mv!(m_omega, v_omega, omega_grad, step_num)
 
-            v_mu[:]    = mu_grad.^2
-            v_omega[:] = omega_grad.^2
-        else
-            for i in 1:n-1
-                m_mu[i]    = adam_rm * m_mu[i]    + (1 - adam_rm) * mu_grad[i]
-                m_omega[i] = adam_rm * m_omega[i] + (1 - adam_rm) * omega_grad[i]
-
-                v_mu[i]    = adam_rv * v_mu[i]    + (1 - adam_rv) * mu_grad[i]^2
-                v_omega[i] = adam_rv * v_omega[i] + (1 - adam_rv) * omega_grad[i]^2
-            end
-        end
-
-        max_delta = 0.0
-        for i in 1:n-1
-            # update mu parameters
-            m_mu_i = m_mu[i] / (1 - adam_rm^step_num)
-            v_mu_i = v_mu[i] / (1 - adam_rv^step_num)
-            delta = adam_learning_rate * m_mu_i / (sqrt(v_mu_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            mu[i] += clamp(delta, -ss_max_mu_step, ss_max_mu_step)
-
-            # update b parameters
-            m_omega_i = m_omega[i] / (1 - adam_rm^step_num)
-            v_omega_i = v_omega[i] / (1 - adam_rv^step_num)
-            delta = adam_learning_rate * m_omega_i / (sqrt(v_omega_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            omega[i] += clamp(delta, -ss_max_omega_step, ss_max_omega_step)
-        end
-        # @show max_delta
-
-        # exp decay
-        adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
-
-        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
-
-        # step decay
-        # adam_learning_rate = initial_adam_learning_rate * adam_learning_rate_decay ^ step_num
+        adam_update_params!(mu, m_mu, v_mu, learning_rate, step_num, ss_max_mu_step)
+        adam_update_params!(omega, m_omega, v_omega, learning_rate, step_num, ss_max_omega_step)
 
         next!(prog)
     end
 
     toc()
 
-    # println("Finished in ", step_num, " steps")
-
-    # Write out point estimates for convenience
-    #log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
-    #open("point-estimates.csv", "w") do out
-        #for i in 1:n
-            #@printf(out, "%e\n", model.π_simplex[i])
-        #end
-    #end
-
-    return mu, omega, t
+    return union(flattened_tree(t),
+                 Dict{String, Vector}("mu" => mu, "omega" => omega))
 end
 
 
-function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
+function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
+                                          s::RNASeqSample,
                                           ::Type{Val{GRADONLY}}=Val{true})
     m, n = size(s)
     Xt = transpose(s.X)
-
     model = Model(m, n)
 
     num_steps = 500
-
-    # good settings for exponential decay
-    initial_adam_learning_rate = 1.0
-    adam_learning_rate_decay = 2e-2
-
-    adam_learning_rate = initial_adam_learning_rate
-
-    adam_eps = 1e-8
-
-    adam_rv = 0.9
-    adam_rm = 0.7
 
     # gradient running mean
     m_α = Array{Float32}(n-1)
@@ -1072,7 +564,8 @@ function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
     num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
-    @time t = HSBTransform(s.X)
+    # TODO: build tree according to approx.treemethod
+    t = HSBTransform(s.X)
 
     # Unifom distributed values
     zs = Array{Float32}(n-1)
@@ -1139,6 +632,8 @@ function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
 
     prog = Progress(num_steps, 0.25, "Optimizing ", 60)
     for step_num in 1:num_steps
+        learning_rate = adam_learning_rate(step_num - 1)
+
         elbo0 = elbo
         elbo = 0.0
         fill!(α_grad, 0.0f0)
@@ -1192,62 +687,17 @@ function approximate_likelihood_kumaraswamy{GRADONLY}(s::RNASeqSample,
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
 
-        if step_num == 1
-                m_α[:] = α_grad
-                m_β[:] = β_grad
+        adam_update_mv!(m_α, v_α, α_grad, step_num)
+        adam_update_mv!(m_β, v_β, β_grad, step_num)
 
-                v_α[:] = α_grad.^2
-                v_β[:] = β_grad.^2
-        else
-            for i in 1:n-1
-                m_α[i] = adam_rm * m_α[i] + (1 - adam_rm) * α_grad[i]
-                m_β[i] = adam_rm * m_β[i] + (1 - adam_rm) * β_grad[i]
-
-                v_α[i] = adam_rv * v_α[i] + (1 - adam_rv) * α_grad[i]^2
-                v_β[i] = adam_rv * v_β[i] + (1 - adam_rv) * β_grad[i]^2
-            end
-        end
-
-        max_delta = 0.0
-        effective_step_num = step_num - first_finite_step + 1
-        for i in 1:n-1
-            # update a parameters
-            m_α_i = m_α[i] / (1 - adam_rm^effective_step_num)
-            v_α_i = v_α[i] / (1 - adam_rv^effective_step_num)
-            delta = adam_learning_rate * m_α_i / (sqrt(v_α_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            αs[i] += clamp(delta, -ss_max_α_step, ss_max_α_step)
-
-            # update b parameters
-            m_β_i = m_β[i] / (1 - adam_rm^effective_step_num)
-            v_β_i = v_β[i] / (1 - adam_rv^effective_step_num)
-            delta = adam_learning_rate * m_β_i / (sqrt(v_β_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            βs[i] += clamp(delta, -ss_max_β_step, ss_max_β_step)
-        end
-
-        # exp decay
-        adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
-
-        # adam_learning_rate = initial_adam_learning_rate / (1 + adam_learning_rate_decay * step_num)
-
-        # step decay
-        # adam_learning_rate = initial_adam_learning_rate * adam_learning_rate_decay ^ step_num
+        adam_update_params!(αs, m_α, v_α, learning_rate, step_num, ss_max_α_step)
+        adam_update_params!(βs, m_β, v_β, learning_rate, step_num, ss_max_β_step)
 
         next!(prog)
     end
 
     toc()
 
-    # println("Finished in ", step_num, " steps")
-
-    # Write out point estimates for convenience
-    #log_likelihood(model, s.X, s.effective_lengths, μ, π_grad)
-    #open("point-estimates.csv", "w") do out
-        #for i in 1:n
-            #@printf(out, "%e\n", model.π_simplex[i])
-        #end
-    #end
-
-    return αs, βs, t
+    return union(flattened_tree(t),
+                 Dict{String, Vector}("alpha" => αs, "beta" => βs))
 end

@@ -1,52 +1,20 @@
 
 
 """
-Generate samples from an approximated likelihood stored in the given file.
 """
-function sample_likap_kumaraswamy(input_filename::String, num_samples)
+function sample_likap(input_filename::String, num_samples)
     input = h5open(input_filename)
-    as = exp.(read(input["mu"]))
-    bs = exp.(read(input["omega"]))
-    effective_lengths = read(input["effective_lengths"])
-    t = HSBTransform(read(input["node_parent_idxs"]),
-                     read(input["node_js"]))
-    close(input)
-    n = length(as) + 1
-
-    zs = Array{Float32}(n-1)
-    ys = Array{Float64}(n-1)
-    xs = Array{Float32}(n)
-    work = Array{Float64}(n-1)
-    samples = Array{Float32}(num_samples, n)
-
-    minz = eps(Float32)
-    maxz = 1.0f0 - eps(Float32)
-
-    for i in 1:num_samples
-        for j in 1:n-1
-            zs[j] = min(maxz, max(minz, rand()))
-        end
-        kumaraswamy_transform!(as, bs, zs, ys, work, Val{true})  # z -> y
-        hsb_transform!(t, ys, xs, Val{true})
-        clamp!(xs, 1e-10, 1 - 1e-10)
-
-        for j in 1:n
-            xs[j] /= effective_lengths[j]
-        end
-        xs ./= sum(xs)
-
-        samples[i,:] = xs
-    end
-
-    return samples
+    approx_type_name = read(attrs(input["metadata"])["approximation"])
+    approx_type = eval(parse(approx_type_name))
+    return sample_likap(approx_type, input, num_samples)
 end
 
 
 """
-Generate samples from likelihood approximated with a multivariate logit-normal
+Generate samples from likelihood approximated with a multivariate logistic-normal
 """
-function sample_likap_logitnorm(input_filename::String, num_samples)
-    input = h5open(input_filename)
+function sample_likap(approx_type::Type{LogisticNormalApprox},
+                      input, num_samples)
     mu = read(input["mu"])
     sigma = exp.(read(input["omega"]))
     effective_lengths = read(input["effective_lengths"])
@@ -89,11 +57,8 @@ function sample_likap_logitnorm(input_filename::String, num_samples)
 end
 
 
-"""
-Generate samples from an approximated likelihood stored in the given file.
-"""
-function sample_likap(input_filename::String, num_samples)
-    input = h5open(input_filename)
+function sample_likap(approx_type::Type{LogitNormalHSBApprox},
+                      input, num_samples)
     mu = read(input["mu"])
     sigma = exp.(read(input["omega"]))
     effective_lengths = read(input["effective_lengths"])
@@ -128,6 +93,52 @@ function sample_likap(input_filename::String, num_samples)
     return samples
 end
 
+
+"""
+Generate samples from an approximated likelihood stored in the given file.
+"""
+function sample_likap(approx_type::Type{KumaraswamyHSBApprox},
+                      input, num_samples)
+    as = exp.(read(input["alpha"]))
+    bs = exp.(read(input["beta"]))
+    effective_lengths = read(input["effective_lengths"])
+    t = HSBTransform(read(input["node_parent_idxs"]),
+                     read(input["node_js"]))
+    close(input)
+    n = length(as) + 1
+
+    zs = Array{Float32}(n-1)
+    ys = Array{Float64}(n-1)
+    xs = Array{Float32}(n)
+    work = zeros(Float32, n-1)
+    samples = Array{Float32}(num_samples, n)
+
+    minz = eps(Float32)
+    maxz = 1.0f0 - eps(Float32)
+
+    for i in 1:num_samples
+        for j in 1:n-1
+            zs[j] = min(maxz, max(minz, rand()))
+        end
+        kumaraswamy_transform!(as, bs, zs, ys, work, Val{true})  # z -> y
+        ys = clamp!(ys, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
+
+        hsb_transform!(t, ys, xs, Val{true})
+        xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
+
+        for j in 1:n
+            xs[j] /= effective_lengths[j]
+        end
+        xs ./= sum(xs)
+
+        samples[i,:] = xs
+    end
+
+    return samples
+end
+
+# TODO: NormalILRApprox
+# TODO: KumaraswamyHSBApprox
 
 
 """

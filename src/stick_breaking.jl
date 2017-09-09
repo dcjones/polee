@@ -521,6 +521,25 @@ function HSBTransform(parent_idxs, js)
 end
 
 
+"""
+Reduce the tree structure to two arrays: on giving parent indexes, one giving
+leaf indexes.
+"""
+function flattened_tree(t::HSBTransform)
+    node_parent_idxs = Array{Int32}(length(t.nodes))
+    node_js          = Array{Int32}(length(t.nodes))
+    for i in 1:length(t.nodes)
+        node = t.nodes[i]
+        node_parent_idxs[i] = node.parent_idx
+        node_js[i] = node.j
+    end
+
+    return Dict{String, Vector}(
+        "node_parent_idxs" => node_parent_idxs,
+        "node_js"          => node_js)
+end
+
+
 # generate a random HSBTransform tree with n leaf nodes.
 function rand_tree_nodes(n)
     stack = [HClustNode(j) for j in 1:n]

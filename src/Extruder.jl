@@ -36,6 +36,7 @@ include("gibbs.jl")
 include("stick_breaking.jl")
 include("isometric_log_ratios.jl")
 include("sequences.jl")
+include("evaluate.jl")
 
 # TODO: automate including everything under models
 EXTRUDER_MODELS = Dict{String, Function}()
@@ -109,10 +110,10 @@ function main()
                 required = true
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
-        approximate_likelihood(parsed_args["likelihood_matrix_filename"],
+        # TODO: approx method from command line
+        approximate_likelihood(KumaraswamyHSBApprox(),
+                               parsed_args["likelihood_matrix_filename"],
                                parsed_args["output"])
-        # approximate_likelihood_logitnorm(parsed_args["likelihood_matrix_filename"],
-        #                                  parsed_args["output"])
         return
 
     elseif subcmd == "prepare-sample" || subcmd == "prep"
@@ -187,39 +188,6 @@ function main()
         # TODO: figure out what to do with `output`
 
         return
-    elseif subcmd == "likelihood-approx-from-isolator"
-        @add_arg_table arg_settings begin
-            "--output", "-o"
-                default = "sample-data.h5"
-            "isolator_matrix"
-                required = true
-            "isolator_effective_lengths"
-                required = true
-        end
-        parsed_args = parse_args(subcmd_args, arg_settings)
-        approximate_likelihood_from_isolator(
-                               parsed_args["isolator_matrix"],
-                               parsed_args["isolator_effective_lengths"],
-                               parsed_args["output"])
-        return
-
-    elseif subcmd == "likelihood-approx-from-rsem"
-        @add_arg_table arg_settings begin
-            "--output", "-o"
-                default = "sample-data.h5"
-            "rsem_matrix"
-                required = true
-            # not sure if we need this, but if so we can get it from
-            # the .isoforms.results file.
-            #"rsem_effective_lengths"
-                #required = true
-        end
-        parsed_args = parse_args(subcmd_args, arg_settings)
-        approximate_likelihood_from_rsem(
-                               parsed_args["rsem_matrix"],
-                               parsed_args["output"])
-        return
-
     elseif subcmd == "sample"
         @add_arg_table arg_settings begin
             "--output", "-o"

@@ -428,8 +428,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
-    # TODO: build tree according to approx.treemethod
-    t = HSBTransform(s.X)
+    t = HSBTransform(s.X, approx.treemethod)
 
     # Unifom distributed values
     zs = Array{Float32}(n-1)
@@ -564,8 +563,7 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
     num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
-    # TODO: build tree according to approx.treemethod
-    t = HSBTransform(s.X)
+    t = HSBTransform(s.X, approx.treemethod)
 
     # Unifom distributed values
     zs = Array{Float32}(n-1)

@@ -428,7 +428,7 @@ function set_subtree_sizes!(nodes::Vector{HClustNode})
         end
     end
 
-    check_subtree_sizes(nodes[1])
+    # check_subtree_sizes(nodes[1])
 end
 
 
@@ -487,10 +487,18 @@ function order_nodes(root::HClustNode, n)
 end
 
 
-function HSBTransform(X::SparseMatrixCSC)
+function HSBTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
     m, n = size(X)
-    root = hclust(X)
-    nodes = order_nodes(root, n)
+    if method == :cluster
+        root = hclust(X)
+        nodes = order_nodes(root, n)
+    elseif method == :random
+        nodes = rand_tree_nodes(n)
+    elseif method == :sequential
+        nodes = rand_list_nodes(n)
+    else
+        error("$(method) is not a supported HSB heuristic")
+    end
     return HSBTransform(nodes)
 end
 
@@ -540,18 +548,40 @@ function flattened_tree(t::HSBTransform)
 end
 
 
-# generate a random HSBTransform tree with n leaf nodes.
+"""
+Generate a random HSB tree.
+"""
 function rand_tree_nodes(n)
     stack = [HClustNode(j) for j in 1:n]
 
+    # TODO: This is insanely inefficient. Maybe that's ok since it just exists
+    # as a straw man for comparison.
     while length(stack) > 1
-        # this is a ridiculously inefficient way of doing this, but we only
-        # need this for small scale testing
         shuffle!(stack)
         a = pop!(stack)
         b = pop!(stack)
         push!(stack, HClustNode(a, b))
     end
+    root = stack[1]
+
+    nodes = order_nodes(root, n)
+    return nodes
+end
+
+
+"""
+Generate a random HSB transformation by building a list tree with nodes in a
+random order. (Basically to mimic the stick breaking transformation in stan.)
+"""
+function rand_list_nodes(n)
+    stack = [HClustNode(j) for j in 1:n]
+    shuffle!(stack)
+    while length(stack) > 1
+        a = pop!(stack)
+        b = pop!(stack)
+        push!(stack, HClustNode(a, b))
+    end
+
     root = stack[1]
 
     nodes = order_nodes(root, n)

@@ -111,7 +111,7 @@ function main()
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
         # TODO: approx method from command line
-        approximate_likelihood(KumaraswamyHSBApprox(),
+        approximate_likelihood(LogitNormalHSBApprox(:sequential),
                                parsed_args["likelihood_matrix_filename"],
                                parsed_args["output"])
         return

@@ -59,6 +59,23 @@ function print_usage()
 end
 
 
+function select_approx_method(method_name::String, tree_method::Symbol)
+    if method_name == "optimize"
+        return OptimizeHSBApprox()
+    elseif method_name == "logistic_normal"
+        return LogisticNormalApprox()
+    elseif method_name == "kumaraswamy_hsb"
+        return KumaraswamyHSBApprox(tree_method)
+    elseif method_name == "logit_normal_hsb"
+        return LogitNormalHSBApprox(tree_method)
+    elseif method_name == "normal_ilr"
+        return NormalILRApprox(tree_method)
+    else
+        error("$(method_name) is not a know approximation method.")
+    end
+end
+
+
 function main()
     srand(12345678)
 
@@ -106,12 +123,18 @@ function main()
         @add_arg_table arg_settings begin
             "--output", "-o"
                 default = "sample-data.h5"
+            "--approx-method"
+                default = "logit_normal_hsb"
+            "--tree-method"
+                default = "cluster"
             "likelihood_matrix_filename"
                 required = true
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
-        # TODO: approx method from command line
-        approximate_likelihood(NormalILRApprox(:sequential),
+
+        tree_method = Symbol(parsed_args["tree-method"])
+        approx = select_approx_method(parsed_args["approx-method"], tree_method)
+        approximate_likelihood(approx,
                                parsed_args["likelihood_matrix_filename"],
                                parsed_args["output"])
         return
@@ -130,8 +153,14 @@ function main()
                 required = false
             "--likelihood-matrix"
                 required = false
+            "--approx-method",
+                default = "logit_normal_hsb"
+            "--tree-method"
+                default = "cluster"
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
+
+        approx = select_approx_method(parsed_args["approx-method"], tree_method)
 
         excluded_seqs = Set{String}()
         if parsed_args["excluded-seqs"] != nothing
@@ -149,7 +178,7 @@ function main()
                               parsed_args["likelihood-matrix"] == nothing ?
                                 Nullable{String}() :
                                 Nullable(parsed_args["likelihood-matrix"]))
-        approximate_likelihood(sample, parsed_args["output"])
+        approximate_likelihood(approx, sample, parsed_args["output"])
         return
 
     elseif subcmd == "estimate" || subcmd == "est"

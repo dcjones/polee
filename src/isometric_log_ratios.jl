@@ -25,7 +25,7 @@ function ILRTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
 end
 
 
-function ILRTransform(parent_idxs, js)
+function ILRTransform(parent_idxs::Vector, js::Vector)
     nodes = deserialize_tree(parent_idxs, js)
     return ILRTransform(nodes)
 end

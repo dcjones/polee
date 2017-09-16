@@ -35,6 +35,7 @@ include("estimate.jl")
 include("gibbs.jl")
 include("stick_breaking.jl")
 include("isometric_log_ratios.jl")
+include("additive_log_ratios.jl")
 include("sequences.jl")
 include("evaluate.jl")
 
@@ -70,6 +71,8 @@ function select_approx_method(method_name::String, tree_method::Symbol)
         return LogitNormalHSBApprox(tree_method)
     elseif method_name == "normal_ilr"
         return NormalILRApprox(tree_method)
+    elseif method_name == "normal_alr"
+        return NormalALRApprox()
     else
         error("$(method_name) is not a know approximation method.")
     end

@@ -36,6 +36,19 @@ struct NormalILRApprox <: LikelihoodApproximation
 end
 NormalILRApprox() = NormalILRApprox(:clustered)
 
+"""
+Additive Log-ratio transformed normal distribution.
+"""
+struct NormalALRApprox <: LikelihoodApproximation
+    """
+    What element should be diviser. If 0, a random index will be chosen, if -1,
+    the last index will be chosen.
+    """
+    reference_idx::Int
+end
+NormalALRApprox() = NormalALRApprox(-1)
+
+
 # Other approximations we could implement, but would require a different
 # optimization method.
 #   - Dirichlet
@@ -827,3 +840,130 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
 end
 
 
+function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
+                                          s::RNASeqSample,
+                                          ::Type{Val{GRADONLY}}=Val{false})
+
+    m, n = size(s)
+    Xt = transpose(s.X)
+    model = Model(m, n)
+
+    num_steps = 500
+
+    # gradient running mean
+    m_mu    = Array{Float32}(n-1)
+    m_omega = Array{Float32}(n-1)
+
+    # gradient running variances
+    v_mu    = Array{Float32}(n-1)
+    v_omega = Array{Float32}(n-1)
+
+    # step size clamp
+    ss_max_mu_step    = 2e-1
+    ss_max_omega_step = 2e-1
+
+    # number of monte carlo samples to estimate gradients an elbo at each
+    # iteration
+    num_mc_samples = 6
+
+    # cluster transcripts for hierachrical stick breaking
+    refidx = approx.reference_idx == -1 ? n :
+             approx.reference_idx == 0 ? rand(1:n) : approx.reference_idx
+    t = ALRTransform(refidx)
+
+    # standard normal values
+    zs = Array{Float32}(n-1)
+
+    # destandardized normal random numbers
+    ys = Array{Float64}(n-1)
+
+    # ys transformed to simplex using ILR
+    xs = Array{Float32}(n)
+
+    mu = fill(0.0f0, n-1)
+    omega = fill(log(0.1f0), n-1)
+
+    sigma = Array{Float32}(n-1)
+
+    # various intermediate gradients
+    mu_grad    = Array{Float32}(n-1)
+    omega_grad = Array{Float32}(n-1)
+    sigma_grad = Array{Float32}(n-1)
+    y_grad = Array{Float32}(n-1)
+    x_grad = Array{Float32}(n)
+    work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
+
+    elbo = 0.0
+
+    tic()
+    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
+    for step_num in 1:num_steps
+        learning_rate = adam_learning_rate(step_num - 1)
+
+        elbo = 0.0
+        fill!(mu_grad, 0.0f0)
+        fill!(omega_grad, 0.0f0)
+
+        for i in 1:n-1
+            sigma[i] = exp(omega[i])
+        end
+
+        eps = 1e-10
+
+        for _ in 1:num_mc_samples
+            fill!(x_grad, 0.0f0)
+            fill!(y_grad, 0.0f0)
+            fill!(sigma_grad, 0.0f0)
+
+            for i in 1:n-1
+                zs[i] = randn(Float32)
+                ys[i] = mu[i] + sigma[i] * zs[i]
+            end
+
+            alr_ladj = alr_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            xs = clamp!(xs, eps, 1 - eps)
+
+            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
+                                Val{GRADONLY})
+            elbo += lp + alr_ladj
+
+            alr_transform_gradients!(t, ys, xs, y_grad, x_grad)
+
+            for i in 1:n-1
+                mu_grad[i]    += y_grad[i]
+                sigma_grad[i] = zs[i] * y_grad[i]
+            end
+
+            # adjust for log transform and accumulate
+            for i in 1:n-1
+                omega_grad[i] += sigma[i] * sigma_grad[i]
+            end
+        end
+
+        for i in 1:n-1
+            mu_grad[i]    /= num_mc_samples
+            omega_grad[i] /= num_mc_samples
+            # omega_grad[i] += 1 # entropy gradient
+        end
+
+        elbo /= num_mc_samples # get estimated expectation over mc samples
+        # elbo += normal_entropy(sigma)
+
+        @show elbo
+        @assert isfinite(elbo)
+
+        adam_update_mv!(m_mu, v_mu, mu_grad, step_num)
+        adam_update_mv!(m_omega, v_omega, omega_grad, step_num)
+
+        adam_update_params!(mu, m_mu, v_mu, learning_rate, step_num, ss_max_mu_step)
+        adam_update_params!(omega, m_omega, v_omega, learning_rate, step_num, ss_max_omega_step)
+
+        next!(prog)
+    end
+
+    toc()
+
+    return Dict{String, Vector}("mu" => mu, "omega" => omega,
+                                "refidx" => [t.refidx])
+
+end

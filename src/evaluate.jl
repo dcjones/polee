@@ -20,7 +20,6 @@ function sample_likap(approx_type::Type{LogisticNormalApprox},
     effective_lengths = read(input["effective_lengths"])
     close(input)
     n = length(mu) + 1
-    @show n
 
     zs = Array{Float32}(n-1)
     ys = Array{Float64}(n-1)

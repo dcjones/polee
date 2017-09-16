@@ -153,13 +153,14 @@ function main()
                 required = false
             "--likelihood-matrix"
                 required = false
-            "--approx-method",
+            "--approx-method"
                 default = "logit_normal_hsb"
             "--tree-method"
                 default = "cluster"
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
 
+        tree_method = Symbol(parsed_args["tree-method"])
         approx = select_approx_method(parsed_args["approx-method"], tree_method)
 
         excluded_seqs = Set{String}()
@@ -235,7 +236,4 @@ function main()
     end
 end
 
-
-main()
-
-end
+end # module Extruder

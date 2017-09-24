@@ -33,10 +33,9 @@ end
 
 
 # assumes a flat prior on π
-function log_likelihood{GRADONLY}(model::Model, X, Xt, effective_lengths, xs, x_grad,
+function log_likelihood{GRADONLY}(frag_probs, log_frag_probs, X, Xt, xs, x_grad,
                                   ::Type{Val{GRADONLY}})
-    frag_probs = model.frag_probs
-    m, n = model.m, model.n
+    m, n = size(X)
 
     # conditional fragment probabilities
     pAt_mul_B!(frag_probs, Xt, xs)
@@ -44,13 +43,12 @@ function log_likelihood{GRADONLY}(model::Model, X, Xt, effective_lengths, xs, x_
     # log likelihood
     lp = 0.0
     if !GRADONLY
-        log!(model.log_frag_probs, frag_probs, m)
-        lp = sum(model.log_frag_probs)
+        log!(log_frag_probs, frag_probs, m)
+        lp = sum(log_frag_probs)
         @assert isfinite(lp)
     end
     inv!(frag_probs, m)
 
-    # compute df / dw (where w is effective length weighted mixtures)
     pAt_mul_B!(x_grad, X, frag_probs)
 
     return lp

@@ -63,7 +63,7 @@ end
 
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String)
-    params = approximate_likelihood(approximation, sample)
+    params = approximate_likelihood(approximation, sample.X)
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
@@ -141,17 +141,16 @@ end
 
 
 
-function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, s::RNASeqSample,
-                                          ::Type{Val{GRADONLY}}=Val{true})
-    m, n = size(s)
-    Xt = transpose(s.X)
+function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCSC,
+                                          ::Type{Val{GRADONLY}}=Val{true};
+                                          num_steps=500)
+    m, n = size(X)
+    Xt = transpose(X)
 
     model = Model(m, n)
 
-    num_steps = 500
-
     # cluster transcripts for hierachrical stick breaking
-    t = HSBTransform(s.X)
+    t = HSBTransform(X, :sequential)
 
     m_z = Array{Float32}(n-1)
     v_z = Array{Float32}(n-1)
@@ -189,6 +188,8 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, s::RNASeqSample,
 
     prog = Progress(num_steps, 0.25, "Optimizing ", 60)
     for step_num in 1:num_steps
+        learning_rate = adam_learning_rate(step_num - 1)
+
         for i in 1:n-1
             ys[i] = logistic(zs[i])
         end
@@ -199,8 +200,8 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, s::RNASeqSample,
         hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
         xs = clamp!(xs, eps, 1 - eps)
 
-        log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
-                       Val{GRADONLY})
+        log_likelihood(model.frag_probs, model.log_frag_probs,
+                       X, Xt, xs, x_grad, Val{GRADONLY})
 
         hsb_transform_gradients!(t, ys, y_grad, x_grad)
 
@@ -213,29 +214,9 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, s::RNASeqSample,
             z_grad[i] += (1 - expz) / (1 + expz)
         end
 
-        # TODO: use adam_...
-        if step_num == 1
-                m_z[:] = z_grad
-                v_z[:] = z_grad.^2
-        else
-            for i in 1:n-1
-                m_z[i] = adam_rm * m_z[i] + (1 - adam_rm) * z_grad[i]
-                v_z[i] = adam_rv * v_z[i] + (1 - adam_rv) * z_grad[i]^2
-            end
-        end
+        adam_update_mv!(m_z, v_z, z_grad, step_num)
 
-        max_delta = 0.0
-        for i in 1:n-1
-            # update a parameters
-            m_z_i = m_z[i] / (1 - adam_rm^step_num)
-            v_z_i = v_z[i] / (1 - adam_rv^step_num)
-            delta = adam_learning_rate * m_z_i / (sqrt(v_z_i) + adam_eps)
-            max_delta = max(max_delta, abs(delta))
-            zs[i] += clamp(delta, -ss_max_z_step, ss_max_z_step)
-        end
-
-        # exp decay
-        adam_learning_rate = initial_adam_learning_rate * exp(-adam_learning_rate_decay * step_num)
+        adam_update_params!(zs, m_z, v_z, learning_rate, step_num, ss_max_z_step)
 
         next!(prog)
     end
@@ -249,10 +230,10 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, s::RNASeqSample,
 end
 
 
-function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, s::RNASeqSample,
+function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatrixCSC,
                                           ::Type{Val{GRADONLY}}=Val{false})
-    m, n = size(s)
-    Xt = transpose(s.X)
+    m, n = size(X)
+    Xt = transpose(X)
     model = Model(m, n)
 
     num_steps = 500
@@ -340,8 +321,8 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, s::RNASeqSampl
             end
             xs = clamp!(xs, eps, 1 - eps)
 
-            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
-                                Val{GRADONLY})
+            lp = log_likelihood(model.frag_probs, model.log_frag_probs,
+                                X, Xt, xs, x_grad, Val{GRADONLY})
 
             c = 0.0f0
             for i in 1:n
@@ -416,10 +397,10 @@ end
 
 
 function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
-                                          s::RNASeqSample,
+                                          X::SparseMatrixCSC,
                                           ::Type{Val{GRADONLY}}=Val{true})
-    m, n = size(s)
-    Xt = transpose(s.X)
+    m, n = size(X)
+    Xt = transpose(X)
     model = Model(m, n)
 
     num_steps = 500
@@ -441,7 +422,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
-    t = HSBTransform(s.X, approx.treemethod)
+    t = HSBTransform(X, approx.treemethod)
 
     # Unifom distributed values
     zs = Array{Float32}(n-1)
@@ -511,8 +492,8 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, eps, 1 - eps)
 
-            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
-                                Val{GRADONLY})
+            lp = log_likelihood(model.frag_probs, model.log_frag_probs,
+                                X, Xt, xs, x_grad, Val{GRADONLY})
             elbo = lp + ln_ladj + hsb_ladj
 
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
@@ -551,10 +532,10 @@ end
 
 
 function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
-                                          s::RNASeqSample,
+                                          X::SparseMatrixCSC,
                                           ::Type{Val{GRADONLY}}=Val{true})
-    m, n = size(s)
-    Xt = transpose(s.X)
+    m, n = size(X)
+    Xt = transpose(X)
     model = Model(m, n)
 
     num_steps = 500
@@ -576,7 +557,7 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
     num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
-    t = HSBTransform(s.X, approx.treemethod)
+    t = HSBTransform(X, approx.treemethod)
 
     # Unifom distributed values
     zs = Array{Float32}(n-1)
@@ -670,8 +651,8 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
-            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
-                                Val{GRADONLY})
+            lp = log_likelihood(model.frag_probs, model.log_frag_probs,
+                                X, Xt, xs, x_grad, Val{GRADONLY})
             elbo = lp + kum_ladj + hsb_ladj
 
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
@@ -716,10 +697,10 @@ end
 
 
 function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
-                                          s::RNASeqSample,
+                                          X::SparseMatrixCSC,
                                           ::Type{Val{GRADONLY}}=Val{false})
-    m, n = size(s)
-    Xt = transpose(s.X)
+    m, n = size(X)
+    Xt = transpose(X)
     model = Model(m, n)
 
     num_steps = 500
@@ -741,7 +722,7 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
     num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
-    t = ILRTransform(s.X, approx.treemethod)
+    t = ILRTransform(X, approx.treemethod)
 
     # standard normal values
     zs = Array{Float32}(n-1)
@@ -795,8 +776,8 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
             ilr_ladj = ilr_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, eps, 1 - eps)
 
-            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
-                                Val{GRADONLY})
+            lp = log_likelihood(model.frag_probs, model.log_frag_probs,
+                                X, Xt, xs, x_grad, Val{GRADONLY})
             elbo += lp + ilr_ladj
 
             ilr_transform_gradients!(t, xs, y_grad, x_grad)
@@ -841,11 +822,11 @@ end
 
 
 function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
-                                          s::RNASeqSample,
+                                          X::SparseMatrixCSC,
                                           ::Type{Val{GRADONLY}}=Val{false})
 
-    m, n = size(s)
-    Xt = transpose(s.X)
+    m, n = size(X)
+    Xt = transpose(X)
     model = Model(m, n)
 
     num_steps = 500
@@ -923,8 +904,8 @@ function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
             alr_ladj = alr_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, eps, 1 - eps)
 
-            lp = log_likelihood(model, s.X, Xt, s.effective_lengths, xs, x_grad,
-                                Val{GRADONLY})
+            lp = log_likelihood(model.frag_probs, model.log_frag_probs,
+                                X, Xt, xs, x_grad, Val{GRADONLY})
             elbo += lp + alr_ladj
 
             alr_transform_gradients!(t, ys, xs, y_grad, x_grad)

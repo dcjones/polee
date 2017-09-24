@@ -81,6 +81,7 @@ type SubtreeListNode
     vs::Vector{Float32}
     is::Vector{UInt32}
     root::HClustNode
+    subcomp_sum::Float32
 
     # used to mark nodes that have already been merged so they
     # can be skipped when encountered in the priority queue
@@ -89,8 +90,8 @@ type SubtreeListNode
     right::SubtreeListNode
 
     function (::Type{SubtreeListNode})(vs::Vector{Float32}, is::Vector{UInt32},
-                                  root::HClustNode)
-        node = new(vs, is, root, false)
+                                       root::HClustNode, subcomp_sum::Float32)
+        node = new(vs, is, root, subcomp_sum, false)
         node.left = node
         node.right = node
         return node
@@ -149,21 +150,23 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode,
     end
 
     # merge
+    subcomp_sum = a.subcomp_sum + b.subcomp_sum
+    ca, cb = a.subcomp_sum / subcomp_sum, b.subcomp_sum / subcomp_sum
     i, j, k = 1, 1, 1
     while i <= alen || j <= blen
         if j > blen || (i <= alen && merge_buffer_i[i] < b.is[j])
             a.is[k] = merge_buffer_i[i]
-            a.vs[k] = merge_buffer_v[i] / 2.0f0
+            a.vs[k] = ca * merge_buffer_v[i]
             i += 1
             k += 1
         elseif i > alen || (j <= blen && merge_buffer_i[i] > b.is[j])
             a.is[k] = b.is[j]
-            a.vs[k] = b.vs[j] / 2.0f0
+            a.vs[k] = cb * b.vs[j]
             j += 1
             k += 1
         else
             a.is[k] = merge_buffer_i[i]
-            a.vs[k] = (merge_buffer_v[i] + b.vs[j]) / 2.0f0
+            a.vs[k] = ca * merge_buffer_v[i] + cb * b.vs[j]
             i += 1
             j += 1
             k += 1
@@ -177,7 +180,7 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode,
     node = HClustNode(a.root, b.root)
     a.root.parent = node
     b.root.parent = node
-    ab = SubtreeListNode(a.vs, a.is, node)
+    ab = SubtreeListNode(a.vs, a.is, node, subcomp_sum)
 
     promote!(queue, queue_idxs, a, K)
     promote!(queue, queue_idxs, b, K)
@@ -212,34 +215,42 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode,
 end
 
 
-# squared difference between sparse vectors stored in a and b
-function distance(a::SubtreeListNode, b::SubtreeListNode)
+function distance(square_frag_probs::Vector{Float32},
+                  a::SubtreeListNode, b::SubtreeListNode)
     d = 0.0f0
     i = 1
     j = 1
     while i <= length(a.vs) && j <= length(b.vs)
+        cond_frag_prob_diff = 0.0f0
         if a.is[i] < b.is[j]
-            d += 1
+            d -= a.vs[i]^2 / square_frag_probs[a.is[i]]
             i += 1
         elseif a.is[i] > b.is[j]
-            d -= 1
+            d -= b.vs[j]^2 / square_frag_probs[b.is[j]]
             j += 1
         else
-            has_shared = true
-            d += (a.vs[i] - b.vs[j]) / (a.vs[i] + b.vs[j])
+            d -= (a.vs[i] - b.vs[j])^2 / square_frag_probs[a.is[i]]
             i += 1
             j += 1
         end
     end
 
-    d += length(a.vs) - i + 1
-    d -= length(b.vs) - j + 1
+    while i <= length(a.vs)
+        d -= a.vs[i]^2 / square_frag_probs[a.is[i]]
+        i += 1
+    end
+
+    while j <= length(b.vs)
+        d -= b.vs[j]^2 / square_frag_probs[b.is[j]]
+        j += 1
+    end
+
+    d *= (a.subcomp_sum + b.subcomp_sum)^2
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
     noise = 1f-20 * rand()
     return Float32(abs(d) + noise)
-    # return rand(Float32)
 end
 
 
@@ -278,11 +289,12 @@ function promote!(queue, queue_idxs, a, K)
 end
 
 
-function update_distances!(queue, queue_idxs, a, K)
+function update_distances!(queue, queue_idxs,
+                           square_frag_probs::Vector{Float32}, a, K)
     if a.left !== a
         u = a.left
         for _ in 1:K
-            d = distance(u, a)
+            d = distance(square_frag_probs, u, a)
             queue_idxs[(u,a)] = push!(queue, (d, u, a))
             if u.left === u
                 break
@@ -295,7 +307,7 @@ function update_distances!(queue, queue_idxs, a, K)
     if a.right !== a
         u = a.right
         for _ in 1:K
-            d = distance(a, u)
+            d = distance(square_frag_probs, a, u)
             queue_idxs[(a,u)] = push!(queue, (d, a, u))
             if u.right === u
                 break
@@ -307,7 +319,8 @@ function update_distances!(queue, queue_idxs, a, K)
 end
 
 
-function hclust_initalize(X::SparseMatrixCSC, n, K)
+function hclust_initalize(X::SparseMatrixCSC, xs::Vector{Float32},
+                          square_frag_probs::Vector{Float32}, n, K)
     # construct nodes
     I, J, V = findnz(X)
     p = sortperm(J)
@@ -321,7 +334,7 @@ function hclust_initalize(X::SparseMatrixCSC, n, K)
     nodes = Array{SubtreeListNode}(n)
     while j <= n && k <= length(J)
         if j < J[k]
-            nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j))
+            nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j), xs[j])
             j += 1
         elseif j > J[k]
             error("Error in clustering. This is a bug")
@@ -331,14 +344,15 @@ function hclust_initalize(X::SparseMatrixCSC, n, K)
             while k <= length(J) && J[k] == j
                 k += 1
             end
-            nodes[j] = SubtreeListNode(V[k0:k-1], I[k0:k-1], HClustNode(j))
+            # TODO: no this is wrong. Shouldn't multiply by xs[j] here
+            nodes[j] = SubtreeListNode(V[k0:k-1], I[k0:k-1], HClustNode(j), xs[j])
             @assert issorted(nodes[j].is)
             j += 1
         end
     end
 
     while j <= n
-        nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j))
+        nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j), xs[j])
         j += 1
     end
     toc() # 0.6 seconds
@@ -362,7 +376,7 @@ function hclust_initalize(X::SparseMatrixCSC, n, K)
     queue_idxs = Dict{Tuple{SubtreeListNode, SubtreeListNode}, Int}()
     for i in 1:n
         for j in i+1:min(i+K, n)
-            d = distance(nodes[i], nodes[j])
+            d = distance(square_frag_probs, nodes[i], nodes[j])
             queue_idxs[(nodes[i], nodes[j])] = push!(queue, (d, nodes[i], nodes[j]))
         end
     end
@@ -374,10 +388,19 @@ end
 
 function hclust(X::SparseMatrixCSC)
     m, n = size(X)
+
+    println("Finding approximate mode")
+    xs = approximate_likelihood(OptimizeHSBApprox(), X, Val{true}, num_steps=50)["x"]
+
+    Xt = transpose(X)
+    square_frag_probs = Vector{Float32}(m)
+    pAt_mul_B!(square_frag_probs, Xt, xs)
+    map!(x -> x^2, square_frag_probs, square_frag_probs)
+
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
     K = 5
-    queue, queue_idxs = hclust_initalize(X, n, K)
+    queue, queue_idxs = hclust_initalize(X, xs, square_frag_probs, n, K)
 
     merge_buffer_v = Float32[]
     merge_buffer_i = UInt32[]
@@ -405,7 +428,7 @@ function hclust(X::SparseMatrixCSC)
             return ab.root
         end
 
-        update_distances!(queue, queue_idxs, ab, K)
+        update_distances!(queue, queue_idxs, square_frag_probs, ab, K)
     end
 end
 

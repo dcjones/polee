@@ -264,7 +264,6 @@ function log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
 
     losses = Array{Float32}(n)
     for i in 1:n
-        loss = 0.0f0
 
         # TODO: I should also do this with median/quantiles
         lfc_expect_gibbs = 0.0f0

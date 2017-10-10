@@ -1,13 +1,22 @@
 
 function gibbs_sampler(input_filename, output_filename)
-    srand(294929)
-
     nthreads = Threads.nthreads()
+
+    # num_samples = 80
+    # sample_per_chain = div(num_samples, nthreads)
+    # num_burnin_samples = 100
+    # sample_stride = 5 # record every nth sample
 
     num_samples = 1000
     sample_per_chain = div(num_samples, nthreads)
-    num_burnin_samples = 500
-    sample_stride = 5 # record every nth sample
+    # num_burnin_samples = 100
+    num_burnin_samples = 2000
+    sample_stride = 20 # record every nth sample
+
+    # num_samples = 1000
+    # sample_per_chain = div(num_samples, nthreads)
+    # num_burnin_samples = 1000
+    # sample_stride = 10 # record every nth sample
 
     sample = read(input_filename, RNASeqSample)
 
@@ -24,14 +33,29 @@ function gibbs_sampler(input_filename, output_filename)
     # transcript mixture
     ys = Array{Float32}(nthreads, n)
 
-    # choosing starting positions uniformly at random
-    alpha = 1.0
+    # choosing starting positions at mode
+    println("Finding approximate mode")
+    ys0 = approximate_likelihood(OptimizeHSBApprox(), transpose(X), Val{true}, num_steps=100)["x"]
+    ys0_el = ys0 .* els
+    ys0_el ./= sum(ys0_el)
+    @show ys0[39073]
+    # @show ys0_el[39073]
+    # @show els[39073]
+    # exit()
     for t in 1:nthreads
-        for i in 1:n
-            ys[t, i] = rand(Gamma(alpha, 1))
-        end
-        ys[t,:] ./= sum(ys[])
+        ys[t, :] = ys0
     end
+
+    # choosing starting positions uniformly at random
+    # alpha = 1.0
+    # for t in 1:nthreads
+    #     ys_sum = 0.0f0
+    #     for i in 1:n
+    #         ys[t, i] = rand(Gamma(alpha, 1))
+    #         ys_sum += ys[t, i]
+    #     end
+    #     ys[t,:] ./= ys_sum
+    # end
 
     # effective length adjusted mixtures
     xs = similar(ys)
@@ -44,23 +68,45 @@ function gibbs_sampler(input_filename, output_filename)
     ws = Array{Float32}(nthreads, wlen)
 
     samples = Array{Float32}(nthreads, sample_per_chain, n)
-    stored_sample_num = 1
+    # stored_sample_num = 0
 
     rngs = [srand() for t in 1:nthreads]
 
     total_sample_num = num_burnin_samples + sample_stride * sample_per_chain
-    @showprogress for sample_num in 1:total_sample_num
-        if sample_num > num_burnin_samples &&
-            ((sample_num - num_burnin_samples - 1) % sample_stride) == 0
-            stored_sample_num += 1
-        end
 
-        Threads.@threads for t in 1:nthreads
-        # for t in 1:nthreads
+    # @showprogress for sample_num in 1:total_sample_num
+    #     if sample_num > num_burnin_samples &&
+    #         ((sample_num - num_burnin_samples - 1) % sample_stride) == 0
+    #         stored_sample_num += 1
+    #     end
+
+    #     # Threads.@threads for t in 1:nthreads
+    #     for t in 1:nthreads
+    #         generate_gibbs_sample(rngs[t], m, n, t, X, els, cs, ws, xs, ys, zs,
+    #                               samples, stored_sample_num)
+    #     end
+    # end
+
+    Threads.@threads for t in 1:nthreads
+    # for t in 1:nthreads
+        stored_sample_num = 0
+        for sample_num in 1:total_sample_num
+            if t == 1 && (sample_num % 10) == 0
+                @show ys[t, 39073]
+                println(sample_num, "/", total_sample_num)
+            end
+
+            if sample_num > num_burnin_samples &&
+                ((sample_num - num_burnin_samples - 1) % sample_stride) == 0
+                stored_sample_num += 1
+            end
+
             generate_gibbs_sample(rngs[t], m, n, t, X, els, cs, ws, xs, ys, zs,
                                   samples, stored_sample_num)
         end
     end
+
+    @show all(isfinite.(samples))
 
     # compute convergence statistics
     chain_means = Vector{Float32}(2 * nthreads)
@@ -102,9 +148,9 @@ function gibbs_sampler(input_filename, output_filename)
 
     # print samples
     out = open(output_filename, "w")
-    for sample_num in 1:size(samples, 1)
-        for t in 1:nthreads
-            for i in 1:n
+    for t in 1:size(samples, 1)
+        for sample_num in 1:size(samples, 2)
+            for i in 1:size(samples, 3)
                 @printf(out, "%e", samples[t, sample_num, i])
                 if i < n
                     print(out, ",")
@@ -160,13 +206,19 @@ function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, xs, ys, zs,
     ys[t,:] ./= ys_sum
 
     if stored_sample_num > 0
+        xs_sum = 0.0f0
         for j in 1:n
             xs[t, j] = ys[t, j] / els[j]
+            xs_sum += xs[t, j]
         end
-        xs[t,:] ./= sum(xs[t,:])
+        xs[t,:] ./= xs_sum
 
         for i in 1:n
             samples[t, stored_sample_num, i] = xs[t, i]
+        end
+
+        if t == 1
+            @show (samples[t, stored_sample_num, 39073], ys[t, 39073])
         end
     end
 end
@@ -198,7 +250,7 @@ function rand_gamma(rng, shape, scale)
                 v = 1.0 + c*x
             end
             v = v*v*v
-            u = rand()
+            u = rand(rng)
             xsq = x*x
             if u < 1.0 -.0331*xsq*xsq || log(u) < 0.5*xsq + d*(1.0 - v + log(v))
                 return scale*d*v

@@ -81,10 +81,15 @@ function sample_likap(approx_type::Type{LogitNormalHSBApprox},
         hsb_transform!(t, ys, xs, Val{true})
         xs = clamp!(xs, eps, 1 - eps)
 
+        println("-----")
+        @show xs[39073]
+
         for j in 1:n
             xs[j] /= effective_lengths[j]
         end
         xs ./= sum(xs)
+
+        @show xs[39073]
 
         samples[i,:] = xs
     end

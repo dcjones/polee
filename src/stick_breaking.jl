@@ -425,7 +425,7 @@ function hclust(X::SparseMatrixCSC)
 
         # all trees have been merged
         if ab.left === ab && ab.right === ab
-            return ab.root
+            return ab.root, xs
         end
 
         update_distances!(queue, queue_idxs, square_frag_probs, ab, K)
@@ -437,6 +437,10 @@ end
 type HSBTransform
     # tree nodes in depth first traversal order
     nodes::Vector{HClustNode}
+
+    # hint at an appropriate initial value for x. When cluster heuristic is used,
+    # this is the approximate mode, otherwis its fill(1/n)
+    x0::Vector{Float32}
 end
 
 
@@ -513,22 +517,25 @@ end
 function HSBTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
     m, n = size(X)
     if method == :cluster
-        root = hclust(X)
+        root, x0 = hclust(X)
         nodes = order_nodes(root, n)
     elseif method == :random
         nodes = rand_tree_nodes(n)
+        x0 = fill(1.0f0/n, n)
     elseif method == :sequential
         nodes = rand_list_nodes(n)
+        x0 = fill(1.0f0/n, n)
     else
         error("$(method) is not a supported HSB heuristic")
     end
-    return HSBTransform(nodes)
+    return HSBTransform(nodes, x0)
 end
 
 
 # rebuild tree from serialization
-function HSBTransform(parent_idxs, js)
-    return HSBTransform(deserialize_tree(parent_idxs, js))
+function HSBTransform{T<:Integer}(parent_idxs::Vector{T}, js::Vector{T})
+    n = div(length(js) + 1, 2)
+    return HSBTransform(deserialize_tree(parent_idxs, js), fill(1.0f0/n, n))
 end
 
 
@@ -659,6 +666,26 @@ function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
     @assert isfinite(ladj)
 
     return ladj
+end
+
+
+function hsb_inverse_transform!(t::HSBTransform, xs::Vector, ys::Vector)
+    nodes = t.nodes
+    n = length(xs)
+    k = n - 1 # internal node count
+    for i in length(nodes):-1:1
+        node = nodes[i]
+
+        if node.j != 0 # leaf node
+            node.input_value = xs[node.j]
+            continue
+        end
+
+        node.input_value = node.left_child.input_value + node.right_child.input_value
+        ys[k] = node.left_child.input_value / node.input_value
+
+        k -= 1
+    end
 end
 
 

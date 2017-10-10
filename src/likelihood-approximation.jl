@@ -236,7 +236,7 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 500
+    num_steps = 1000
 
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
@@ -399,6 +399,7 @@ end
 function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
                                           X::SparseMatrixCSC,
                                           ::Type{Val{GRADONLY}}=Val{true})
+    srand(135792446)
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -433,16 +434,27 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(n)
 
+    hsb_inverse_transform!(t, t.x0, ys)
     mu    = fill(0.0f0, n-1)
     k = 1
     for node in t.nodes
         if node.j == 0
-            nl = node.left_child.subtree_size
-            nr = node.right_child.subtree_size
-            mu[k] = logit(nl / (nl + nr))
+            # nl = node.left_child.subtree_size
+            # nr = node.right_child.subtree_size
+            # mu[k] = logit(nl / (nl + nr))
+            mu[k] = logit(ys[k])
             k += 1
         end
     end
+
+    @show t.x0[39073]
+    # hsb_transform!(t, logistic.(mu), xs, Val{true})
+    # @show xs[39075]
+
+    # @show maximum(xs .- t.x0)
+    # @show extrema(xs)
+    # @show extrema(t.x0)
+    # exit()
 
     omega = fill(log(0.1f0), n-1)
 
@@ -490,6 +502,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
             ys = clamp!(ys, eps, 1 - eps)
 
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            @show xs[39073]
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
@@ -523,6 +536,10 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
 
         next!(prog)
     end
+
+    println("final value")
+    hsb_transform!(t, logistic.(mu), xs, Val{true})
+    @show xs[39073]
 
     toc()
 
@@ -650,6 +667,8 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
 
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
+
+            @show xs[39073]
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
                                 X, Xt, xs, x_grad, Val{GRADONLY})

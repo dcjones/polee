@@ -3,7 +3,7 @@
 """
 Multithreaded version of At_mul_B!
 """
-function pAt_mul_B!{T,I}(y::Vector{T}, A::SparseMatrixCSC{T,I}, x::Vector{T})
+function pAt_mul_B!{T,I}(y::Vector, A::SparseMatrixCSC{T,I}, x::Vector)
     fill!(y, zero(T))
     colptr = A.colptr
     rowval = A.rowval

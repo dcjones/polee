@@ -344,7 +344,6 @@ function hclust_initalize(X::SparseMatrixCSC, xs::Vector{Float32},
             while k <= length(J) && J[k] == j
                 k += 1
             end
-            # TODO: no this is wrong. Shouldn't multiply by xs[j] here
             nodes[j] = SubtreeListNode(V[k0:k-1], I[k0:k-1], HClustNode(j), xs[j])
             @assert issorted(nodes[j].is)
             j += 1

@@ -13,6 +13,14 @@ Logistic-normal distribution.
 struct LogisticNormalApprox <: LikelihoodApproximation end
 
 """
+Logit hierarchical stick breaking with Skew-Normal distribution.
+"""
+struct SkewNormalHSBApprox <: LikelihoodApproximation
+    treemethod::Symbol # [one of :sequential, :random, :clustered]
+end
+SkewNormalHSBApprox() = SkewNormalHSBApprox(:clustered)
+
+"""
 Hierarchical stick breaking with Kumaraswamy distributed balances.
 """
 struct KumaraswamyHSBApprox <: LikelihoodApproximation
@@ -165,9 +173,9 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCS
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(n)
 
-    z_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
+    z_grad = Array{Float64}(n-1)
+    y_grad = Array{Float64}(n-1)
+    x_grad = Array{Float64}(n)
 
     # initial values for y
     k = 1
@@ -197,7 +205,7 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCS
         fill!(x_grad, 0.0f0)
         fill!(y_grad, 0.0f0)
 
-        hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+        hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})
         xs = clamp!(xs, eps, 1 - eps)
 
         log_likelihood(model.frag_probs, model.log_frag_probs,
@@ -206,17 +214,20 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCS
         hsb_transform_gradients!(t, ys, y_grad, x_grad)
 
         for i in 1:n-1
-            expz = exp(zs[i])
-            dy_dz = expz / (expz + 1)^2
+            dy_dz = ys[i] * (1 - ys[i])
             z_grad[i] = dy_dz * y_grad[i]
 
             # log jacobian gradient
+            expz = exp(zs[i])
             z_grad[i] += (1 - expz) / (1 + expz)
         end
 
         adam_update_mv!(m_z, v_z, z_grad, step_num)
-
         adam_update_params!(zs, m_z, v_z, learning_rate, step_num, ss_max_z_step)
+
+        # @show xs[30896]
+        # @show xs[1]
+        # @show xs[end]
 
         next!(prog)
     end
@@ -236,7 +247,7 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 1000
+    num_steps = 500
 
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
@@ -274,7 +285,7 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
     omega_grad = Array{Float32}(n-1)
     sigma_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
+    x_grad = Array{Float64}(n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
@@ -399,7 +410,6 @@ end
 function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
                                           X::SparseMatrixCSC,
                                           ::Type{Val{GRADONLY}}=Val{true})
-    srand(135792446)
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -447,15 +457,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
         end
     end
 
-    @show t.x0[39073]
-    # hsb_transform!(t, logistic.(mu), xs, Val{true})
-    # @show xs[39075]
-
-    # @show maximum(xs .- t.x0)
-    # @show extrema(xs)
-    # @show extrema(t.x0)
-    # exit()
-
     omega = fill(log(0.1f0), n-1)
 
     # exp(omega)
@@ -466,7 +467,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     omega_grad = Array{Float32}(n-1)
     sigma_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
+    x_grad = Array{Float64}(n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
@@ -502,7 +503,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
             ys = clamp!(ys, eps, 1 - eps)
 
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
-            @show xs[39073]
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
@@ -537,14 +537,175 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
         next!(prog)
     end
 
-    println("final value")
-    hsb_transform!(t, logistic.(mu), xs, Val{true})
-    @show xs[39073]
-
     toc()
 
     return union(flattened_tree(t),
                  Dict{String, Vector}("mu" => mu, "omega" => omega))
+end
+
+
+function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
+                                          X::SparseMatrixCSC,
+                                          ::Type{Val{GRADONLY}}=Val{true})
+    m, n = size(X)
+    Xt = transpose(X)
+    model = Model(m, n)
+
+    num_steps = 500
+
+    # gradient running mean
+    m_mu    = Array{Float32}(n-1)
+    m_omega = Array{Float32}(n-1)
+    m_alpha = Array{Float32}(n-1)
+
+    # gradient running variances
+    v_mu    = Array{Float32}(n-1)
+    v_omega = Array{Float32}(n-1)
+    v_alpha = Array{Float32}(n-1)
+
+    # step size clamp
+    ss_max_mu_step    = 2e-1
+    ss_max_omega_step = 2e-1
+    ss_max_alpha_step = 2e-1
+
+    # number of monte carlo samples to estimate gradients an elbo at each
+    # iteration
+    num_mc_samples = 6
+
+    # cluster transcripts for hierachrical stick breaking
+    t = HSBTransform(X, approx.treemethod)
+
+    # Unifom distributed values
+    zs1 = Array{Float32}(n-1)
+    zs2 = Array{Float32}(n-1)
+    zs = Array{Float32}(n-1)
+
+    # zs transformed to Kumaraswamy distributed values
+    ys = Array{Float64}(n-1)
+
+    # ys transformed by hierarchical stick breaking
+    xs = Array{Float32}(n)
+
+    fill!(t.x0, 1.0f0/n) # XXX:
+    hsb_inverse_transform!(t, t.x0, ys)
+    mu    = fill(0.0f0, n-1)
+    k = 1
+    for node in t.nodes
+        if node.j == 0
+            mu[k] = logit(ys[k])
+            k += 1
+        end
+    end
+
+    omega = fill(log(0.1f0), n-1)
+    alpha = fill(0.0f0, n-1)
+
+    # exp(omega)
+    sigma = Array{Float32}(n-1)
+
+    # various intermediate gradients
+    mu_grad    = Array{Float32}(n-1)
+    omega_grad = Array{Float32}(n-1)
+    sigma_grad = Array{Float32}(n-1)
+    alpha_grad = Array{Float32}(n-1)
+    y_grad = Array{Float32}(n-1)
+    x_grad = Array{Float32}(n)
+    z_grad = Array{Float32}(n)
+    work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
+
+    elbo = 0.0
+    elbo0 = 0.0
+    max_elbo = -Inf # smallest elbo seen so far
+
+    tic()
+    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
+    for step_num in 1:num_steps
+        learning_rate = adam_learning_rate(step_num - 1)
+
+        elbo0 = elbo
+        elbo = 0.0
+        fill!(mu_grad, 0.0f0)
+        fill!(omega_grad, 0.0f0)
+        fill!(alpha_grad, 0.0f0)
+
+        for i in 1:n-1
+            sigma[i] = exp(omega[i])
+        end
+
+        eps = 1e-10
+
+        for _ in 1:num_mc_samples
+            fill!(x_grad, 0.0f0)
+            fill!(y_grad, 0.0f0)
+            fill!(z_grad, 0.0f0)
+            fill!(sigma_grad, 0.0f0)
+
+            for i in 1:n-1
+                zs1[i] = abs(randn(Float32))
+                zs2[i] = randn(Float32)
+                c = sqrt(1 + alpha[i]^2)
+                # skew-normal transformation from Henze 1986
+                zs[i] = (alpha[i] / c) * zs1[i] + (1 / c) * zs2[i]
+            end
+
+            ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY})
+            ys = clamp!(ys, eps, 1 - eps)
+
+            hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            xs = clamp!(xs, eps, 1 - eps)
+
+            lp = log_likelihood(model.frag_probs, model.log_frag_probs,
+                                X, Xt, xs, x_grad, Val{GRADONLY})
+            elbo = lp + ln_ladj + hsb_ladj
+
+            hsb_transform_gradients!(t, ys, y_grad, x_grad)
+            logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad)
+
+            # alpha gradient
+            for i in 1:n-1
+                c = (1 + alpha[i]^2)^(3/2)
+                dz_dalpha = (1 / c) * zs1[i] - (alpha[i] / c) * zs2[i]
+                alpha_grad[i] += z_grad[i] * dz_dalpha
+            end
+
+            # adjust for log transform and accumulate
+            for i in 1:n-1
+                omega_grad[i] += sigma[i] * sigma_grad[i]
+            end
+        end
+
+        for i in 1:n-1
+            mu_grad[i]    /= num_mc_samples
+            omega_grad[i] /= num_mc_samples
+            alpha_grad[i] /= num_mc_samples
+        end
+
+        elbo /= num_mc_samples # get estimated expectation over mc samples
+
+        # @show elbo
+
+        max_elbo = max(max_elbo, elbo)
+        @assert isfinite(elbo)
+
+        adam_update_mv!(m_mu, v_mu, mu_grad, step_num)
+        adam_update_mv!(m_omega, v_omega, omega_grad, step_num)
+        adam_update_mv!(m_alpha, v_alpha, alpha_grad, step_num)
+
+        adam_update_params!(mu, m_mu, v_mu, learning_rate, step_num, ss_max_mu_step)
+        adam_update_params!(omega, m_omega, v_omega, learning_rate, step_num, ss_max_omega_step)
+        adam_update_params!(alpha, m_alpha, v_alpha, learning_rate, step_num, ss_max_alpha_step)
+
+        @show extrema(alpha)
+        @show quantile(sort(alpha), [0.001, 0.01, 0.5, 0.99, 0.999])
+        @show quantile(sort(alpha_grad), [0.001, 0.01, 0.5, 0.99, 0.999])
+
+        next!(prog)
+    end
+
+    toc()
+
+    return union(flattened_tree(t),
+                 Dict{String, Vector}("mu" => mu, "omega" => omega, "alpha" => alpha))
 end
 
 
@@ -598,7 +759,7 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
     a_grad = Array{Float32}(n-1)
     b_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
+    x_grad = Array{Float64}(n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
@@ -667,8 +828,6 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
 
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
             xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
-
-            @show xs[39073]
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
                                 X, Xt, xs, x_grad, Val{GRADONLY})

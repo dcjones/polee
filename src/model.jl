@@ -4,10 +4,10 @@ type Model
     n::Int # number of transcripts
 
     # work vector for computing posterior log prob
-    frag_probs::Vector{Float32}
+    frag_probs::Vector{Float64}
 
     # work for taking log of frag_probs in a multithreaded fashion
-    log_frag_probs::Vector{Float32}
+    log_frag_probs::Vector{Float64}
 end
 
 

@@ -81,15 +81,50 @@ function sample_likap(approx_type::Type{LogitNormalHSBApprox},
         hsb_transform!(t, ys, xs, Val{true})
         xs = clamp!(xs, eps, 1 - eps)
 
-        println("-----")
-        @show xs[39073]
-
         for j in 1:n
             xs[j] /= effective_lengths[j]
         end
         xs ./= sum(xs)
 
-        @show xs[39073]
+        samples[i,:] = xs
+    end
+
+    return samples
+end
+
+
+function sample_likap(approx_type::Type{SkewNormalHSBApprox},
+                      input, num_samples)
+    mu = read(input["mu"])
+    sigma = exp.(read(input["omega"]))
+    alpha = read(input["alpha"])
+
+    effective_lengths = read(input["effective_lengths"])
+    t = HSBTransform(read(input["node_parent_idxs"]),
+                     read(input["node_js"]))
+    close(input)
+    n = length(mu) + 1
+
+    zs = Array{Float32}(n-1)
+    ys = Array{Float64}(n-1)
+    xs = Array{Float32}(n)
+    samples = Array{Float32}(num_samples, n)
+    eps = 1e-10
+
+    for i in 1:num_samples
+        for j in 1:n-1
+            c = sqrt(1 + alpha[i]^2)
+            zs[j] = (alpha[i] / c) * abs(randn(Float32)) + (1 / c) * randn(Float32)
+        end
+        logit_normal_transform!(mu, sigma, zs, ys, Val{true})
+        ys = clamp!(ys, eps, 1 - eps)
+        hsb_transform!(t, ys, xs, Val{true})
+        xs = clamp!(xs, eps, 1 - eps)
+
+        for j in 1:n
+            xs[j] /= effective_lengths[j]
+        end
+        xs ./= sum(xs)
 
         samples[i,:] = xs
     end

@@ -34,24 +34,6 @@ function gibbs_sampler(input_filename, output_filename)
     # per-transcript convergence stats
     Rs = Vector{Float32}(n)
 
-    #=
-    # choosing starting positions at mode
-    println("Finding approximate mode")
-    ys0 = approximate_likelihood(OptimizeHSBApprox(), X, Val{true}, num_steps=500)["x"]
-
-    ys0_el = ys0 ./ els
-    ys0_el ./= sum(ys0_el)
-
-    idx = 30896
-
-    @show ys0[idx]
-    @show ys0_el[idx]
-
-    for t in 1:nthreads
-        ys[t, :] = ys0
-    end
-    =#
-
     # choosing starting positions uniformly at random
     alpha = 1.0
     for t in 1:nthreads
@@ -71,35 +53,11 @@ function gibbs_sampler(input_filename, output_filename)
     for i in 1:m
         wlen = max(wlen, Xt.colptr[i+1] - Xt.colptr[i])
     end
-    ws = Array{Float32}(nthreads, wlen)
+    ws = Array{Float64}(nthreads, wlen)
 
     samples = Array{Float32}(nthreads, sample_per_chain, n)
 
-    rngs = [srand() for t in 1:nthreads]
-
-
-    #=
-    total_sample_num = num_burnin_samples + sample_stride * sample_per_chain
-
-    Threads.@threads for t in 1:nthreads
-        stored_sample_num = 0
-        for sample_num in 1:total_sample_num
-            if t == 1 && (sample_num % 10) == 0
-                println(sample_num, "/", total_sample_num)
-            end
-
-            if sample_num > num_burnin_samples &&
-                ((sample_num - num_burnin_samples - 1) % sample_stride) == 0
-                stored_sample_num += 1
-            end
-
-            generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, xs, ys, zs,
-                                  samples, stored_sample_num)
-            # generate_em_iteration(rngs[t], m, n, t, Xt, els, cs, ws, xs, ys, zs,
-            #                       samples, stored_sample_num)
-        end
-    end
-    =#
+    rngs = [MersenneTwister(Base.Random.make_seed()) for t in 1:nthreads]
 
     # burn-in
     Threads.@threads for t in 1:nthreads
@@ -164,15 +122,15 @@ function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, xs, ys, zs,
     # sample zs
     zs[t,:] = 0
     for i in 1:m
-        wsum = 0.0f0
+        wsum = 0.0
         for (l, k) in enumerate(X.colptr[i]:X.colptr[i+1]-1)
             j = X.rowval[k]
-            ws[t, l] = X.nzval[k] * ys[t, j]
-            wsum += ws[t, l]
+            ws[t, l] = Float64(X.nzval[k]) * Float64(ys[t, j])
+            wsum += Float64(ws[t, l])
         end
 
         r = wsum * rand(rng)
-        wcsum = 0.0f0
+        wcsum = 0.0
         wlen = X.colptr[i+1] - X.colptr[i]
         for (l, k) in enumerate(X.colptr[i]:X.colptr[i+1]-1)
             wcsum += ws[t, l]

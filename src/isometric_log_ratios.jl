@@ -19,7 +19,7 @@ end
 
 function ILRTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
     m, n = size(X)
-    root = hclust(X)
+    root, xs0 = hclust(X)
     nodes = order_nodes(root, n)
     return ILRTransform(nodes)
 end

@@ -93,7 +93,7 @@ function sample_likap(approx_type::Type{LogitNormalHSBApprox},
 end
 
 
-function sample_likap(approx_type::Type{SkewNormalHSBApprox},
+function sample_likap(approx_type::Type{LogitSkewNormalHSBApprox},
                       input, num_samples)
     mu = read(input["mu"])
     sigma = exp.(read(input["omega"]))
@@ -114,7 +114,8 @@ function sample_likap(approx_type::Type{SkewNormalHSBApprox},
     for i in 1:num_samples
         for j in 1:n-1
             c = sqrt(1 + alpha[i]^2)
-            zs[j] = (alpha[i] / c) * abs(randn(Float32)) + (1 / c) * randn(Float32)
+            # zs[j] = (alpha[i] / c) * abs(randn(Float32)) + (1 / c) * randn(Float32)
+            zs[j] = exp(-alpha[i] * randn(Float32))/alpha[i]
         end
         logit_normal_transform!(mu, sigma, zs, ys, Val{true})
         ys = clamp!(ys, eps, 1 - eps)

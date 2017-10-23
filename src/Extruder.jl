@@ -67,8 +67,8 @@ function select_approx_method(method_name::String, tree_method::Symbol)
         return LogisticNormalApprox()
     elseif method_name == "kumaraswamy_hsb"
         return KumaraswamyHSBApprox(tree_method)
-    elseif method_name == "skew_normal_hsb"
-        return SkewNormalHSBApprox(tree_method)
+    elseif method_name == "logit_skew_normal_hsb"
+        return LogitSkewNormalHSBApprox(tree_method)
     elseif method_name == "logit_normal_hsb"
         return LogitNormalHSBApprox(tree_method)
     elseif method_name == "normal_ilr"

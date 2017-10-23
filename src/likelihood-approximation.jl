@@ -13,12 +13,12 @@ Logistic-normal distribution.
 struct LogisticNormalApprox <: LikelihoodApproximation end
 
 """
-Logit hierarchical stick breaking with Skew-Normal distribution.
+Logit hierarchical stick breaking with logit Skew-Normal distribution.
 """
-struct SkewNormalHSBApprox <: LikelihoodApproximation
+struct LogitSkewNormalHSBApprox <: LikelihoodApproximation
     treemethod::Symbol # [one of :sequential, :random, :clustered]
 end
-SkewNormalHSBApprox() = SkewNormalHSBApprox(:clustered)
+LogitSkewNormalHSBApprox() = LogitSkewNormalHSBApprox(:clustered)
 
 """
 Hierarchical stick breaking with Kumaraswamy distributed balances.
@@ -544,9 +544,9 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
 end
 
 
-function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
+function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
                                           X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{true})
+                                          ::Type{Val{GRADONLY}}=Val{false})
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -566,7 +566,7 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
     # step size clamp
     ss_max_mu_step    = 2e-1
     ss_max_omega_step = 2e-1
-    ss_max_alpha_step = 2e-1
+    ss_max_alpha_step = 2e-3
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
@@ -586,7 +586,6 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(n)
 
-    fill!(t.x0, 1.0f0/n) # XXX:
     hsb_inverse_transform!(t, t.x0, ys)
     mu    = fill(0.0f0, n-1)
     k = 1
@@ -598,7 +597,9 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
     end
 
     omega = fill(log(0.1f0), n-1)
-    alpha = fill(0.0f0, n-1)
+    # TODO: monitor if alpha can successfully jump from positive to negative
+    # we should end up with roughly equal numbers of positive and negative alphas
+    alpha = fill(0.001f0, n-1)
 
     # exp(omega)
     sigma = Array{Float32}(n-1)
@@ -609,7 +610,7 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
     sigma_grad = Array{Float32}(n-1)
     alpha_grad = Array{Float32}(n-1)
     y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
+    x_grad = Array{Float64}(n)
     z_grad = Array{Float32}(n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
@@ -641,11 +642,8 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
             fill!(sigma_grad, 0.0f0)
 
             for i in 1:n-1
-                zs1[i] = abs(randn(Float32))
-                zs2[i] = randn(Float32)
-                c = sqrt(1 + alpha[i]^2)
-                # skew-normal transformation from Henze 1986
-                zs[i] = (alpha[i] / c) * zs1[i] + (1 / c) * zs2[i]
+                zs1[i] = randn(Float32)
+                zs[i] = (1 - exp(-alpha[i] * zs1[i])) / alpha[i]
             end
 
             ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY})
@@ -662,11 +660,17 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
             logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad)
 
             # alpha gradient
+            skew_ladj = 0.0f0
             for i in 1:n-1
-                c = (1 + alpha[i]^2)^(3/2)
-                dz_dalpha = (1 / c) * zs1[i] - (alpha[i] / c) * zs2[i]
-                alpha_grad[i] += z_grad[i] * dz_dalpha
+                az = alpha[i] * zs1[i]
+                dz_dalpha = (az - exp(az) + 1) * exp(-az) / alpha[i]^2
+                alpha_grad[i] += dz_dalpha * z_grad[i]
+
+                # ladj gradient
+                alpha_grad[i] -= zs1[i]
+                skew_ladj -= skew_ladj
             end
+            elbo += skew_ladj
 
             # adjust for log transform and accumulate
             for i in 1:n-1
@@ -681,6 +685,7 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
         end
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
+        @show elbo
 
         # @show elbo
 
@@ -694,10 +699,12 @@ function approximate_likelihood{GRADONLY}(approx::SkewNormalHSBApprox,
         adam_update_params!(mu, m_mu, v_mu, learning_rate, step_num, ss_max_mu_step)
         adam_update_params!(omega, m_omega, v_omega, learning_rate, step_num, ss_max_omega_step)
         adam_update_params!(alpha, m_alpha, v_alpha, learning_rate, step_num, ss_max_alpha_step)
-
         @show extrema(alpha)
-        @show quantile(sort(alpha), [0.001, 0.01, 0.5, 0.99, 0.999])
-        @show quantile(sort(alpha_grad), [0.001, 0.01, 0.5, 0.99, 0.999])
+        # TODO: perturb to avoid alpha[i] = 0
+
+        # @show extrema(alpha)
+        @show quantile(alpha, [0.001, 0.01, 0.5, 0.99, 0.999])
+        # @show quantile(sort(alpha_grad), [0.001, 0.01, 0.5, 0.99, 0.999])
 
         next!(prog)
     end

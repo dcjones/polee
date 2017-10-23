@@ -546,7 +546,7 @@ end
 
 function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
                                           X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{false})
+                                          ::Type{Val{GRADONLY}}=Val{true})
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -566,7 +566,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     # step size clamp
     ss_max_mu_step    = 2e-1
     ss_max_omega_step = 2e-1
-    ss_max_alpha_step = 2e-3
+    ss_max_alpha_step = 2e-2
 
     # number of monte carlo samples to estimate gradients an elbo at each
     # iteration
@@ -576,9 +576,8 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     t = HSBTransform(X, approx.treemethod)
 
     # Unifom distributed values
-    zs1 = Array{Float32}(n-1)
-    zs2 = Array{Float32}(n-1)
-    zs = Array{Float32}(n-1)
+    zs0 = Array{Float32}(n-1)
+    zs  = Array{Float32}(n-1)
 
     # zs transformed to Kumaraswamy distributed values
     ys = Array{Float64}(n-1)
@@ -597,9 +596,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     end
 
     omega = fill(log(0.1f0), n-1)
-    # TODO: monitor if alpha can successfully jump from positive to negative
-    # we should end up with roughly equal numbers of positive and negative alphas
-    alpha = fill(0.001f0, n-1)
+    alpha = fill(0.0f0, n-1)
 
     # exp(omega)
     sigma = Array{Float32}(n-1)
@@ -612,7 +609,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     y_grad = Array{Float32}(n-1)
     x_grad = Array{Float64}(n)
     z_grad = Array{Float32}(n)
-    work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
     elbo0 = 0.0
@@ -642,10 +638,10 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
             fill!(sigma_grad, 0.0f0)
 
             for i in 1:n-1
-                zs1[i] = randn(Float32)
-                zs[i] = (1 - exp(-alpha[i] * zs1[i])) / alpha[i]
+                zs0[i] = randn(Float32)
             end
 
+            skew_ladj = sinh_asinh_transform!(alpha, zs0, zs, Val{GRADONLY})
             ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY})
             ys = clamp!(ys, eps, 1 - eps)
 
@@ -654,23 +650,12 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
                                 X, Xt, xs, x_grad, Val{GRADONLY})
-            elbo = lp + ln_ladj + hsb_ladj
+
+            elbo = lp + skew_ladj + ln_ladj + hsb_ladj
 
             hsb_transform_gradients!(t, ys, y_grad, x_grad)
             logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad)
-
-            # alpha gradient
-            skew_ladj = 0.0f0
-            for i in 1:n-1
-                az = alpha[i] * zs1[i]
-                dz_dalpha = (az - exp(az) + 1) * exp(-az) / alpha[i]^2
-                alpha_grad[i] += dz_dalpha * z_grad[i]
-
-                # ladj gradient
-                alpha_grad[i] -= zs1[i]
-                skew_ladj -= skew_ladj
-            end
-            elbo += skew_ladj
+            sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad)
 
             # adjust for log transform and accumulate
             for i in 1:n-1

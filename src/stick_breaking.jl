@@ -215,36 +215,33 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode,
 end
 
 
-function distance(square_frag_probs::Vector,
-                  a::SubtreeListNode, b::SubtreeListNode)
+function distance(a::SubtreeListNode, b::SubtreeListNode)
     d = 0.0
     i = 1
     j = 1
     while i <= length(a.vs) && j <= length(b.vs)
         if a.is[i] < b.is[j]
-            d -= a.vs[i]^2 / square_frag_probs[a.is[i]]
+            d -= a.vs[i]^2
             i += 1
         elseif a.is[i] > b.is[j]
-            d -= b.vs[j]^2 / square_frag_probs[b.is[j]]
+            d -= b.vs[j]^2
             j += 1
         else
-            d -= (a.vs[i] - b.vs[j])^2 / square_frag_probs[a.is[i]]
+            d -= (a.vs[i] - b.vs[j])^2
             i += 1
             j += 1
         end
     end
 
     while i <= length(a.vs)
-        d -= a.vs[i]^2 / square_frag_probs[a.is[i]]
+        d -= a.vs[i]^2
         i += 1
     end
 
     while j <= length(b.vs)
-        d -= b.vs[j]^2 / square_frag_probs[b.is[j]]
+        d -= b.vs[j]^2
         j += 1
     end
-
-    d *= (a.subcomp_sum + b.subcomp_sum)^2
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
@@ -254,7 +251,6 @@ end
 
 
 # Set adjacent node distances to 0.0 so they get popped immediately
-# TODO: We can't look up items up if we use heap, so what are we to do?
 function promote!(queue, queue_idxs, a, K)
     if a.left !== a
         u = a.left
@@ -288,12 +284,11 @@ function promote!(queue, queue_idxs, a, K)
 end
 
 
-function update_distances!(queue, queue_idxs,
-                           square_frag_probs::Vector, a, K)
+function update_distances!(queue, queue_idxs, a, K)
     if a.left !== a
         u = a.left
         for _ in 1:K
-            d = distance(square_frag_probs, u, a)
+            d = distance(u, a)
             queue_idxs[(u,a)] = push!(queue, (d, u, a))
             if u.left === u
                 break
@@ -306,7 +301,7 @@ function update_distances!(queue, queue_idxs,
     if a.right !== a
         u = a.right
         for _ in 1:K
-            d = distance(square_frag_probs, a, u)
+            d = distance(a, u)
             queue_idxs[(a,u)] = push!(queue, (d, a, u))
             if u.right === u
                 break
@@ -318,8 +313,7 @@ function update_distances!(queue, queue_idxs,
 end
 
 
-function hclust_initalize(X::SparseMatrixCSC, xs::Vector{Float32},
-                          square_frag_probs::Vector, n, K)
+function hclust_initalize(X::SparseMatrixCSC, xs::Vector, n, K)
     # construct nodes
     I, J, V = findnz(X)
     p = sortperm(J)
@@ -374,7 +368,7 @@ function hclust_initalize(X::SparseMatrixCSC, xs::Vector{Float32},
     queue_idxs = Dict{Tuple{SubtreeListNode, SubtreeListNode}, Int}()
     for i in 1:n
         for j in i+1:min(i+K, n)
-            d = distance(square_frag_probs, nodes[i], nodes[j])
+            d = distance(nodes[i], nodes[j])
             queue_idxs[(nodes[i], nodes[j])] = push!(queue, (d, nodes[i], nodes[j]))
         end
     end
@@ -387,18 +381,13 @@ end
 function hclust(X::SparseMatrixCSC)
     m, n = size(X)
 
-    println("Finding approximate mode")
-    xs = fill(1.0f0/n, n)
-
-    Xt = transpose(X)
-    square_frag_probs = Vector{Float64}(m)
-    pAt_mul_B!(square_frag_probs, Xt, xs)
-    map!(x -> x^2, square_frag_probs, square_frag_probs)
+    # xs = approximate_likelihood(OptimizeHSBApprox(), X, Val{true}, num_steps=50)["x"]
+    xs = fill!(1.0f0/n, n)
 
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
     K = 10
-    queue, queue_idxs = hclust_initalize(X, xs, square_frag_probs, n, K)
+    queue, queue_idxs = hclust_initalize(X, xs, n, K)
 
     merge_buffer_v = Float32[]
     merge_buffer_i = UInt32[]
@@ -424,7 +413,7 @@ function hclust(X::SparseMatrixCSC)
             return ab.root, xs
         end
 
-        update_distances!(queue, queue_idxs, square_frag_probs, ab, K)
+        update_distances!(queue, queue_idxs, ab, K)
     end
 end
 

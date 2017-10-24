@@ -47,10 +47,9 @@ function logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu
         dy_dz = ys[i] * (1 - ys[i]) * sigma[i]
         z_grad[i] += dy_dz * y_grad[i]
 
-        # TODO: uhh ladj grad for skew normal transformation???
-
         # ladj gradients
         mu_grad[i] += 1 - 2*ys[i]
         sigma_grad[i] += 1/sigma[i] + zs[i] * (1 - 2*ys[i])
+        z_grad[i] += sigma[i] * (1 - 2*ys[i])
     end
 end

@@ -99,8 +99,8 @@ type SubtreeListNode
 end
 
 
-function Base.isless(a::Tuple{Float32, SubtreeListNode, SubtreeListNode},
-                     b::Tuple{Float32, SubtreeListNode, SubtreeListNode})
+function Base.isless(a::Tuple{Float64, SubtreeListNode, SubtreeListNode},
+                     b::Tuple{Float64, SubtreeListNode, SubtreeListNode})
     return a[1] < b[1]
 end
 
@@ -215,13 +215,12 @@ function merge!(a::SubtreeListNode, b::SubtreeListNode,
 end
 
 
-function distance(square_frag_probs::Vector{Float32},
+function distance(square_frag_probs::Vector,
                   a::SubtreeListNode, b::SubtreeListNode)
-    d = 0.0f0
+    d = 0.0
     i = 1
     j = 1
     while i <= length(a.vs) && j <= length(b.vs)
-        cond_frag_prob_diff = 0.0f0
         if a.is[i] < b.is[j]
             d -= a.vs[i]^2 / square_frag_probs[a.is[i]]
             i += 1
@@ -249,8 +248,8 @@ function distance(square_frag_probs::Vector{Float32},
 
     # we inject a little noise to break ties randomly and lead to a more
     # balanced tree
-    noise = 1f-20 * rand()
-    return Float32(abs(d) + noise)
+    noise = 1e-20 * rand()
+    return abs(d) + noise
 end
 
 
@@ -262,7 +261,7 @@ function promote!(queue, queue_idxs, a, K)
         for _ in 1:K
             if haskey(queue_idxs, (u, a))
                 idx = queue_idxs[(u,a)]
-                DataStructures.update!(queue, idx, (0.0f0, u, a))
+                DataStructures.update!(queue, idx, (0.0, u, a))
             end
             if u.left === u
                 break
@@ -277,7 +276,7 @@ function promote!(queue, queue_idxs, a, K)
         for _ in 1:K
             if haskey(queue_idxs, (a, u))
                 idx = queue_idxs[(a,u)]
-                DataStructures.update!(queue, idx, (0.0f0, a, u))
+                DataStructures.update!(queue, idx, (0.0, a, u))
             end
             if u.right === u
                 break
@@ -290,7 +289,7 @@ end
 
 
 function update_distances!(queue, queue_idxs,
-                           square_frag_probs::Vector{Float32}, a, K)
+                           square_frag_probs::Vector, a, K)
     if a.left !== a
         u = a.left
         for _ in 1:K
@@ -320,7 +319,7 @@ end
 
 
 function hclust_initalize(X::SparseMatrixCSC, xs::Vector{Float32},
-                          square_frag_probs::Vector{Float32}, n, K)
+                          square_frag_probs::Vector, n, K)
     # construct nodes
     I, J, V = findnz(X)
     p = sortperm(J)
@@ -371,7 +370,7 @@ function hclust_initalize(X::SparseMatrixCSC, xs::Vector{Float32},
     end
 
     tic()
-    queue = mutable_binary_minheap(Tuple{Float32, SubtreeListNode, SubtreeListNode})
+    queue = mutable_binary_minheap(Tuple{Float64, SubtreeListNode, SubtreeListNode})
     queue_idxs = Dict{Tuple{SubtreeListNode, SubtreeListNode}, Int}()
     for i in 1:n
         for j in i+1:min(i+K, n)
@@ -389,16 +388,16 @@ function hclust(X::SparseMatrixCSC)
     m, n = size(X)
 
     println("Finding approximate mode")
-    xs = approximate_likelihood(OptimizeHSBApprox(), X, Val{true}, num_steps=50)["x"]
+    xs = fill(1.0f0/n, n)
 
     Xt = transpose(X)
-    square_frag_probs = Vector{Float32}(m)
+    square_frag_probs = Vector{Float64}(m)
     pAt_mul_B!(square_frag_probs, Xt, xs)
     map!(x -> x^2, square_frag_probs, square_frag_probs)
 
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
-    K = 5
+    K = 10
     queue, queue_idxs = hclust_initalize(X, xs, square_frag_probs, n, K)
 
     merge_buffer_v = Float32[]
@@ -415,8 +414,6 @@ function hclust(X::SparseMatrixCSC)
         if a.merged || b.merged
             continue
         end
-
-        # @show d
 
         ab = merge!(a, b, merge_buffer_v, merge_buffer_i, queue, queue_idxs, K)
         merge_count += 1

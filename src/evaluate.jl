@@ -298,7 +298,7 @@ end
 Measure absolute difference in expected log2 fold change between estimates
 from the gibbs sampler and estimates from an approximated likelihood.
 """
-function log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
+function mean_log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
     num_samples, n = size(a_gibbs)
     @assert size(b_gibbs) == (num_samples, n)
     @assert size(a_likap) == (num_samples, n)
@@ -328,3 +328,34 @@ function log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
 end
 
 
+
+"""
+Measure absolute difference in median log2 fold change between estimates
+from the gibbs sampler and estimates from an approximated likelihood.
+"""
+function median_log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
+    num_samples, n = size(a_gibbs)
+    @assert size(b_gibbs) == (num_samples, n)
+    @assert size(a_likap) == (num_samples, n)
+    @assert size(b_likap) == (num_samples, n)
+
+    lfc_ests_gibbs = Array{Float32}(num_samples)
+    lfc_ests_likap = Array{Float32}(num_samples)
+
+    ord1 = shuffle(1:num_samples)
+    ord2 = shuffle(1:num_samples)
+
+    losses = Array{Float32}(n)
+    for i in 1:n
+        for k in 1:num_samples
+            lfc_ests_gibbs[k] = log2(a_gibbs[ord1[k], i]) - log2(b_gibbs[ord2[k], i])
+            @assert isfinite(lfc_ests_gibbs[k])
+
+            lfc_ests_likap[k] = log2(a_likap[ord1[k], i]) - log2(b_likap[ord2[k], i])
+            @assert isfinite(lfc_ests_likap[k])
+        end
+        losses[i] = median!(lfc_ests_gibbs) - median!(lfc_ests_likap)
+    end
+
+    return losses
+end

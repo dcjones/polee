@@ -130,7 +130,7 @@ function main()
             "--output", "-o"
                 default = "sample-data.h5"
             "--approx-method"
-                default = "logit_normal_hsb"
+                default = "logit_skew_normal_hsb"
             "--tree-method"
                 default = "cluster"
             "likelihood_matrix_filename"
@@ -160,7 +160,7 @@ function main()
             "--likelihood-matrix"
                 required = false
             "--approx-method"
-                default = "logit_normal_hsb"
+                default = "logit_skew_normal_hsb"
             "--tree-method"
                 default = "cluster"
         end

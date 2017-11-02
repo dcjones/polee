@@ -382,7 +382,7 @@ function hclust(X::SparseMatrixCSC)
     m, n = size(X)
 
     # xs = approximate_likelihood(OptimizeHSBApprox(), X, Val{true}, num_steps=50)["x"]
-    xs = fill!(1.0f0/n, n)
+    xs = fill(1.0f0/n, n)
 
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge

@@ -15,7 +15,7 @@ function sinh_asinh_transform!{GRADONLY}(alpha, zs0, zs, ::Type{Val{GRADONLY}})
         zs[i] = sinh(c)
 
         if !GRADONLY
-            ladj += cosh(c) - 0.5 * log(1 + zs0[i]^2)
+            ladj += log(cosh(c)) - 0.5 * log1p(zs0[i]^2)
         end
     end
 
@@ -33,7 +33,7 @@ function sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad)
         alpha_grad[i] += dz_dalpha * z_grad[i]
 
         # ladj gradient
-        alpha_grad[i] += zs[i] / dz_dalpha
+        alpha_grad[i] += tanh(alpha[i] + sinh(zs0[i]))
     end
 end
 

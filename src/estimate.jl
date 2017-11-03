@@ -17,18 +17,18 @@ function load_samples_from_specification(experiment_spec_filename, ts_metadata)
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    (likapprox_musigma, likapprox_efflen, likapprox_As,
+    (likapprox_laparam, likapprox_efflen, likapprox_As,
      likapprox_parent_idxs, likapprox_js, x0) = load_samples(filenames, ts_metadata)
     println("Sample data loaded")
 
-    return (likapprox_musigma, likapprox_efflen,
+    return (likapprox_laparam, likapprox_efflen,
             likapprox_As, likapprox_parent_idxs, likapprox_js,
             x0, sample_factors, names)
 end
 
 
 function load_samples(filenames, ts_metadata)
-    musigma_tensors = []
+    laparam_tensors = []
     efflen_tensors = []
     x0_tensors = []
     node_parent_idxs_tensors = []
@@ -43,12 +43,11 @@ function load_samples(filenames, ts_metadata)
         mu = read(input["mu"])
         sigma = read(input["omega"])
         map!(exp, sigma, sigma)
+        alpha = read(input["alpha"])
 
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
         effective_lengths = read(input["effective_lengths"])
-        @show filename
-        @show effective_lengths[122776]
 
         As = inverse_hsb_matrices(node_parent_idxs, node_js)
         push!(As_tensors, As)
@@ -65,15 +64,16 @@ function load_samples(filenames, ts_metadata)
 
         tf_mu = tf.constant(mu)
         tf_sigma = tf.constant(sigma)
-        tf_musigma = tf.stack([tf_mu, tf_sigma])
+        tf_alpha = tf.constant(alpha)
+        tf_laparam = tf.stack([tf_mu, tf_sigma, tf_alpha])
         tf_efflen = tf.constant(effective_lengths)
-        push!(musigma_tensors, tf_musigma)
+        push!(laparam_tensors, tf_laparam)
         push!(efflen_tensors, tf_efflen)
         push!(node_parent_idxs_tensors, node_parent_idxs)
         push!(node_js_tensors, node_js)
     end
 
-    return (tf.stack(musigma_tensors), tf.stack(efflen_tensors),
+    return (tf.stack(laparam_tensors), tf.stack(efflen_tensors),
             As_tensors, hcat(node_parent_idxs_tensors...),
             hcat(node_js_tensors...), tf.stack(x0_tensors))
 end
@@ -147,7 +147,7 @@ end
 
 
 immutable ModelInput
-    likapprox_musigma::PyCall.PyObject
+    likapprox_laparam::PyCall.PyObject
     likapprox_efflen::PyCall.PyObject
     likapprox_As::Vector{PyCall.PyObject}
     likapprox_parent_idxs::Array

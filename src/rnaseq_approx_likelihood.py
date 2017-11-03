@@ -46,12 +46,13 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         print(self.x.get_shape())
         return self.x.get_shape()[:-1]
 
-    def _log_prob(self, musigma):
-
-        # self.x = tf.Print(self.x, [tf.reduce_min(self.x[0,:]), tf.reduce_max(self.x[0,:])], "X[0,:] SPAN", summarize=10)
-        self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "SCALE", summarize=10)
+    def _log_prob(self, laparam):
 
         n = int(self.x.get_shape()[-1])
+
+        mu    = tf.identity(laparam[...,0,:], name="mu")
+        sigma = tf.identity(laparam[...,1,:], name="sigma")
+        alpha = tf.identity(laparam[...,2,:], name="alpha")
 
         num_samples = len(self.As)
         num_nodes = self.node_js.shape[0]
@@ -64,36 +65,25 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # could do something like exp(x_i) / (1 + sum(x_i)) which should be a
         # bijection with a well defined jacobian.
         # self_x = tf.Print(self.x, [tf.reduce_min(self.x), tf.reduce_max(self.x)], "X SPAN")
+
+        # TODO: consider a R^n -> Delta^{n-1} x R transformation, where the extra
+        # number is some kind of scale than we can have a prior over.
+
         x = tf.nn.softmax(self.x)
 
-        # TODO: Let's see if this is sufficient adjustment
-        x_softmax_ladj = tf.reduce_sum(self.x, axis=1)
-        x_softmax_ladj = tf.Print(x_softmax_ladj, [tf.reduce_min(x_softmax_ladj), tf.reduce_max(x_softmax_ladj)], "SOFTMAX LADJ SPAN")
-
-        x = tf.Print(x, [tf.reduce_min(x[0,:]), tf.reduce_max(x[0,:])], "SFTMX X[0,:] SPAN", summarize=10)
-        # idx = 198973 - 1
-        idx = 194630 - 1
-        # x = tf.Print(x, [tf.reduce_min(x[:,idx]), tf.reduce_max(x[:,idx])], "X[:,IDX] SPAN", summarize=10)
-        x = tf.Print(x, [x[:,idx]], "X[:,IDX]", summarize=10)
-
-        # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "SOFTMAX X SPAN")
-        # x = tf.Print(x, [tf.reduce_sum(tf.cast(tf.logical_not(tf.is_finite(x)), tf.float32))],
-        #              "SOFTMAX X NON-FINITE COUNT")
-
         # effective length transform
+        # --------------------------
+
         x_scaled = tf.multiply(x, self.efflens)
-        # x_scaled = tf.Print(x_scaled, [tf.reduce_min(x_scaled), tf.reduce_max(x_scaled)], "X_SCALED SPAN")
-        # x_scaled = tf.Print(x_scaled, [tf.reduce_sum(tf.cast(tf.logical_not(tf.is_finite(x_scaled)), tf.float32))],
-        #                     "X_SCALED NON-FINITE COUNT")
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
-        # x_scaled_sum = tf.Print(x_scaled_sum, [x_scaled_sum], "X_SCALED_SUM", summarize=10)
         x_efflen = tf.divide(x_scaled, x_scaled_sum)
-        # x_efflen = tf.Print(x_efflen, [tf.reduce_min(x_efflen[:,122775]), tf.reduce_max(x_efflen[:,122775])],"X_EFFLEN[:,IDX] SPAN", summarize=10)
-        # x_efflen = x
-        # x_scaled_sum = tf.reduce_sum(x)
+
         efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
-        # efflen_ladj = tf.Print(efflen_ladj, [efflen_ladj], "EFFLEN LADJ", summarize=10)
+
         hsb_ladj_tensors = []
+
+        # Inverse hierarchical stick breaking transform
+        # ---------------------------------------------
 
         # TODO: It may make more sense to build this on the julia side so we
         # can save memory by passing it as a placeholder. Let's just build it
@@ -153,28 +143,39 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         y = tf.stack(y_tensors, name="y")
         y = tf.clip_by_value(y, 1e-10, 1 - 1e-10)
 
-        y_div_omy = tf.divide(y, (1-y))
-        y_logit = tf.to_float(tf.log(y_div_omy))
-        # y_logit = tf.Print(y_logit, [y_logit], "Y_LOGIT", summarize=10)
-        mu = tf.identity(musigma[...,0,:], name="mu")
-        # mu = tf.Print(mu, [mu], "MU", summarize=10)
-        sigma = tf.identity(musigma[...,1,:], name="sigma")
-        # sigma = tf.Print(sigma, [sigma], "SIGMA")
+        # logit (inverse logistic) transform
+        # ----------------------------------
 
-        logit_ladj = tf.to_float(-tf.log(y) - tf.log(1 - y))
-        lp_y = logit_ladj - tf.log(sigma * np.sqrt(2*np.pi)) - \
-            tf.divide(tf.square(tf.subtract(y_logit, mu)), 2*tf.square(sigma))
-        lp = tf.reduce_sum(lp_y, axis=1)
-        # lp = tf.Print(lp, [lp], "LP 1", summarize=10)
-        lp += efflen_ladj
-        # lp = tf.Print(lp, [lp], "LP 2", summarize=10)
-        lp += tf.stack(hsb_ladj_tensors)
-        # lp = tf.Print(lp, [lp], "LP 3", summarize=10)
+        y_log = tf.log(y)
+        y_om_log = tf.log(1.0 - y)
+        y_logit = tf.to_float(y_log - y_om_log)
+        y_logit_ladj = tf.reduce_sum(tf.to_float(-y_log - y_om_log), axis=1)
 
-        # TODO: not clear if this helps or hurts
-        # lp += x_softmax_ladj
 
-        return lp
+        # normal standardization transform
+        # --------------------------------
+
+        z_std = tf.divide(tf.subtract(y_logit, mu), sigma)
+        z_std_ladj = -tf.reduce_sum(tf.log(sigma), axis=1)
+
+        # inverse sinh-asinh transform
+        # ----------------------------
+
+        z_c = tf.subtract(tf.asinh(z_std), alpha)
+        z = tf.sinh(z_c)
+
+        z_ladj = tf.reduce_sum(
+            tf.subtract(tf.log(tf.cosh(z_c)),
+                        tf.multiply(0.5, tf.log1p(tf.square(z_std)))),
+            axis=1)
+
+        # standand normal log-probability
+        # -------------------------------
+
+        lp = tf.reduce_sum((-np.log(2.0*np.pi) - tf.square(z)) / 2.0, axis=1)
+
+        return lp + z_ladj + z_std_ladj + y_logit_ladj + \
+            tf.stack(hsb_ladj_tensors) + efflen_ladj
 
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):

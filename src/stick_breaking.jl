@@ -636,7 +636,7 @@ function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
         @assert node.left_child !== node
         @assert node.right_child !== node
 
-        node.k = k # this is dumb
+        node.k = k # TODO: this is dumb, I'm just keeping note of k for debugging purposes
         node.left_child.input_value = ys[k] * node.input_value
         node.right_child.input_value = (1 - ys[k]) * node.input_value
 

@@ -16,7 +16,7 @@ end
 
 function estimate_transcript_expression(input::ModelInput)
     num_samples, n = input.x0[:get_shape]()[:as_list]()
-    x, x_mu_param, x_sigma_param, x_mu, likapprox_musigma =
+    x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam =
         transcript_quantification_model(input)
 
     println("Estimating...")
@@ -36,7 +36,7 @@ function estimate_transcript_expression(input::ModelInput)
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
     inference = ed.KLqp(PyDict(Dict(x => qx, x_mu => qx_mu)),
-                        data=PyDict(Dict(likapprox_musigma => input.likapprox_musigma)))
+                        data=PyDict(Dict(likapprox_laparam => input.likapprox_laparam)))
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
     # optimizer = tf.train[:MomentumOptimizer](1e-7, 0.8)
@@ -298,15 +298,15 @@ function transcript_quantification_model(input::ModelInput)
 
     x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
 
-    likapprox_musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,
                     As=input.likapprox_As,
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
-                    value=input.likapprox_musigma)
+                    value=input.likapprox_laparam)
 
-    return x, x_mu_param, x_sigma_param, x_mu, likapprox_musigma
+    return x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam
 end
 
 

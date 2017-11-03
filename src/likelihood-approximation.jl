@@ -641,21 +641,21 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
                 zs0[i] = randn(Float32)
             end
 
-            skew_ladj = sinh_asinh_transform!(alpha, zs0, zs, Val{GRADONLY})
-            ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY})
+            skew_ladj = sinh_asinh_transform!(alpha, zs0, zs, Val{GRADONLY}) # 0.013 seconds
+            ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY}) # 0.008 seconds
             ys = clamp!(ys, eps, 1 - eps)
 
-            hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY}) # 0.023 seconds
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val{GRADONLY})
+                                X, Xt, xs, x_grad, Val{GRADONLY}) # 0.041 seconds
 
             elbo = lp + skew_ladj + ln_ladj + hsb_ladj
 
-            hsb_transform_gradients!(t, ys, y_grad, x_grad)
-            logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad)
-            sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad)
+            hsb_transform_gradients!(t, ys, y_grad, x_grad) # 0.024 seconds
+            logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad) # 0.002 seconds
+            sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad) # 0.013 seconds
 
             # adjust for log transform and accumulate
             for i in 1:n-1
@@ -670,9 +670,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
         end
 
         elbo /= num_mc_samples # get estimated expectation over mc samples
-        @show elbo
-
-        # @show elbo
 
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
@@ -684,12 +681,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
         adam_update_params!(mu, m_mu, v_mu, learning_rate, step_num, ss_max_mu_step)
         adam_update_params!(omega, m_omega, v_omega, learning_rate, step_num, ss_max_omega_step)
         adam_update_params!(alpha, m_alpha, v_alpha, learning_rate, step_num, ss_max_alpha_step)
-        @show extrema(alpha)
-        # TODO: perturb to avoid alpha[i] = 0
-
-        # @show extrema(alpha)
-        @show quantile(alpha, [0.001, 0.01, 0.5, 0.99, 0.999])
-        # @show quantile(sort(alpha_grad), [0.001, 0.01, 0.5, 0.99, 0.999])
 
         next!(prog)
     end

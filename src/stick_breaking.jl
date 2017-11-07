@@ -732,9 +732,9 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
     end
 
     q = Queue(Tuple{Int, Int})
-    I = Int[]
-    J = Int[]
-    IJs = Tuple{Vector{Int}, Vector{Int}}[]
+    I = Int32[]
+    J = Int32[]
+    IJs = Tuple{Vector{Int32}, Vector{Int32}}[]
     last_height = 1
     enqueue!(q, (last_height, 1))
     while !isempty(q)
@@ -775,7 +775,8 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
             IJs[k-1] = (I, J)
         else
             I, J = IJs[k]
-            push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
+            # push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
+            push!(As, PyObject((tf.constant(I), tf.constant(J))))
         end
         k -= 1
     end

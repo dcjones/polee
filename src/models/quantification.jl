@@ -302,7 +302,7 @@ function transcript_quantification_model(input::ModelInput)
     likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,
-                    As=input.likapprox_As,
+                    invhsb_params=input.likapprox_invhsb_params,
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
                     value=input.likapprox_laparam)

@@ -742,7 +742,7 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
             leaf_indexes[node_js[i]] = i
         else
             internal_node_indexes[k] = i
-            internal_node_left_indexes = left_child[i]
+            internal_node_left_indexes[k] = left_child[i]
             k += 1
         end
     end
@@ -791,7 +791,6 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
             IJs[k-1] = (I, J)
         else
             I, J = IJs[k]
-            # push!(As, tf.SparseTensor(hcat(I, J), ones(Float32, length(I)), [num_nodes, num_nodes]))
             push!(As, PyObject((tf.constant(I), tf.constant(J))))
         end
         k -= 1
@@ -799,7 +798,10 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
 
     @show length(As)
 
-    return As
+    return PyObject(
+        (As, PyObject(leaf_indexes .- Int32(1)),
+         PyObject(internal_node_indexes .- Int32(1)),
+         PyObject(internal_node_left_indexes .- Int32(1))))
 end
 
 

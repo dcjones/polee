@@ -207,14 +207,14 @@ function main()
         ts, ts_metadata = Transcripts(parsed_args["transcripts"])
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
-        (likapprox_laparam, likapprox_efflen, likapprox_As,
+        (likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,
          likapprox_parent_idxs, likapprox_js, x0, sample_factors, sample_names) =
             load_samples_from_specification(parsed_args["experiment"], ts_metadata)
 
         feature = Symbol(parsed_args["feature"])
 
         input = ModelInput(
-            likapprox_laparam, likapprox_efflen, likapprox_As,
+            likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,
             likapprox_parent_idxs, likapprox_js, x0, sample_factors,
             sample_names, feature, ts, ts_metadata,
             parsed_args["output"], gene_db)

@@ -17,12 +17,12 @@ function load_samples_from_specification(experiment_spec_filename, ts_metadata)
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    (likapprox_laparam, likapprox_efflen, likapprox_As,
+    (likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,
      likapprox_parent_idxs, likapprox_js, x0) = load_samples(filenames, ts_metadata)
     println("Sample data loaded")
 
     return (likapprox_laparam, likapprox_efflen,
-            likapprox_As, likapprox_parent_idxs, likapprox_js,
+            likapprox_invhsb_params, likapprox_parent_idxs, likapprox_js,
             x0, sample_factors, names)
 end
 
@@ -149,7 +149,7 @@ end
 immutable ModelInput
     likapprox_laparam::PyCall.PyObject
     likapprox_efflen::PyCall.PyObject
-    likapprox_As::Vector{PyCall.PyObject}
+    likapprox_invhsb_params::Vector{PyCall.PyObject}
     likapprox_parent_idxs::Array
     likapprox_js::Array
     x0::PyCall.PyObject

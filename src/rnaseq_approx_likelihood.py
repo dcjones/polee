@@ -9,7 +9,7 @@ import sys
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, x, efflens, As, node_parent_idxs, node_js,
+    def __init__(self, x, efflens, invhsb_params, node_parent_idxs, node_js,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
@@ -24,7 +24,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         # self.x = x
         self.efflens = efflens
-        self.As = As
+        self.invhsb_params = invhsb_params
         self.node_parent_idxs = node_parent_idxs
         self.node_js = node_js
 
@@ -54,7 +54,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         sigma = tf.identity(laparam[...,1,:], name="sigma")
         alpha = tf.identity(laparam[...,2,:], name="alpha")
 
-        num_samples = len(self.As)
+        num_samples = len(self.invhsb_params)
         num_nodes = self.node_js.shape[0]
 
         y_tensors = []
@@ -100,24 +100,27 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         for sample_num in range(num_samples):
             print(sample_num)
 
-            left_child = np.repeat(-1, num_nodes)
-            right_child = np.repeat(-1, num_nodes)
-            for i in range(1, num_nodes):
-                parent_idx = self.node_parent_idxs[i, sample_num] - 1
-                if right_child[parent_idx] == -1:
-                    right_child[parent_idx] = i
-                else:
-                    left_child[parent_idx] = i
+            # left_child = np.repeat(-1, num_nodes)
+            # right_child = np.repeat(-1, num_nodes)
+            # for i in range(1, num_nodes):
+            #     parent_idx = self.node_parent_idxs[i, sample_num] - 1
+            #     if right_child[parent_idx] == -1:
+            #         right_child[parent_idx] = i
+            #     else:
+            #         left_child[parent_idx] = i
 
-            # set child indexes
-            x_index = np.zeros((n,1), dtype=int)
-            for i in range(num_nodes):
-                if self.node_js[i, sample_num] != 0:
-                    x_index[self.node_js[i, sample_num] - 1] = i
+            # # set child indexes
+            # x_index = np.zeros((n,1), dtype=int)
+            # for i in range(num_nodes):
+            #     if self.node_js[i, sample_num] != 0:
+            #         x_index[self.node_js[i, sample_num] - 1] = i
 
-            As = self.As[sample_num]
+            As = self.invhsb_params[sample_num][0]
+            x_index = self.invhsb_params[sample_num][1]
+            internal_node_indexes = self.invhsb_params[sample_num][2]
+            internal_node_left_indexes = self.invhsb_params[sample_num][3]
 
-            input_values = tf.scatter_nd(x_index, x_efflen[sample_num,:], [num_nodes])
+            input_values = tf.scatter_nd(tf.expand_dims(x_index, -1), x_efflen[sample_num,:], [num_nodes])
 
             for i in range(len(As)):
                 # NOTE: This works under the assumption that scatter_nd adds
@@ -134,14 +137,14 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             input_values = tf.to_double(input_values)
             input_values = tf.clip_by_value(input_values, 1e-10, 1.0 - 1e-10)
 
-            k = 0
-            internal_node_indexes = []
-            internal_node_left_indexes = []
-            for i in range(num_nodes):
-                if self.node_js[i, sample_num] == 0:
-                    internal_node_indexes.append(i)
-                    internal_node_left_indexes.append(left_child[i])
-                    k += 1
+            # k = 0
+            # internal_node_indexes = []
+            # internal_node_left_indexes = []
+            # for i in range(num_nodes):
+            #     if self.node_js[i, sample_num] == 0:
+            #         internal_node_indexes.append(i)
+            #         internal_node_left_indexes.append(left_child[i])
+            #         k += 1
 
             internal_node_values = tf.gather(input_values, internal_node_indexes)
             hsb_ladj_tensor = tf.log(internal_node_values)
@@ -151,7 +154,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             y_h = tf.divide(left_node_values, internal_node_values)
             y_tensors.append(y_h)
 
-            assert(k == n - 1)
+            # assert(k == n - 1)
 
         hsb_ladj = tf.stack(hsb_ladj_tensors)
 

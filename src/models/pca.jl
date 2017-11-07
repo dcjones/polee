@@ -8,10 +8,16 @@ function estimate_pca(input::ModelInput)
     num_components = 2
     @show num_components
 
+    # w = edmodels.Normal(loc=tf.zeros([n, num_components]),
+    #                     scale=tf.fill([n, num_components], 0.001f0))
+    # z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
+    #                     scale=tf.fill([num_samples, num_components], 1.0f0))
+
     w = edmodels.Normal(loc=tf.zeros([n, num_components]),
-                        scale=tf.fill([n, num_components], 0.001f0))
+                        scale=tf.fill([n, num_components], 1.0f0))
     z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
                         scale=tf.fill([num_samples, num_components], 1.0f0))
+
     # x = tf.transpose(tf.matmul(w, z, transpose_b=true))
     x_bias = log(1/n)
 
@@ -19,21 +25,21 @@ function estimate_pca(input::ModelInput)
 
     @show x[:get_shape]()
 
-    likapprox_musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,
                     As=input.likapprox_As,
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
-                    value=input.likapprox_musigma)
+                    value=input.likapprox_laparam)
 
 
-    qw_loc = tf.Variable(tf.random_normal([n, num_components]))
+    qw_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([n, num_components])))
     # qw_loc = tf.Print(qw_loc, [tf.reduce_min(qw_loc), tf.reduce_max(qw_loc)], "QW LOC SPAN")
     qw = edmodels.Normal(loc=qw_loc,
                          scale=tf.nn[:softplus](tf.Variable(tf.zeros([n, num_components]))))
 
-    qz_loc = tf.Variable(tf.random_normal([num_samples, num_components]))
+    qz_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_samples, num_components])))
     # qz_loc = tf.Print(qz_loc, [tf.reduce_min(qz_loc), tf.reduce_max(qz_loc)], "QZ LOC SPAN")
     qz = edmodels.Normal(loc=qz_loc,
                          scale=tf.nn[:softplus](tf.Variable(tf.zeros([num_samples, num_components]))))
@@ -42,7 +48,7 @@ function estimate_pca(input::ModelInput)
     #                      scale=tf.nn[:softplus](tf.Variable(tf.random_normal([num_samples, num_components]))))
 
     inference = ed.KLqp(Dict(w => qw, z => qz),
-                        data=Dict(likapprox_musigma => input.likapprox_musigma))
+                        data=Dict(likapprox_laparam => input.likapprox_laparam))
 
     optimizer = tf.train[:AdamOptimizer](1e-1)
     inference[:run](n_iter=1000, optimizer=optimizer)
@@ -171,13 +177,13 @@ function estimate_batch_pca(input::ModelInput)
     # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X", summarize=10)
     # x = x_batch
 
-    likapprox_musigma = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,
                     As=input.likapprox_As,
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
-                    value=input.likapprox_musigma)
+                    value=input.likapprox_laparam)
 
     # qw_batch_loc = tf.Variable(tf.zeros([num_factors, n]))
     qw_batch_loc = tf.Variable(tf.random_normal([num_factors, n]))
@@ -209,7 +215,7 @@ function estimate_batch_pca(input::ModelInput)
     qz = edmodels.Normal(loc=qz_loc, scale=qz_scale)
 
     inference = ed.KLqp(Dict(w => qw, w_batch => qw_batch, z => qz),
-                        data=Dict(likapprox_musigma => input.likapprox_musigma))
+                        data=Dict(likapprox_laparam => input.likapprox_laparam))
 
     optimizer = tf.train[:AdamOptimizer](1e-1)
     # optimizer = tf.train[:MomentumOptimizer](1e-9, 0.99)

@@ -56,7 +56,7 @@ function load_samples(filenames, ts_metadata)
         y0 = Array{Float64}(n-1)
         x0 = Array{Float32}(n)
         for i in 1:n-1
-            y0[i] = clamp(logistic(mu[i]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
+            y0[i] = clamp(logistic(sinh(alpha[i]) + mu[i]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
         end
         t = HSBTransform(node_parent_idxs, node_js)
         hsb_transform!(t, y0, x0, Val{true})

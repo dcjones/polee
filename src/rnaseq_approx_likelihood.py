@@ -56,7 +56,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         num_samples = len(self.As)
         num_nodes = self.node_js.shape[0]
-        print(num_nodes)
 
         y_tensors = []
 
@@ -69,14 +68,17 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # TODO: consider a R^n -> Delta^{n-1} x R transformation, where the extra
         # number is some kind of scale than we can have a prior over.
 
+        # self.x = tf.Print(self.x, [tf.reduce_min(self.x, axis=1)], "X SPAN MIN", summarize=6)
+        # self.x = tf.Print(self.x, [tf.reduce_max(self.x, axis=1)], "X SPAN MAX", summarize=6)
+
         x = tf.nn.softmax(self.x)
 
         # effective length transform
         # --------------------------
 
-        x_scaled = tf.multiply(x, self.efflens)
+        x_scaled = x * self.efflens
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
-        x_efflen = tf.divide(x_scaled, x_scaled_sum)
+        x_efflen = x_scaled / x_scaled_sum
 
         efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
 
@@ -108,8 +110,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                     x_index[self.node_js[i, sample_num] - 1] = i
 
             As = self.As[sample_num]
+
             x_ = tf.expand_dims(tf.scatter_nd(x_index, x_efflen[sample_num,:], [num_nodes]), -1)
-            # x_ = tf.Print(x_, [x_], "X_", summarize=5)
             Axs = [tf.sparse_tensor_dense_matmul(As[0], x_)]
             for i in range(1, len(As)):
                 A = As[i]
@@ -117,7 +119,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                 Axs.append(Ax_i)
 
             input_values = tf.squeeze(tf.add(tf.reduce_sum(tf.stack(Axs), axis=0), x_))
-            # input_values = tf.Print(input_values, [input_values], "INPUT VALUES", summarize=5)
+            input_values = tf.to_double(input_values)
+            input_values = tf.clip_by_value(input_values, 1e-10, 1.0 - 1e-10)
 
             k = 0
             internal_node_indexes = []
@@ -129,16 +132,16 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                     k += 1
 
             internal_node_values = tf.gather(input_values, internal_node_indexes)
-            # internal_node_values = tf.Print(internal_node_values, [input_values], "INTERNAL NODE VALUES")
-            hsb_ladj_tensors.append(-tf.reduce_sum(tf.log(internal_node_values)))
+            hsb_ladj_tensor = tf.log(internal_node_values)
+            hsb_ladj_tensors.append(tf.to_float(-tf.reduce_sum(hsb_ladj_tensor)))
 
             left_node_values = tf.gather(input_values, internal_node_left_indexes)
-            # left_node_values = tf.Print(left_node_values, [left_node_values], "LEFT NODE VALUES")
-            y_h = tf.divide(tf.to_double(left_node_values),
-                            tf.to_double(internal_node_values))
+            y_h = tf.divide(left_node_values, internal_node_values)
             y_tensors.append(y_h)
 
             assert(k == n - 1)
+
+        hsb_ladj = tf.stack(hsb_ladj_tensors)
 
         y = tf.stack(y_tensors, name="y")
         y = tf.clip_by_value(y, 1e-10, 1 - 1e-10)
@@ -174,9 +177,12 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         lp = tf.reduce_sum((-np.log(2.0*np.pi) - tf.square(z)) / 2.0, axis=1)
 
-        return lp + z_ladj + z_std_ladj + y_logit_ladj + \
-            tf.stack(hsb_ladj_tensors) + efflen_ladj
+        # TODO: Really there should be jacobian terms, but this seems to only
+        # cause problems. I don't know why.
+        # return lp + z_ladj + z_std_ladj + y_logit_ladj + \
+        #     hsb_ladj + efflen_ladj
 
+        return lp
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):
     def __init__(self, *args, **kwargs):

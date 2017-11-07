@@ -42,6 +42,7 @@ function estimate_transcript_expression(input::ModelInput)
     # optimizer = tf.train[:MomentumOptimizer](1e-7, 0.8)
     inference[:run](n_iter=500, optimizer=optimizer)
 
+
     sess = ed.get_session()
     qx_mu_value    = sess[:run](qx_mu_param)
     qx_sigma_value = sess[:run](qx_sigma_param)

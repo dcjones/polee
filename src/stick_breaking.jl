@@ -716,18 +716,34 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
     # matrices with fewer than this many entries get merged into the adjacent
     # one. The tradeoff is that merged matrices use more memory and involve
     # redundant computation, but reduce overhead.
-    MERGE_THRESHOLD = 25000
+    MERGE_THRESHOLD = 20000
 
     num_nodes = length(node_parent_idxs)
+    n = div(num_nodes + 1, 2)
 
-    left_child = fill(-1, num_nodes)
-    right_child = fill(-1, num_nodes)
+    left_child = fill(Int32(-1), num_nodes)
+    right_child = fill(Int32(-1), num_nodes)
     for i in 2:num_nodes
         parent_idx = node_parent_idxs[i]
         if right_child[parent_idx] == -1
             right_child[parent_idx] = i
         else
             left_child[parent_idx] = i
+        end
+    end
+
+    # TODO: pass this along so we don't have to compute it in python
+    leaf_indexes = zeros(Int32, n)
+    internal_node_indexes = zeros(Int32, n-1)
+    internal_node_left_indexes = zeros(Int32, n-1)
+    k = 1
+    for i in 1:num_nodes
+        if node_js[i] != 0
+            leaf_indexes[node_js[i]] = i
+        else
+            internal_node_indexes[k] = i
+            internal_node_left_indexes = left_child[i]
+            k += 1
         end
     end
 

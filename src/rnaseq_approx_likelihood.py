@@ -91,6 +91,12 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # can save memory by passing it as a placeholder. Let's just build it
         # here first so we can see if memory use is improved at all.
         # x -> y transformation
+
+        # TODO: A conceivably faster way we could do this is with temporary
+        # mutable tensors, accumulating values with scatter_add. If we do that,
+        # we'd have to manually compute gradients. Pretty tricky, but could be
+        # worth pursuing.
+
         for sample_num in range(num_samples):
             print(sample_num)
 
@@ -111,32 +117,20 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
             As = self.As[sample_num]
 
-            # x_ = tf.expand_dims(tf.scatter_nd(x_index, x_efflen[sample_num,:], [num_nodes]), -1)
-
             input_values = tf.scatter_nd(x_index, x_efflen[sample_num,:], [num_nodes])
 
             for i in range(len(As)):
-                # input_values = tf.scatter_add(input_values, As[i][0],
-                #                               tf.gather(input_values, As[i][1]))
-
                 # NOTE: This works under the assumption that scatter_nd adds
                 # duplicate entries, which is currently true but not a garuntee of the API.
                 # See: https://github.com/tensorflow/tensorflow/issues/8102
                 input_values += tf.scatter_nd(tf.expand_dims(As[i][0], -1),
-                                              tf.gather(input_values, As[i][1]),
+                                              tf.gather_nd(input_values, tf.expand_dims(As[i][1], -1)),
                                               [num_nodes])
+
 
             input_values = tf.Print(input_values, [tf.reduce_min(input_values), tf.reduce_max(input_values)],
                                     "INPUT VALUES SPAN " + str(i))
-            # --------------------------------------------
 
-            # Axs = [tf.sparse_tensor_dense_matmul(As[0], x_)]
-            # for i in range(1, len(As)):
-            #     A = As[i]
-            #     Ax_i = tf.sparse_tensor_dense_matmul(A, tf.add(Axs[i-1], x_))
-            #     Axs.append(Ax_i)
-
-            # input_values = tf.squeeze(tf.add(tf.reduce_sum(tf.stack(Axs), axis=0), x_))
             input_values = tf.to_double(input_values)
             input_values = tf.clip_by_value(input_values, 1e-10, 1.0 - 1e-10)
 

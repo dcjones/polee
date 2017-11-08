@@ -100,21 +100,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         for sample_num in range(num_samples):
             print(sample_num)
 
-            # left_child = np.repeat(-1, num_nodes)
-            # right_child = np.repeat(-1, num_nodes)
-            # for i in range(1, num_nodes):
-            #     parent_idx = self.node_parent_idxs[i, sample_num] - 1
-            #     if right_child[parent_idx] == -1:
-            #         right_child[parent_idx] = i
-            #     else:
-            #         left_child[parent_idx] = i
-
-            # # set child indexes
-            # x_index = np.zeros((n,1), dtype=int)
-            # for i in range(num_nodes):
-            #     if self.node_js[i, sample_num] != 0:
-            #         x_index[self.node_js[i, sample_num] - 1] = i
-
             As = self.invhsb_params[sample_num][0]
             x_index = self.invhsb_params[sample_num][1]
             internal_node_indexes = self.invhsb_params[sample_num][2]
@@ -137,15 +122,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             input_values = tf.to_double(input_values)
             input_values = tf.clip_by_value(input_values, 1e-10, 1.0 - 1e-10)
 
-            # k = 0
-            # internal_node_indexes = []
-            # internal_node_left_indexes = []
-            # for i in range(num_nodes):
-            #     if self.node_js[i, sample_num] == 0:
-            #         internal_node_indexes.append(i)
-            #         internal_node_left_indexes.append(left_child[i])
-            #         k += 1
-
             internal_node_values = tf.gather(input_values, internal_node_indexes)
             hsb_ladj_tensor = tf.log(internal_node_values)
             hsb_ladj_tensors.append(tf.to_float(-tf.reduce_sum(hsb_ladj_tensor)))
@@ -153,8 +129,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             left_node_values = tf.gather(input_values, internal_node_left_indexes)
             y_h = tf.divide(left_node_values, internal_node_values)
             y_tensors.append(y_h)
-
-            # assert(k == n - 1)
 
         hsb_ladj = tf.stack(hsb_ladj_tensors)
 

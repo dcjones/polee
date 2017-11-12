@@ -28,7 +28,7 @@ function estimate_pca(input::ModelInput)
     likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,
-                    As=input.likapprox_As,
+                    invhsb_params=input.likapprox_invhsb_params,
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
                     value=input.likapprox_laparam)
@@ -127,17 +127,20 @@ function estimate_batch_pca(input::ModelInput)
     w_bias_mu0 = 0.0
     w_bias_sigma0 = 5.0
 
-    x_bias = n * log(1/n)
+    x_bias = log(1/n)
 
-    w_sigma = tf.concat(
-                  [tf.constant(w_bias_sigma0, shape=[1, n]),
-                   tf.constant(w_sigma0, shape=[num_factors-1, n])], 0)
-    w_mu = tf.concat(
-                  [tf.constant(w_bias_mu0, shape=[1, n]),
-                   tf.constant(w_mu0, shape=[num_factors-1, n])], 0)
+    # w_sigma = tf.concat(
+    #               [tf.constant(w_bias_sigma0, shape=[1, n]),
+    #                tf.constant(w_sigma0, shape=[num_factors-1, n])], 0)
+
+    # w_mu = tf.concat(
+    #               [tf.constant(w_bias_mu0, shape=[1, n]),
+    #                tf.constant(w_mu0, shape=[num_factors-1, n])], 0)
+
+    w_sigma = tf.constant(w_sigma0, shape=[num_factors, n])
+    w_mu = tf.constant(w_mu0, shape=[num_factors, n])
 
     w_batch = edmodels.MultivariateNormalDiag(name="w_batch", w_mu, w_sigma)
-    @show w_batch[:get_shape]()
 
     #=
     y_sigma_mu0 = tf.constant(0.0, shape=[n])
@@ -173,20 +176,27 @@ function estimate_batch_pca(input::ModelInput)
     # x_batch = tf.Print(x_batch, [tf.reduce_min(x_batch), tf.reduce_max(x_batch)], "X BATCH SPAN", summarize=10)
     # x_batch = tf.Print(x_batch, [x_batch], "X BATCH", summarize=10)
     # x_pca = tf.Print(x_pca, [tf.reduce_min(x_pca), tf.reduce_max(x_pca)], "X PCA", summarize=10)
+
     x = tf.add(x_bias, tf.add(x_batch, x_pca))
+    # x = x_batch
+
     # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X", summarize=10)
     # x = x_batch
 
     likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
                     efflens=input.likapprox_efflen,
-                    As=input.likapprox_As,
+                    invhsb_params=input.likapprox_invhsb_params,
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
                     value=input.likapprox_laparam)
 
     # qw_batch_loc = tf.Variable(tf.zeros([num_factors, n]))
-    qw_batch_loc = tf.Variable(tf.random_normal([num_factors, n]))
+    qw_batch_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_factors, n])))
+    # qw_batch_loc = tf.Print(qw_batch_loc, [tf.reduce_min(qw_batch_loc), tf.reduce_max(qw_batch_loc)], "QW BATCH LOC SPAN")
+
+    # tmp = tf.matmul(X, qw_batch_loc)
+    # qw_batch_loc = tf.Print(qw_batch_loc, [tf.reduce_min(tmp), tf.reduce_max(tmp)], "X * QW BATCH LOC SPAN")
 
 
     # qw_batch_loc = tf.Print(qw_batch_loc, [qw_batch_loc], "QW BATCH LOC", summarize=10)
@@ -197,7 +207,7 @@ function estimate_batch_pca(input::ModelInput)
     #                            scale=tf.nn[:softplus](tf.Variable(tf.zeros([num_factors, n]))))
 
     # qw_loc = tf.Variable(tf.zeros([n, num_components]))
-    qw_loc = tf.Variable(tf.random_normal([n, num_components]))
+    qw_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([n, num_components])))
 
     # qw_loc = tf.Print(qw_loc, [qw_loc], "QW LOC", summarize=10)
     qw_scale = tf.nn[:softplus](tf.Variable(tf.fill([n, num_components], -5.0)))
@@ -207,7 +217,7 @@ function estimate_batch_pca(input::ModelInput)
     #                      scale=tf.nn[:softplus](tf.Variable(tf.zeros([n, num_components]))))
 
     # qz_loc = tf.Variable(tf.zeros([num_samples, num_components]))
-    qz_loc = tf.Variable(tf.random_normal([num_samples, num_components]))
+    qz_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_samples, num_components])))
 
     # qz_loc = tf.Print(qz_loc, [qz_loc], "QZ LOC", summarize=10)
     qz_scale = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_components], -5.0)))

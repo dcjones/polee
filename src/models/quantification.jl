@@ -16,6 +16,7 @@ end
 
 function estimate_transcript_expression(input::ModelInput)
     num_samples, n = input.x0[:get_shape]()[:as_list]()
+
     x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam =
         transcript_quantification_model(input)
 

@@ -71,6 +71,16 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # self.x = tf.Print(self.x, [tf.reduce_min(self.x, axis=1)], "X SPAN MIN", summarize=6)
         # self.x = tf.Print(self.x, [tf.reduce_max(self.x, axis=1)], "X SPAN MAX", summarize=6)
 
+        # print("HERE")
+        # print(tf.reduce_sum(tf.exp(self.x), axis=1))
+        # sys.exit()
+
+        # self.x = tf.Print(self.x,
+        #     [tf.reduce_min(tf.reduce_sum(tf.exp(self.x), axis=1)),
+        #      tf.reduce_max(tf.reduce_sum(tf.exp(self.x), axis=1))], "X SCALE SPAN")
+        # self.x = tf.Print(self.x, [self.x], "X")
+        self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X SCALE", summarize=6)
+
         x = tf.nn.softmax(self.x)
 
         # effective length transform
@@ -116,8 +126,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                                               [num_nodes])
 
 
-            input_values = tf.Print(input_values, [tf.reduce_min(input_values), tf.reduce_max(input_values)],
-                                    "INPUT VALUES SPAN " + str(i))
+            # input_values = tf.Print(input_values, [tf.reduce_min(input_values), tf.reduce_max(input_values)],
+            #                         "INPUT VALUES SPAN " + str(i))
 
             input_values = tf.to_double(input_values)
             input_values = tf.clip_by_value(input_values, 1e-10, 1.0 - 1e-10)

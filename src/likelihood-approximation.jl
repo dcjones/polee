@@ -150,8 +150,7 @@ end
 
 
 function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{true};
-                                          num_steps=500)
+                                          ::Type{Val{GRADONLY}}=Val{true})
     m, n = size(X)
     Xt = transpose(X)
 
@@ -194,8 +193,8 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCS
 
     eps = 1e-10
 
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
 
         for i in 1:n-1
@@ -247,8 +246,6 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 500
-
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
     m_omega = Array{Float32}(n-1)
@@ -260,10 +257,6 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
     # step size clamp
     ss_max_mu_step    = 2e-2
     ss_max_omega_step = 2e-2
-
-    # number of monte carlo samples to estimate gradients an elbo at each
-    # iteration
-    num_mc_samples = 6
 
     # Normal distributed values
     zs = Array{Float32}(n-1)
@@ -293,8 +286,8 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
     max_elbo = -Inf # smallest elbo seen so far
 
     tic()
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
 
         elbo0 = elbo
@@ -308,7 +301,7 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
 
         eps = 1e-10
 
-        for _ in 1:num_mc_samples
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
             fill!(sigma_grad, 0.0f0)
@@ -373,11 +366,11 @@ function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatri
         end
 
         for i in 1:n-1
-            mu_grad[i]    /= num_mc_samples
-            omega_grad[i] /= num_mc_samples
+            mu_grad[i]    /= LIKAP_NUM_MC_SAMPLES
+            omega_grad[i] /= LIKAP_NUM_MC_SAMPLES
         end
 
-        elbo /= num_mc_samples # get estimated expectation over mc samples
+        elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
 
         # Note: the elbo has a negative entropy term is well, but but we are
         # using uniform values on [0,1] which has entropy of 0, so that term
@@ -414,8 +407,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 500
-
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
     m_omega = Array{Float32}(n-1)
@@ -427,10 +418,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     # step size clamp
     ss_max_mu_step    = 2e-1
     ss_max_omega_step = 2e-1
-
-    # number of monte carlo samples to estimate gradients an elbo at each
-    # iteration
-    num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
     t = HSBTransform(X, approx.treemethod)
@@ -475,8 +462,8 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     max_elbo = -Inf # smallest elbo seen so far
 
     tic()
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
 
         elbo0 = elbo
@@ -490,7 +477,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
 
         eps = 1e-10
 
-        for _ in 1:num_mc_samples
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
             fill!(sigma_grad, 0.0f0)
@@ -519,11 +506,11 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
         end
 
         for i in 1:n-1
-            mu_grad[i]    /= num_mc_samples
-            omega_grad[i] /= num_mc_samples
+            mu_grad[i]    /= LIKAP_NUM_MC_SAMPLES
+            omega_grad[i] /= LIKAP_NUM_MC_SAMPLES
         end
 
-        elbo /= num_mc_samples # get estimated expectation over mc samples
+        elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
 
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
@@ -551,8 +538,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 500
-
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
     m_omega = Array{Float32}(n-1)
@@ -567,10 +552,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     ss_max_mu_step    = 2e-1
     ss_max_omega_step = 2e-1
     ss_max_alpha_step = 2e-2
-
-    # number of monte carlo samples to estimate gradients an elbo at each
-    # iteration
-    num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
     t = HSBTransform(X, approx.treemethod)
@@ -615,8 +596,8 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     max_elbo = -Inf # smallest elbo seen so far
 
     tic()
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
 
         elbo0 = elbo
@@ -631,7 +612,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
 
         eps = 1e-10
 
-        for _ in 1:num_mc_samples
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
             fill!(z_grad, 0.0f0)
@@ -664,12 +645,12 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
         end
 
         for i in 1:n-1
-            mu_grad[i]    /= num_mc_samples
-            omega_grad[i] /= num_mc_samples
-            alpha_grad[i] /= num_mc_samples
+            mu_grad[i]    /= LIKAP_NUM_MC_SAMPLES
+            omega_grad[i] /= LIKAP_NUM_MC_SAMPLES
+            alpha_grad[i] /= LIKAP_NUM_MC_SAMPLES
         end
 
-        elbo /= num_mc_samples # get estimated expectation over mc samples
+        elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
 
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
@@ -699,8 +680,6 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 500
-
     # gradient running mean
     m_α = Array{Float32}(n-1)
     m_β = Array{Float32}(n-1)
@@ -712,10 +691,6 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
     # step size clamp
     ss_max_α_step = 1e-1
     ss_max_β_step = 1e-1
-
-    # number of monte carlo samples to estimate gradients an elbo at each
-    # iteration
-    num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
     t = HSBTransform(X, approx.treemethod)
@@ -783,8 +758,8 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
 
     tic()
 
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
 
         elbo0 = elbo
@@ -797,7 +772,7 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
             bs[i] = exp(βs[i])
         end
 
-        for _ in 1:num_mc_samples
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
             fill!(a_grad, 0.0f0)
@@ -827,11 +802,11 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
         end
 
         for i in 1:n-1
-            α_grad[i] /= num_mc_samples
-            β_grad[i] /= num_mc_samples
+            α_grad[i] /= LIKAP_NUM_MC_SAMPLES
+            β_grad[i] /= LIKAP_NUM_MC_SAMPLES
         end
 
-        elbo /= num_mc_samples # get estimated expectation over mc samples
+        elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
 
         # Note: the elbo has a negative entropy term is well, but but we are
         # using uniform values on [0,1] which has entropy of 0, so that term
@@ -864,8 +839,6 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 500
-
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
     m_omega = Array{Float32}(n-1)
@@ -877,10 +850,6 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
     # step size clamp
     ss_max_mu_step    = 2e-1
     ss_max_omega_step = 2e-1
-
-    # number of monte carlo samples to estimate gradients an elbo at each
-    # iteration
-    num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
     t = ILRTransform(X, approx.treemethod)
@@ -910,8 +879,8 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
     elbo = 0.0
 
     tic()
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
 
         elbo = 0.0
@@ -924,7 +893,7 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
 
         eps = 1e-10
 
-        for _ in 1:num_mc_samples
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
             fill!(sigma_grad, 0.0f0)
@@ -955,12 +924,12 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
         end
 
         for i in 1:n-1
-            mu_grad[i]    /= num_mc_samples
-            omega_grad[i] /= num_mc_samples
+            mu_grad[i]    /= LIKAP_NUM_MC_SAMPLES
+            omega_grad[i] /= LIKAP_NUM_MC_SAMPLES
             # omega_grad[i] += 1 # entropy gradient
         end
 
-        elbo /= num_mc_samples # get estimated expectation over mc samples
+        elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
         # elbo += normal_entropy(sigma)
 
         @show elbo
@@ -990,8 +959,6 @@ function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
     Xt = transpose(X)
     model = Model(m, n)
 
-    num_steps = 500
-
     # gradient running mean
     m_mu    = Array{Float32}(n-1)
     m_omega = Array{Float32}(n-1)
@@ -1003,10 +970,6 @@ function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
     # step size clamp
     ss_max_mu_step    = 2e-1
     ss_max_omega_step = 2e-1
-
-    # number of monte carlo samples to estimate gradients an elbo at each
-    # iteration
-    num_mc_samples = 6
 
     # cluster transcripts for hierachrical stick breaking
     refidx = approx.reference_idx == -1 ? n :
@@ -1038,8 +1001,8 @@ function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
     elbo = 0.0
 
     tic()
-    prog = Progress(num_steps, 0.25, "Optimizing ", 60)
-    for step_num in 1:num_steps
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
 
         elbo = 0.0
@@ -1052,7 +1015,7 @@ function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
 
         eps = 1e-10
 
-        for _ in 1:num_mc_samples
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
             fill!(x_grad, 0.0f0)
             fill!(y_grad, 0.0f0)
             fill!(sigma_grad, 0.0f0)
@@ -1083,12 +1046,12 @@ function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
         end
 
         for i in 1:n-1
-            mu_grad[i]    /= num_mc_samples
-            omega_grad[i] /= num_mc_samples
+            mu_grad[i]    /= LIKAP_NUM_MC_SAMPLES
+            omega_grad[i] /= LIKAP_NUM_MC_SAMPLES
             # omega_grad[i] += 1 # entropy gradient
         end
 
-        elbo /= num_mc_samples # get estimated expectation over mc samples
+        elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
         # elbo += normal_entropy(sigma)
 
         @show elbo

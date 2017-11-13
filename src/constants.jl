@@ -26,3 +26,6 @@ const ADAM_EPS = 1e-8
 const ADAM_RV = 0.9
 const ADAM_RM = 0.7
 
+
+const LIKAP_NUM_STEPS = 400
+const LIKAP_NUM_MC_SAMPLES = 5

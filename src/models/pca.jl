@@ -5,7 +5,7 @@ function estimate_pca(input::ModelInput)
     end
 
     num_samples, n = input.x0[:get_shape]()[:as_list]()
-    num_components = 2
+    num_components = 4
     @show num_components
 
     # w = edmodels.Normal(loc=tf.zeros([n, num_components]),
@@ -18,9 +18,9 @@ function estimate_pca(input::ModelInput)
     z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
                         scale=tf.fill([num_samples, num_components], 1.0f0))
 
-    # x = tf.transpose(tf.matmul(w, z, transpose_b=true))
-    x_bias = log(1/n)
 
+    # x_bias = log(1/n)
+    x_bias = edmodels.Normal(loc=tf.fill([1, n], log(1/n)), scale=tf.fill([1, n], 1.0f0))
     x = tf.add(x_bias, tf.matmul(z, w, transpose_b=true))
 
     @show x[:get_shape]()
@@ -33,6 +33,9 @@ function estimate_pca(input::ModelInput)
                     node_js=input.likapprox_js,
                     value=input.likapprox_laparam)
 
+    qx_bias_loc = tf.Variable(tf.fill([1,n], log(1/n)))
+    qx_bias = edmodels.Normal(loc=qx_bias_loc,
+                              scale=tf.nn[:softplus](tf.Variable(tf.zeros([1, n]))))
 
     qw_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([n, num_components])))
     # qw_loc = tf.Print(qw_loc, [tf.reduce_min(qw_loc), tf.reduce_max(qw_loc)], "QW LOC SPAN")
@@ -47,7 +50,7 @@ function estimate_pca(input::ModelInput)
     # qz = edmodels.Normal(loc=tf.Variable(tf.random_normal([num_samples, num_components])),
     #                      scale=tf.nn[:softplus](tf.Variable(tf.random_normal([num_samples, num_components]))))
 
-    inference = ed.KLqp(Dict(w => qw, z => qz),
+    inference = ed.KLqp(Dict(w => qw, z => qz, x_bias => qx_bias),
                         data=Dict(likapprox_laparam => input.likapprox_laparam))
 
     optimizer = tf.train[:AdamOptimizer](1e-1)

@@ -125,12 +125,12 @@ function estimate_batch_pca(input::ModelInput)
     #  X -> z
 
     w_mu0 = 0.0
-    w_sigma0 = 5.0
+    w_sigma0 = 1.0
     # w_bias_mu0 = log(1/n)
     w_bias_mu0 = 0.0
-    w_bias_sigma0 = 5.0
+    w_bias_sigma0 = 1.0
 
-    x_bias = log(1/n)
+    x_bias = edmodels.Normal(loc=tf.fill([1, n], log(1/n)), scale=tf.fill([1, n], 5.0f0))
 
     # w_sigma = tf.concat(
     #               [tf.constant(w_bias_sigma0, shape=[1, n]),
@@ -180,7 +180,9 @@ function estimate_batch_pca(input::ModelInput)
     # x_batch = tf.Print(x_batch, [x_batch], "X BATCH", summarize=10)
     # x_pca = tf.Print(x_pca, [tf.reduce_min(x_pca), tf.reduce_max(x_pca)], "X PCA", summarize=10)
 
-    x = tf.add(x_bias, tf.add(x_batch, x_pca))
+    x_mu = tf.add(x_bias, tf.add(x_batch, x_pca))
+
+    x = edmodels.Normal(loc=x_mu, scale=tf.fill([num_samples, n], 0.1f0))
     # x = x_batch
 
     # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X", summarize=10)
@@ -193,6 +195,11 @@ function estimate_batch_pca(input::ModelInput)
                     node_parent_idxs=input.likapprox_parent_idxs,
                     node_js=input.likapprox_js,
                     value=input.likapprox_laparam)
+
+
+    qx_bias_loc = tf.Variable(tf.fill([1,n], log(1/n)))
+    qx_bias = edmodels.Normal(loc=qx_bias_loc,
+                              scale=tf.nn[:softplus](tf.Variable(tf.zeros([1, n]))))
 
     # qw_batch_loc = tf.Variable(tf.zeros([num_factors, n]))
     qw_batch_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_factors, n])))
@@ -227,7 +234,12 @@ function estimate_batch_pca(input::ModelInput)
     # qz_scale = tf.Print(qz_scale, [qz_scale], "QZ SCALE", summarize=10)
     qz = edmodels.Normal(loc=qz_loc, scale=qz_scale)
 
-    inference = ed.KLqp(Dict(w => qw, w_batch => qw_batch, z => qz),
+
+    qx_loc = tf.Variable(tf.fill([num_samples,n], log(1/n)))
+    qx = edmodels.Normal(loc=qx_loc,
+                         scale=tf.nn[:softplus](tf.Variable(tf.zeros([num_samples, n]))))
+
+    inference = ed.KLqp(Dict(w => qw, w_batch => qw_batch, z => qz, x => qx, x_bias => qx_bias),
                         data=Dict(likapprox_laparam => input.likapprox_laparam))
 
     optimizer = tf.train[:AdamOptimizer](1e-1)

@@ -29,8 +29,6 @@ function estimate_pca(input::ModelInput)
                     x=x,
                     efflens=input.likapprox_efflen,
                     invhsb_params=input.likapprox_invhsb_params,
-                    node_parent_idxs=input.likapprox_parent_idxs,
-                    node_js=input.likapprox_js,
                     value=input.likapprox_laparam)
 
     qx_bias_loc = tf.Variable(tf.fill([1,n], log(1/n)))
@@ -192,8 +190,6 @@ function estimate_batch_pca(input::ModelInput)
                     x=x,
                     efflens=input.likapprox_efflen,
                     invhsb_params=input.likapprox_invhsb_params,
-                    node_parent_idxs=input.likapprox_parent_idxs,
-                    node_js=input.likapprox_js,
                     value=input.likapprox_laparam)
 
 

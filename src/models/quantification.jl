@@ -23,16 +23,10 @@ function estimate_transcript_expression(input::ModelInput)
     println("Estimating...")
 
     qx_mu_param = tf.Variable(tf.log(input.x0))
-    # qx_mu_param = tf.Print(qx_mu_param,
-    #                     [tf.reduce_min(qx_mu_param), tf.reduce_max(qx_mu_param)],
-    #                     "QX_MU_PARAM SPAN")
     qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
     qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
 
     qx_mu_mu_param = tf.Variable(tf.log(input.x0[1]))
-    # qx_mu_mu_param = tf.Print(qx_mu_mu_param,
-    #                     [tf.reduce_min(qx_mu_mu_param), tf.reduce_max(qx_mu_mu_param)],
-    #                     "QX_MU_MU_PARAM SPAN")
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
@@ -40,7 +34,6 @@ function estimate_transcript_expression(input::ModelInput)
                         data=PyDict(Dict(likapprox_laparam => input.likapprox_laparam)))
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    # optimizer = tf.train[:MomentumOptimizer](1e-7, 0.8)
     inference[:run](n_iter=500, optimizer=optimizer)
 
 
@@ -49,24 +42,19 @@ function estimate_transcript_expression(input::ModelInput)
     qx_sigma_value = sess[:run](qx_sigma_param)
 
     est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
-    # est = sess[:run](tf.divide(input.x0, input.likapprox_efflen))
-    # est = sess[:run](input.x0)
     efflens = sess[:run](input.likapprox_efflen)
-    @show extrema(est)
-    @show extrema(efflens)
 
-    # reset session and graph to free up memory
+    # reset session and graph to free up memory in case more needs to be done
     tf.reset_default_graph()
     old_sess = ed.get_session()
     old_sess[:close]()
     ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    @show minimum(qx_mu_value), median(qx_mu_value), maximum(qx_mu_value)
-    @show minimum(qx_sigma_value), median(qx_sigma_value), maximum(qx_sigma_value)
+    # @show minimum(qx_mu_value), median(qx_mu_value), maximum(qx_mu_value)
+    # @show minimum(qx_sigma_value), median(qx_sigma_value), maximum(qx_sigma_value)
 
     # TODO: this should be a temporary measure until we decide exactly how
     # results should be reported. Probably in sqlite or something.
-
     write_estimates("estimates.csv", input.sample_names, est)
 
     open("efflen.csv", "w") do out
@@ -76,20 +64,17 @@ function estimate_transcript_expression(input::ModelInput)
         end
     end
 
-
-    exit()
-
     return qx_mu_value, qx_sigma_value
 end
 
 
 function estimate_gene_expression(input::ModelInput)
-    m, I, J, names = gene_feature_matrix(input.ts, input.ts_metadata)
-    F = tf.SparseTensor(indices=cat(2, I-1, J-1), values=tf.ones(length(I)),
-                        dense_shape=[m, length(input.ts)])
+    num_samples, n = input.x0[:get_shape]()[:as_list]()
+    num_features, gene_idxs, transcript_idxs, names = gene_feature_matrix(input.ts, input.ts_metadata)
+    num_aux_features = regularize_disjoint_feature_matrix!(gene_idxs, transcript_idxs, n)
 
     qy_mu_value, qy_sigma_value =
-        estimate_feature_expression(input.likapprox_data, input.y0, input.sample_factors, F)
+        estimate_disjoint_feature_expression(input::ModelInput, gene_idxs, transcript_idxs, num_features + num_aux_features)
 end
 
 
@@ -273,6 +258,9 @@ function estimate_splicing_log_ratio(input::ModelInput)
 end
 
 
+"""
+Build basic transcript quantification model with some shrinkage towards a pooled mean.
+"""
 function transcript_quantification_model(input::ModelInput)
     num_samples, n = input.x0[:get_shape]()[:as_list]()
 
@@ -296,7 +284,6 @@ function transcript_quantification_model(input::ModelInput)
 
     x_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
                               tf.expand_dims(x_sigma, 0))
-    # y_sigma_param = tf.Print(y_sigma_param, [tf.reduce_min(y_sigma_param), tf.reduce_max(y_sigma_param)], "Y_SIGMA SPAN")
 
     x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
 
@@ -304,120 +291,139 @@ function transcript_quantification_model(input::ModelInput)
                     x=x,
                     efflens=input.likapprox_efflen,
                     invhsb_params=input.likapprox_invhsb_params,
-                    node_parent_idxs=input.likapprox_parent_idxs,
-                    node_js=input.likapprox_js,
                     value=input.likapprox_laparam)
 
     return x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam
 end
 
 
-function estimate_feature_expression(likapprox_data, y0, sample_factors, features)
-    num_samples, n = y0[:get_shape]()[:as_list]()
-    num_features = features[:get_shape]()[:as_list]()[1]
-    y, y_mu_param, y_sigma_param, y_mu, likapprox =
-        transcript_quantification_model(likapprox_data, y0)
+function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
+                                              transcript_idxs, num_features)
+    num_samples, n = input.x0[:get_shape]()[:as_list]()
 
-    # TODO: I'm getting INFS. The issue is extremely large SIGMA values that
-    # occur for some reason.
-    #
-    # Update: still getting NaNs, despite fixing the issue with extreme sigmas.
-    # have no idea why that's happening.
-    #
+    # feature expression
+    x_feature_mu_mu0 = tf.constant(log(0.01 * 1/num_features), shape=[num_features])
+    x_feature_mu_sigma0 = tf.constant(5.0, shape=[num_features])
+    x_feature_mu = edmodels.MultivariateNormalDiag(x_feature_mu_mu0,
+                                                   x_feature_mu_sigma0)
 
-    # We effectively want to sum log-normal variates to arrive at feature
-    # expression. We approximate that with another log-normal by matching
-    # moments (this is sometimes called the Fenton-Wilkinson method)
+    x_feature_sigma_mu0 = tf.constant(0.0, shape=[num_features])
+    x_feature_sigma_sigma0 = tf.constant(1.0, shape=[num_features])
+    x_feature_log_sigma = edmodels.MultivariateNormalDiag(x_feature_sigma_mu0,
+                                                          x_feature_sigma_sigma0)
+    x_feature_sigma = tf.exp(x_feature_log_sigma)
 
-    # y_sigma_param = tf.Print(y_sigma_param, [tf.reduce_min(y_sigma_param), tf.reduce_max(y_sigma_param)], "Y_SIGMA SPAN")
-    y_var = tf.square(y_sigma_param)
-    y_var = tf.Print(y_var, [tf.reduce_min(y_var), tf.reduce_max(y_var)], "Y_VAR SPAN")
-    y_mu_param = tf.Print(y_mu_param, [tf.reduce_min(y_mu_param), tf.reduce_max(y_mu_param)], "Y_MU SPAN")
+    x_feature_mu_param = tf.matmul(tf.ones([num_samples, 1]),
+                                   tf.expand_dims(x_feature_mu, 0))
 
-    tmp = tf.add(y_mu_param, tf.divide(y_var, 2))
-    tmp = tf.Print(tmp, [tf.reduce_min(tmp), tf.reduce_max(tmp)], "TMP SPAN")
-    y_mu_exp_adj1 = tf.exp(tmp)
+    x_feature_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
+                                      tf.expand_dims(x_feature_sigma, 0))
 
-    # y_mu_exp_adj1 = tf.exp(tf.add(y_mu_param, tf.divide(y_var, 2)))
-    y_mu_exp_adj1 = tf.Print(y_mu_exp_adj1, [tf.reduce_min(y_mu_exp_adj1), tf.reduce_max(y_mu_exp_adj1)], "MU_EXP_ADJ1 SPAN")
-    y_features_mu_exp_part1 =
-        tf.transpose(tf.sparse_tensor_dense_matmul(features, y_mu_exp_adj1, adjoint_b=true))
+    x_feature = edmodels.MultivariateNormalDiag(x_feature_mu_param,
+                                                x_feature_sigma_param)
 
-    y_mu_exp_adj2 = tf.multiply(tf.exp(tf.add(tf.multiply(2.0f0, y_mu_param), y_var)),
-                                tf.subtract(tf.exp(y_var), 1.0f0))
-    # y_mu_exp_adj2 = tf.Print(y_mu_exp_adj2, [tf.reduce_min(y_mu_exp_adj2), tf.reduce_max(y_mu_exp_adj2)], "MU_EXP_ADJ1 SPAN")
-    y_features_mu_exp_part2 =
-        tf.transpose(tf.sparse_tensor_dense_matmul(features, y_mu_exp_adj2, adjoint_b=true))
+    # within feature relative expression of feature constituents
+    x_constituent_mu_mu0 = tf.constant(0.0, shape=[n])
+    x_constituent_mu_sigma0 = tf.constant(5.0, shape=[n])
+    x_constituent_mu = edmodels.MultivariateNormalDiag(x_constituent_mu_mu0,
+                                                       x_constituent_mu_sigma0)
 
-    var_numer = y_features_mu_exp_part1
-    var_denom = tf.square(y_features_mu_exp_part2)
+    x_constituent_sigma_mu0 = tf.constant(0.0, shape=[n])
+    x_constituent_sigma_sigma0 = tf.constant(1.0, shape=[n])
+    x_constituent_log_sigma = edmodels.MultivariateNormalDiag(x_constituent_sigma_mu0,
+                                                              x_constituent_sigma_sigma0)
+    x_constituent_sigma = tf.exp(x_constituent_log_sigma)
 
-    # var_numer = tf.Print(var_numer, [tf.reduce_min(var_numer), tf.reduce_max(var_numer)], "NUMER SPAN")
-    # var_denom = tf.Print(var_denom, [tf.reduce_min(var_denom), tf.reduce_max(var_denom)], "DENOM SPAN")
+    x_constituent_mu_param = tf.matmul(tf.ones([num_samples, 1]),
+                                       tf.expand_dims(x_constituent_mu, 0))
 
-    y_features_var_param = tf.log(tf.add(1.0f0, tf.divide(var_numer, var_denom)))
-    # tmp = tf.divide(var_numer, var_denom)
-    # tmp = tf.Print(tmp, [tf.reduce_min(tmp), tf.reduce_max(tmp)], "TMP SPAN")
-    # y_features_var_param = tf.log(tf.add(1.0f0, tmp))
+    x_constituent_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
+                                          tf.expand_dims(x_constituent_sigma, 0))
 
-    y_features_sigma_param = tf.sqrt(y_features_var_param)
+    x_constituent = edmodels.MultivariateNormalDiag(x_constituent_mu_param,
+                                                    x_constituent_sigma_param)
 
-    y_features_mu_param = tf.subtract(tf.log(y_features_mu_exp_part1),
-                                      tf.divide(tf.square(y_features_sigma_param), 2))
+    x_constituent_indices = Array{Int32}((n, 2))
+    for (i, j) in zip(feature_idxs, transcript_idxs)
+        x_constituent_indices[j, 1] = i-1
+        x_constituent_indices[j, 2] = j-1
+    end
 
-    y_features_mu_param = tf.Print(y_features_mu_param,
-        [tf.reduce_min(y_features_mu_param), tf.reduce_max(y_features_mu_param)], "FEATURE MU SPAN")
-    y_features_sigma_param = tf.Print(y_features_sigma_param,
-        [tf.reduce_min(y_features_sigma_param), tf.reduce_max(y_features_sigma_param)], "FEATURE SIGMA SPAN")
+    xs = []
+    for (x_feature_i, x_constituent_i) in zip(tf.unstack(x_feature), tf.unstack(x_constituent))
+        x_constituent_matrix = tf.SparseTensor(indices=x_constituent_indices,
+                                               values=x_constituent_i,
+                                               dense_shape=[num_features, n])
+        x_constituent_matrix = tf.sparse_softmax(x_constituent_matrix)
 
-    #=
-    y_features_mu_param =
-        tf.transpose(tf.sparse_tensor_dense_matmul(features, y_mu_param, adjoint_b=true))
-    y_features_sigma_param =
-        tf.transpose(tf.sparse_tensor_dense_matmul(features, y_sigma_param, adjoint_b=true))
-    =#
-    y_features = edmodels.MultivariateNormalDiag(y_features_mu_param, y_features_sigma_param)
+        push!(xs, tf.log(tf.sparse_tensor_dense_matmul(x_constituent_matrix,
+                                                tf.expand_dims(tf.exp(x_feature_i), -1),
+                                                adjoint_a=true)))
+    end
+    x = tf.squeeze(tf.stack(xs), axis=-1)
 
-    println("Estimating...")
+    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+                    x=x,
+                    efflens=input.likapprox_efflen,
+                    invhsb_params=input.likapprox_invhsb_params,
+                    value=input.likapprox_laparam)
 
-    # y approximation
-    qy_mu_param = tf.Variable(y0)
-    qy_sigma_param = tf.identity(tf.Variable(tf.fill([num_samples, n], 0.1)))
-    qy = edmodels.MultivariateNormalDiag(qy_mu_param, qy_sigma_param)
+    # Inference
+    # ---------
 
-    # y_feature approximation
-    qy_features_mu_param = tf.Variable(
-        tf.transpose(tf.sparse_tensor_dense_matmul(features, y0, adjoint_b=true)))
-    qy_features_sigma_param =
-        tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], -1.0f0)))
-    qy_features = edmodels.MultivariateNormalDiag(qy_features_mu_param,
-                                                  qy_features_sigma_param)
-    # y_mu approximation
-    qy_mu_mu_param = tf.Variable(y0[1])
-    # qy_mu_sigma_param = tf.identity(tf.Variable(tf.fill([n], 0.1)))
-    qy_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
-    qy_mu = edmodels.MultivariateNormalDiag(qy_mu_mu_param, qy_mu_sigma_param)
+    qx_feature_mu_mu_param = tf.Variable(tf.fill([num_features], 0.0))
+    qx_feature_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0)))
+    qx_feature_mu = edmodels.MultivariateNormalDiag(qx_feature_mu_mu_param, qx_feature_mu_sigma_param)
 
-    inference = ed.KLqp(PyDict(Dict(y => qy, y_features => qy_features, y_mu => qy_mu)),
-                        data=PyDict(Dict(likapprox => likapprox_data)))
+    qx_feature_mu_param = tf.Variable(tf.fill([num_samples, num_features], log(1/num_features)))
+    qx_feature_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], -1.0f0)))
+    qx_feature = edmodels.MultivariateNormalDiag(qx_feature_mu_param, qx_feature_sigma_param)
+
+    qx_constituent_mu_mu_param = tf.Variable(tf.fill([n], 0.0))
+    qx_constituent_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
+    qx_constituent_mu = edmodels.MultivariateNormalDiag(qx_constituent_mu_mu_param, qx_constituent_mu_sigma_param)
+
+    qx_constituent_mu_param = tf.Variable(tf.fill([num_samples, n], 0.0))
+    qx_constituent_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
+    qx_constituent = edmodels.MultivariateNormalDiag(qx_constituent_mu_param, qx_constituent_sigma_param)
+
+    inference = ed.KLqp(PyDict(Dict(x_feature => qx_feature, x_feature_mu => qx_feature_mu,
+                                    x_constituent => qx_constituent, x_constituent_mu => qx_constituent_mu)),
+                        data=PyDict(Dict(likapprox_laparam => input.likapprox_laparam)))
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    inference[:run](n_iter=10, optimizer=optimizer)
+    inference[:run](n_iter=500, optimizer=optimizer)
 
+    # output some estimates
     sess = ed.get_session()
-    qy_mu_value    = sess[:run](qy_features_mu_param)
-    qy_sigma_value = sess[:run](qy_features_sigma_param)
+    qx_mu_value    = sess[:run](qx_feature_mu_param)
+    qx_sigma_value = sess[:run](qx_feature_sigma_param)
 
-    # reset session and graph to free up memory
+    est = sess[:run](tf.nn[:softmax](qx_feature_mu_param, dim=-1))
+    efflens = sess[:run](input.likapprox_efflen)
+
+    # reset session and graph to free up memory in case more needs to be done
     tf.reset_default_graph()
     old_sess = ed.get_session()
     old_sess[:close]()
     ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    return qy_mu_value, qy_sigma_value
+    @show minimum(qx_mu_value), median(qx_mu_value), maximum(qx_mu_value)
+    @show minimum(qx_sigma_value), median(qx_sigma_value), maximum(qx_sigma_value)
+
+    # TODO: this should be a temporary measure until we decide exactly how
+    # results should be reported. Probably in sqlite or something.
+    write_estimates("estimates.csv", input.sample_names, est)
+
+    open("efflen.csv", "w") do out
+        println(out, "transcript_num,efflen")
+        for (i, efflen) in enumerate(efflens)
+            println(out, i, ",", efflen)
+        end
+    end
+
+    return qx_mu_value, qx_sigma_value
 end
-
-
 
 EXTRUDER_MODELS["expression"] = estimate_expression
 EXTRUDER_MODELS["splicing"]   = estimate_splicing_log_ratio

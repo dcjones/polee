@@ -422,6 +422,39 @@ end
 
 
 """
+Does two things:
+    (1) throws an error if a transcript appears in more than one feature
+    (2) pads the matrix with extra single transcript features to account
+        for those not present in the given features.
+
+Returns the number of extra features added.
+"""
+function regularize_disjoint_feature_matrix!(feature_idxs, transcript_idxs, n)
+
+    present_transcripts = IntSet()
+    for tid in transcript_idxs
+        if tid ∈ present_transcripts
+            error("Transcript $(tid) is part of multiple features.")
+        end
+        push!(present_transcripts, tid)
+    end
+
+    num_aux_features = 0
+    if length(present_transcripts) < n
+        for j in 1:n
+            if j ∉ present_transcripts
+                push!(feature_idxs, length(feature_idxs))
+                push!(transcript_idxs, j)
+                num_aux_features += 1
+            end
+        end
+    end
+
+    return num_aux_features
+end
+
+
+"""
 Generate a m-by-n sparse 0/1 matrix F where m is the number of genes, and n
 is the number of transcripts, such that givin transcript expression y, Fy
 gives gene expression.
@@ -452,5 +485,5 @@ end
 
 
 function splicing_feature_matrix(ts::Transcripts, ts_metadata::TranscriptsMetadata)
-
+    # TODO:
 end

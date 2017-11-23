@@ -9,7 +9,7 @@ import sys
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, x, efflens, invhsb_params, node_parent_idxs, node_js,
+    def __init__(self, x, efflens, invhsb_params,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
@@ -25,8 +25,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # self.x = x
         self.efflens = efflens
         self.invhsb_params = invhsb_params
-        self.node_parent_idxs = node_parent_idxs
-        self.node_js = node_js
 
         super(RNASeqApproxLikelihoodDist, self).__init__(
               dtype=self.x.dtype,
@@ -55,31 +53,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         alpha = tf.identity(laparam[...,2,:], name="alpha")
 
         num_samples = len(self.invhsb_params)
-        num_nodes = self.node_js.shape[0]
+        num_nodes = 2*n - 1
 
-        y_tensors = []
-
-        # TODO: This shit makes me real uncomfortable. This is not a bijection,
-        # and there is no jacobian term. Suggests we are doing things wrong. I
-        # could do something like exp(x_i) / (1 + sum(x_i)) which should be a
-        # bijection with a well defined jacobian.
-        # self_x = tf.Print(self.x, [tf.reduce_min(self.x), tf.reduce_max(self.x)], "X SPAN")
-
-        # TODO: consider a R^n -> Delta^{n-1} x R transformation, where the extra
-        # number is some kind of scale than we can have a prior over.
-
-        # self.x = tf.Print(self.x, [tf.reduce_min(self.x, axis=1)], "X SPAN MIN", summarize=6)
-        # self.x = tf.Print(self.x, [tf.reduce_max(self.x, axis=1)], "X SPAN MAX", summarize=6)
-
-        # print("HERE")
-        # print(tf.reduce_sum(tf.exp(self.x), axis=1))
-        # sys.exit()
-
-        # self.x = tf.Print(self.x,
-        #     [tf.reduce_min(tf.reduce_sum(tf.exp(self.x), axis=1)),
-        #      tf.reduce_max(tf.reduce_sum(tf.exp(self.x), axis=1))], "X SCALE SPAN")
-        # self.x = tf.Print(self.x, [self.x], "X")
-        self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X SCALE", summarize=6)
+        # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X SCALE", summarize=6)
 
         x = tf.nn.softmax(self.x)
 
@@ -90,9 +66,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
         x_efflen = x_scaled / x_scaled_sum
 
-        efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
+        # efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
 
-        hsb_ladj_tensors = []
 
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
@@ -106,6 +81,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # mutable tensors, accumulating values with scatter_add. If we do that,
         # we'd have to manually compute gradients. Pretty tricky, but could be
         # worth pursuing.
+
+        y_tensors = []
+        # hsb_ladj_tensors = []
 
         for sample_num in range(num_samples):
             print(sample_num)
@@ -125,22 +103,18 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                                               tf.gather_nd(input_values, tf.expand_dims(As[i][1], -1)),
                                               [num_nodes])
 
-
-            # input_values = tf.Print(input_values, [tf.reduce_min(input_values), tf.reduce_max(input_values)],
-            #                         "INPUT VALUES SPAN " + str(i))
-
             input_values = tf.to_double(input_values)
             input_values = tf.clip_by_value(input_values, 1e-10, 1.0 - 1e-10)
 
             internal_node_values = tf.gather(input_values, internal_node_indexes)
-            hsb_ladj_tensor = tf.log(internal_node_values)
-            hsb_ladj_tensors.append(tf.to_float(-tf.reduce_sum(hsb_ladj_tensor)))
+            # hsb_ladj_tensor = tf.log(internal_node_values)
+            # hsb_ladj_tensors.append(tf.to_float(-tf.reduce_sum(hsb_ladj_tensor)))
 
             left_node_values = tf.gather(input_values, internal_node_left_indexes)
             y_h = tf.divide(left_node_values, internal_node_values)
             y_tensors.append(y_h)
 
-        hsb_ladj = tf.stack(hsb_ladj_tensors)
+        # hsb_ladj = tf.stack(hsb_ladj_tensors)
 
         y = tf.stack(y_tensors, name="y")
         y = tf.clip_by_value(y, 1e-10, 1 - 1e-10)
@@ -151,14 +125,14 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         y_log = tf.log(y)
         y_om_log = tf.log(1.0 - y)
         y_logit = tf.to_float(y_log - y_om_log)
-        y_logit_ladj = tf.reduce_sum(tf.to_float(-y_log - y_om_log), axis=1)
+        # y_logit_ladj = tf.reduce_sum(tf.to_float(-y_log - y_om_log), axis=1)
 
 
         # normal standardization transform
         # --------------------------------
 
         z_std = tf.divide(tf.subtract(y_logit, mu), sigma)
-        z_std_ladj = -tf.reduce_sum(tf.log(sigma), axis=1)
+        # z_std_ladj = -tf.reduce_sum(tf.log(sigma), axis=1)
 
         # inverse sinh-asinh transform
         # ----------------------------

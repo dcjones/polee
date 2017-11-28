@@ -88,7 +88,7 @@ function load_samples(filenames, ts_metadata::TranscriptsMetadata)
 
     return (tf.stack(laparam_tensors), tf.stack(efflen_tensors),
             As_tensors, hcat(node_parent_idxs_tensors...),
-            hcat(node_js_tensors...), tf.stack(x0_tensors))
+            hcat(node_js_tensors...), transpose(hcat(x0_tensors...)))
 end
 
 
@@ -98,13 +98,14 @@ struct ModelInput
     likapprox_invhsb_params::Vector{PyCall.PyObject}
     likapprox_parent_idxs::Array
     likapprox_js::Array
-    x0::PyCall.PyObject
+    x0::Array{Float32, 2}
     sample_factors::Vector{Vector{String}}
     sample_names::Vector{String}
     feature::Symbol
     ts::Transcripts
     ts_metadata::TranscriptsMetadata
     output_filename::Nullable{String}
+    output_format::Symbol
     gene_db::SQLite.DB
 end
 

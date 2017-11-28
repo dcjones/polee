@@ -15,18 +15,21 @@ end
 
 
 function estimate_transcript_expression(input::ModelInput)
-    num_samples, n = input.x0[:get_shape]()[:as_list]()
+    num_samples, n = size(input.x0)
+    x0_log = tf.log(tf.constant(input.x0))
+    @show (num_samples, n)
 
     x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam =
         transcript_quantification_model(input)
 
     println("Estimating...")
 
-    qx_mu_param = tf.Variable(tf.log(input.x0))
+    qx_mu_param = tf.Variable(x0_log)
     qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
     qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
 
-    qx_mu_mu_param = tf.Variable(tf.log(input.x0[1]))
+    # qx_mu_mu_param = tf.Variable(tf.log(x0[1]))
+    qx_mu_mu_param = tf.Variable(tf.reduce_mean(x0_log, 0))
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
@@ -69,12 +72,35 @@ end
 
 
 function estimate_gene_expression(input::ModelInput)
-    num_samples, n = input.x0[:get_shape]()[:as_list]()
-    num_features, gene_idxs, transcript_idxs, names = gene_feature_matrix(input.ts, input.ts_metadata)
+    num_samples, n = size(input.x0)
+    num_features, gene_idxs, transcript_idxs, gene_names = gene_feature_matrix(input.ts, input.ts_metadata)
     num_aux_features = regularize_disjoint_feature_matrix!(gene_idxs, transcript_idxs, n)
 
-    qy_mu_value, qy_sigma_value =
-        estimate_disjoint_feature_expression(input::ModelInput, gene_idxs, transcript_idxs, num_features + num_aux_features)
+    est = estimate_disjoint_feature_expression(input, gene_idxs, transcript_idxs,
+                                               num_features + num_aux_features)
+
+    if input.output_format == :csv
+        output_filename = isnull(input.output_filename) ? "gene-expression.csv" : get(input.output_filename)
+        write_gene_expression_csv(output_filename, input.sample_names, gene_names,
+                                  num_aux_features, est)
+    elseif input.output_format == :sqlite3
+        error("Sqlite3 output for gene expression is not implemented.")
+    end
+end
+
+
+function write_gene_expression_csv(output_filename, sample_names, gene_names,
+                                   num_aux_features, est)
+    n = size(est, 2) - num_aux_features
+    @assert length(gene_names) == n
+    open(output_filename, "w") do output
+        println(output, "sample_name,gene_name,tpm")
+        for (i, sample_name) in enumerate(sample_names)
+            for (j, gene_name) in enumerate(gene_names)
+                @printf(output, "%s,%s,%e\n", sample_name, gene_name, 1e6 * est[i,j])
+            end
+        end
+    end
 end
 
 
@@ -262,7 +288,7 @@ end
 Build basic transcript quantification model with some shrinkage towards a pooled mean.
 """
 function transcript_quantification_model(input::ModelInput)
-    num_samples, n = input.x0[:get_shape]()[:as_list]()
+    num_samples, n = size(input.x0)
 
     # y_mu: pooled mean
     # x_mu_mu0 = tf.constant(log(1/n), shape=[n])
@@ -299,7 +325,7 @@ end
 
 function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
                                               transcript_idxs, num_features)
-    num_samples, n = input.x0[:get_shape]()[:as_list]()
+    num_samples, n = size(input.x0)
 
     # feature expression
     x_feature_mu_mu0 = tf.constant(log(0.01 * 1/num_features), shape=[num_features])
@@ -343,10 +369,13 @@ function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
     x_constituent = edmodels.MultivariateNormalDiag(x_constituent_mu_param,
                                                     x_constituent_sigma_param)
 
+    p = sortperm(feature_idxs)
+    permute!(feature_idxs, p)
+    permute!(transcript_idxs, p)
     x_constituent_indices = Array{Int32}((n, 2))
-    for (i, j) in zip(feature_idxs, transcript_idxs)
-        x_constituent_indices[j, 1] = i-1
-        x_constituent_indices[j, 2] = j-1
+    for (k, (i, j)) in enumerate(zip(feature_idxs, transcript_idxs))
+        x_constituent_indices[k, 1] = i-1
+        x_constituent_indices[k, 2] = j-1
     end
 
     xs = []
@@ -354,11 +383,13 @@ function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
         x_constituent_matrix = tf.SparseTensor(indices=x_constituent_indices,
                                                values=x_constituent_i,
                                                dense_shape=[num_features, n])
-        x_constituent_matrix = tf.sparse_softmax(x_constituent_matrix)
+        x_constituent_matrix_softmax = tf.sparse_softmax(x_constituent_matrix)
 
-        push!(xs, tf.log(tf.sparse_tensor_dense_matmul(x_constituent_matrix,
-                                                tf.expand_dims(tf.exp(x_feature_i), -1),
-                                                adjoint_a=true)))
+        x_i = tf.log(tf.sparse_tensor_dense_matmul(x_constituent_matrix_softmax,
+                                                   tf.expand_dims(tf.exp(x_feature_i), -1),
+                                                   adjoint_a=true))
+
+        push!(xs, x_i)
     end
     x = tf.squeeze(tf.stack(xs), axis=-1)
 
@@ -371,19 +402,41 @@ function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
     # Inference
     # ---------
 
-    qx_feature_mu_mu_param = tf.Variable(tf.fill([num_features], 0.0))
+    # figure out some reasonable initial values
+    feature_mu_initial     = zeros(Float32, (num_samples, num_features))
+    constituent_mu_initial = zeros(Float32, (num_samples, n))
+    for i in 1:num_samples
+        for (j, k) in zip(feature_idxs, transcript_idxs)
+            feature_mu_initial[i, j] += input.x0[i, k]
+            constituent_mu_initial[i, k] = input.x0[i, k]
+        end
+
+        for (j, k) in zip(feature_idxs, transcript_idxs)
+            constituent_mu_initial[i, k] /= feature_mu_initial[i, j]
+        end
+    end
+    map!(log, feature_mu_initial, feature_mu_initial)
+    map!(log, constituent_mu_initial, constituent_mu_initial)
+    feature_mu_initial_mean = reshape(mean(feature_mu_initial, 1), (num_features,))
+    constituent_mu_initial_mean = reshape(mean(constituent_mu_initial, 1), (n,))
+
+    # qx_feature_mu_mu_param = tf.Variable(tf.fill([num_features], 0.0))
+    qx_feature_mu_mu_param = tf.Variable(feature_mu_initial_mean)
     qx_feature_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0)))
     qx_feature_mu = edmodels.MultivariateNormalDiag(qx_feature_mu_mu_param, qx_feature_mu_sigma_param)
 
-    qx_feature_mu_param = tf.Variable(tf.fill([num_samples, num_features], log(1/num_features)))
+    # qx_feature_mu_param = tf.Variable(tf.fill([num_samples, num_features], log(1/num_features)))
+    qx_feature_mu_param = tf.Variable(feature_mu_initial)
     qx_feature_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], -1.0f0)))
     qx_feature = edmodels.MultivariateNormalDiag(qx_feature_mu_param, qx_feature_sigma_param)
 
-    qx_constituent_mu_mu_param = tf.Variable(tf.fill([n], 0.0))
+    # qx_constituent_mu_mu_param = tf.Variable(tf.fill([n], 0.0))
+    qx_constituent_mu_mu_param = tf.Variable(constituent_mu_initial_mean)
     qx_constituent_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_constituent_mu = edmodels.MultivariateNormalDiag(qx_constituent_mu_mu_param, qx_constituent_mu_sigma_param)
 
-    qx_constituent_mu_param = tf.Variable(tf.fill([num_samples, n], 0.0))
+    # qx_constituent_mu_param = tf.Variable(tf.fill([num_samples, n], 0.0))
+    qx_constituent_mu_param = tf.Variable(constituent_mu_initial)
     qx_constituent_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
     qx_constituent = edmodels.MultivariateNormalDiag(qx_constituent_mu_param, qx_constituent_sigma_param)
 
@@ -408,21 +461,7 @@ function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
     old_sess[:close]()
     ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    @show minimum(qx_mu_value), median(qx_mu_value), maximum(qx_mu_value)
-    @show minimum(qx_sigma_value), median(qx_sigma_value), maximum(qx_sigma_value)
-
-    # TODO: this should be a temporary measure until we decide exactly how
-    # results should be reported. Probably in sqlite or something.
-    write_estimates("estimates.csv", input.sample_names, est)
-
-    open("efflen.csv", "w") do out
-        println(out, "transcript_num,efflen")
-        for (i, efflen) in enumerate(efflens)
-            println(out, i, ",", efflen)
-        end
-    end
-
-    return qx_mu_value, qx_sigma_value
+    return est
 end
 
 EXTRUDER_MODELS["expression"] = estimate_expression

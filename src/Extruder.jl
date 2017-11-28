@@ -192,6 +192,8 @@ function main()
         @add_arg_table arg_settings begin
             "--output", "-o"
                 default = Nullable{String}()
+            "--output-format", "-F"
+                default = "csv"
             "feature"
                 required = true
             "model"
@@ -213,11 +215,16 @@ function main()
 
         feature = Symbol(parsed_args["feature"])
 
+        output_format = Symbol(parsed_args["output-format"])
+        if output_format != :csv && output_format != :sqlite3
+            error("Output format must be either \"csv\" or \"sqlite3\".")
+        end
+
         input = ModelInput(
             likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,
             likapprox_parent_idxs, likapprox_js, x0, sample_factors,
             sample_names, feature, ts, ts_metadata,
-            parsed_args["output"], gene_db)
+            parsed_args["output"], output_format, gene_db)
 
         EXTRUDER_MODELS[parsed_args["model"]](input)
 

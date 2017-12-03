@@ -165,7 +165,7 @@ function estimate_splicing_expression(input::ModelInput)
     inc_ins_stmt = SQLite.Stmt(db,
         "insert into splicing_feature_including_transcripts values (?1, ?2)")
     exc_ins_stmt = SQLite.Stmt(db,
-        "insert into splicing_feature_including_transcripts values (?1, ?2)")
+        "insert into splicing_feature_excluding_transcripts values (?1, ?2)")
     SQLite.execute!(db, "begin transaction")
     for (i, (intron, flanks)) in  enumerate(cassette_exons)
         SQLite.bind!(inc_ins_stmt, 1, i)
@@ -207,11 +207,29 @@ function estimate_splicing_expression(input::ModelInput)
 
     @show num_features
 
-    return estimate_nondisjoint_feature_expression(input, num_features,
+    est =  estimate_nondisjoint_feature_expression(input, num_features,
                                                    feature_idxs, feature_transcript_idxs,
                                                    antifeature_idxs, antifeature_transcript_idxs)
+
+    if input.output_format == :csv
+        output_filename = isnull(input.output_filename) ? "splicing-proportions.csv" : get(input.output_filename)
+        write_splicing_proportions_csv(output_filename, input.sample_names, num_features, est)
+    elseif input.output_format == :sqlite3
+        error("Sqlite3 output for splicing proportion is not implemented.")
+    end
 end
 
+
+function write_splicing_proportions_csv(output_filename, sample_names, num_features, est)
+    open(output_filename, "w") do output
+        println(output, "sample_name,feature_num,proportion")
+        for (i, sample_name) in enumerate(sample_names)
+            for j in 1:num_features
+                @printf(output, "%s,%d,%e\n", sample_name, j, est[i,j])
+            end
+        end
+    end
+end
 
 # function estimate_splicing_log_ratio(input::ModelInput)
 #     cassette_exons = get_cassette_exons(input.ts)
@@ -478,24 +496,26 @@ they share a feature, or one has a feature and another an antifeature.
 function connected_components_from_features(n, num_features, feature_idxs, feature_transcript_idxs,
                                             antifeature_idxs, antifeature_transcript_idxs)
     components = IntDisjointSets(n + num_features)
-    transcripts_with_features = IntSet()
     @assert length(feature_idxs) == length(feature_transcript_idxs)
     for (i, j) in zip(feature_transcript_idxs, feature_idxs)
         union!(components, i, n + j)
-        push!(transcripts_with_features, i)
     end
 
     @assert length(antifeature_idxs) == length(antifeature_transcript_idxs)
     for (i, j) in zip(antifeature_transcript_idxs, antifeature_idxs)
         union!(components, i, n + j)
-        push!(transcripts_with_features, i)
     end
 
+    transcripts_with_features = IntSet()
     component_idx_map = Dict{Int, Int}()
     component_idxs = Int32[]
     component_transcript_idxs = Int32[]
 
     for i in feature_transcript_idxs
+        if i ∈ transcripts_with_features
+            continue
+        end
+        push!(transcripts_with_features, i)
         r = find_root(components, i)
         push!(component_transcript_idxs, i)
         push!(component_idxs,
@@ -503,6 +523,10 @@ function connected_components_from_features(n, num_features, feature_idxs, featu
     end
 
     for i in antifeature_transcript_idxs
+        if i ∈ transcripts_with_features
+            continue
+        end
+        push!(transcripts_with_features, i)
         r = find_root(components, i)
         push!(component_transcript_idxs, i)
         push!(component_idxs,
@@ -524,7 +548,11 @@ function connected_components_from_features(n, num_features, feature_idxs, featu
 
     num_components = aux_components + length(component_idx_map)
 
-    return num_components, component_idxs, component_transcript_idxs, transcripts_without_features
+    # TODO: no this too is wrong. There should be duplicate components. just
+    # not duplicate transcripts.
+
+    return num_components, component_idxs,
+           component_transcript_idxs, transcripts_without_features
 end
 
 
@@ -538,23 +566,25 @@ function nondisjoint_feature_initialization(x0, num_components, num_features,
     # I'm thinking we just leave x_component initialized and 0.0 for now and
     # set x_component to be a sum of constiuent transcript expressions.
 
-    x_component_mu_initial = zeros(Float32, (num_samples, num_components))
+    # x_component_mu_initial = zeros(Float32, (num_samples, num_components))
+    x_component_mu_initial = fill(log(0.01f0 * 1f0/num_components), (num_samples, num_components))
     x_feature_mu_initial = zeros(Float32, (num_samples, num_features))
 
-    @show extrema(x_component_mu_initial)
+    # @show extrema(x_component_mu_initial)
 
-    for i in 1:num_samples
-        for (j, k) in zip(component_idxs, component_transcript_idxs)
-            x_component_mu_initial[i, j] += log(x0[i, k])
-        end
-    end
+    # for i in 1:num_samples
+    #     for (j, k) in zip(component_idxs, component_transcript_idxs)
+    #         x_component_mu_initial[i, j] += log(x0[i, k])
+    #     end
+    # end
 
-    component_set = IntSet(component_idxs)
-    for i in 1:num_components
-        if i ∉ component_set
-            @show i
-        end
-    end
+
+    # component_set = IntSet(component_idxs)
+    # for i in 1:num_components
+    #     if i ∉ component_set
+    #         @show i
+    #     end
+    # end
 
     return x_component_mu_initial, x_feature_mu_initial
 end
@@ -573,15 +603,34 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     permute!(antifeature_transcript_idxs, p)
     permute!(antifeature_idxs, p)
 
+
     num_components, component_idxs, component_transcript_idxs, transcripts_without_features =
         connected_components_from_features(n, num_features, feature_idxs,
                                         feature_transcript_idxs,
                                         antifeature_idxs,
                                         antifeature_transcript_idxs)
 
+
     p = sortperm(component_transcript_idxs)
     permute!(component_transcript_idxs, p)
     permute!(component_idxs, p)
+
+    # @show sum(component_transcript_idxs .== 90404)
+
+    # feature_num_oi = 21640
+    # println("features")
+    # for (tid, fid) in zip(feature_transcript_idxs, feature_idxs)
+    #     if fid == feature_num_oi
+    #         @show (tid, component_idxs[findlast(component_transcript_idxs, tid)])
+    #     end
+    # end
+
+    # println("antifeatures")
+    # for (tid, fid) in zip(antifeature_transcript_idxs, antifeature_idxs)
+    #     if fid == feature_num_oi
+    #         @show (tid, component_idxs[findlast(component_transcript_idxs, tid)])
+    #     end
+    # end
 
     transcripts_without_features_props = zeros(Float32, n)
     transcripts_without_features_props[transcripts_without_features] = 1.0f0
@@ -595,25 +644,25 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     x_component_mu_sigma0 = tf.constant(5.0, shape=[num_components])
     x_component_mu = edmodels.MultivariateNormalDiag(x_component_mu_mu0,
                                                      x_component_mu_sigma0)
-    x_component_mu_ = tf_print_span(x_component_mu, "x_component_mu span")
+    # x_component_mu_ = tf_print_span(x_component_mu, "x_component_mu span")
 
     x_component_sigma_mu0 = tf.constant(0.0, shape=[num_components])
     x_component_sigma_sigma0 = tf.constant(1.0, shape=[num_components])
     x_component_log_sigma = edmodels.MultivariateNormalDiag(x_component_sigma_mu0,
                                                             x_component_sigma_sigma0)
     x_component_sigma = tf.exp(x_component_log_sigma)
-    x_component_sigma_ = tf_print_span(x_component_sigma, "x_component_sigma span")
+    # x_component_sigma_ = tf_print_span(x_component_sigma, "x_component_sigma span")
 
     x_component_mu_param = tf.matmul(tf.ones([num_samples, 1]),
-                                     tf.expand_dims(x_component_mu_, 0))
+                                     tf.expand_dims(x_component_mu, 0))
 
     x_component_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
-                                        tf.expand_dims(x_component_sigma_, 0))
+                                        tf.expand_dims(x_component_sigma, 0))
 
     x_component = edmodels.MultivariateNormalDiag(x_component_mu_param,
                                                   x_component_sigma_param)
 
-    x_component_ = tf_print_span(x_component, "x_component span")
+    # x_component_ = tf_print_span(x_component, "x_component span")
 
     # feature factors
     # ---------------
@@ -622,32 +671,34 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     x_feature_mu_sigma0 = tf.constant(5.0, shape=[num_features])
     x_feature_mu = edmodels.MultivariateNormalDiag(x_feature_mu_mu0,
                                                    x_feature_mu_sigma0)
-    x_feature_mu_ = tf_print_span(x_feature_mu, "x_feature_mu span")
+    # x_feature_mu_ = tf_print_span(x_feature_mu, "x_feature_mu span")
 
     x_feature_sigma_mu0 = tf.constant(0.0, shape=[num_features])
     x_feature_sigma_sigma0 = tf.constant(1.0, shape=[num_features])
     x_feature_log_sigma = edmodels.MultivariateNormalDiag(x_feature_sigma_mu0,
                                                           x_feature_sigma_sigma0)
     x_feature_sigma = tf.exp(x_feature_log_sigma)
-    x_feature_sigma_ = tf_print_span(x_feature_sigma, "x_feature_sigma span")
+    # x_feature_sigma_ = tf_print_span(x_feature_sigma, "x_feature_sigma span")
 
     x_feature_mu_param = tf.matmul(tf.ones([num_samples, 1]),
-                                   tf.expand_dims(x_feature_mu_, 0))
+                                   tf.expand_dims(x_feature_mu, 0))
 
     x_feature_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
-                                      tf.expand_dims(x_feature_sigma_, 0))
+                                      tf.expand_dims(x_feature_sigma, 0))
 
     x_feature = edmodels.MultivariateNormalDiag(x_feature_mu_param,
                                                 x_feature_sigma_param)
 
-    x_feature_ = tf_print_span(x_feature, "x_feature span")
+    # x_feature_ = tf_print_span(x_feature, "x_feature span")
 
-    x_feature_proportions = tf.sigmoid(x_feature_)
+    x_feature_proportions = tf.clip_by_value(tf.sigmoid(x_feature), 1f-7, 1.0f0 - 1f-7)
     x_antifeature_proportions = tf.ones([num_samples, num_features]) - x_feature_proportions
+
+    x_feature_log_proportions = tf.log(x_feature_proportions)
+    x_antifeature_log_proportions = tf.log(x_antifeature_proportions)
 
     # x_feature_proportions = tf_print_span(x_feature_proportions, "x_feature_proportions span")
     # x_antifeature_proportions = tf_print_span(x_antifeature_proportions, "x_antifeature_proportions span")
-
 
     features_matrix_indices = Array{Int32}((length(feature_idxs), 2))
     for (k, (i, j)) in enumerate(zip(feature_transcript_idxs, feature_idxs))
@@ -672,43 +723,58 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
         component_matrix_indices[k, 1] = i - 1
         component_matrix_indices[k, 2] = j - 1
     end
+    # @show extrema(component_transcript_idxs)
+    # @show extrema(component_idxs)
+    # @show extrema(component_matrix_indices[:,1])
+    # @show extrema(component_matrix_indices[:,2])
+    # @show (n, num_components)
+    # @show (length(component_transcript_idxs), length(component_idxs))
+    # exit()
     components = tf.SparseTensor(indices=component_matrix_indices,
                                  values=tf.ones(length(component_transcript_idxs)),
                                  dense_shape=[n, num_components])
 
     xs = []
-    for (x_feature_proportions_i, x_antifeature_proportions_i, x_component_i) in
-            zip(tf.unstack(x_feature_proportions),
-                tf.unstack(x_antifeature_proportions),
-                tf.unstack(x_component_))
+    for (x_feature_log_proportions_i, x_antifeature_log_proportions_i, x_component_i) in
+            zip(tf.unstack(x_feature_log_proportions),
+                tf.unstack(x_antifeature_log_proportions),
+                tf.unstack(x_component))
 
-        @show x_feature_proportions_i[:get_shape]()
-        @show features[:get_shape]()
         transcript_feature_proportions_i =
             tf.sparse_tensor_dense_matmul(features,
-                                          tf.expand_dims(x_feature_proportions_i, -1))
+                                          tf.expand_dims(x_feature_log_proportions_i, -1))
+
+        # transcript_feature_proportions_i =
+        #     tf.Print(transcript_feature_proportions_i,
+        #         [tf.gather(tf.squeeze(transcript_feature_proportions_i, axis=-1), idxs_oi)], "FEAT PROP", summarize=4)
 
         transcript_antifeature_proportions_i =
             tf.sparse_tensor_dense_matmul(antifeatures,
-                                          tf.expand_dims(x_antifeature_proportions_i, -1))
+                                          tf.expand_dims(x_antifeature_log_proportions_i, -1))
+
+        # transcript_antifeature_proportions_i =
+        #     tf.Print(transcript_antifeature_proportions_i,
+        #         [tf.gather(tf.squeeze(transcript_antifeature_proportions_i, axis=-1), idxs_oi)], "ANTIFEAT PROP", summarize=4)
 
         transcript_component_expression_i =
             tf.sparse_tensor_dense_matmul(components,
                                           tf.expand_dims(x_component_i, -1))
+        # transcript_component_expression_i =
+        #     tf.sparse_tensor_dense_matmul(components,
+        #                                   tf.expand_dims(tf.ones(num_components), -1))
 
+        # transcript_component_expression_i =
+        #     tf.Print(transcript_component_expression_i,
+        #         [tf.gather(tf.squeeze(transcript_component_expression_i, axis=-1), idxs_oi)], "COMPONENT EX", summarize=4)
 
-        @show transcript_component_expression_i[:get_shape]()
-        @show transcript_feature_proportions_i[:get_shape]()
-        @show transcripts_without_features_props_tensor[:get_shape]()
-        @show transcript_antifeature_proportions_i[:get_shape]()
+        # transcripts_without_features_props_tensor =
+        #     tf.Print(transcripts_without_features_props_tensor,
+        #         [tf.gather(tf.squeeze(transcripts_without_features_props_tensor, axis=-1), idxs_oi)], "NON FEATURE EX", summarize=4)
 
         x_i =
             transcript_component_expression_i +
             transcript_feature_proportions_i +
-            transcripts_without_features_props_tensor +
             transcript_antifeature_proportions_i
-
-        @show x_i[:get_shape]()
 
         push!(xs, x_i)
     end
@@ -729,26 +795,23 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
                                            feature_idxs, feature_transcript_idxs,
                                            antifeature_idxs, antifeature_transcript_idxs)
 
-    # TODO: qx_feature_mu_mu
-    # TODO: qx_component_mu_mu
-
     x_feature_mu_initial_mean = reshape(mean(x_feature_mu_initial, 1), (num_features,))
     x_component_mu_initial_mean = reshape(mean(x_component_mu_initial, 1), (num_components,))
 
-    qx_feature_mu_mu_param = tf.Variable(x_feature_mu_initial_mean)
-    qx_feature_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0)))
+    qx_feature_mu_mu_param = tf.Variable(x_feature_mu_initial_mean, name="qx_feature_mu_mu_param")
+    qx_feature_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0), name="qx_feature_mu_sigma_param"))
     qx_feature_mu = edmodels.MultivariateNormalDiag(qx_feature_mu_mu_param, qx_feature_mu_sigma_param)
 
-    qx_feature_mu_param = tf.Variable(x_feature_mu_initial)
-    qx_feature_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], -1.0f0)))
+    qx_feature_mu_param = tf.Variable(x_feature_mu_initial, name="qx_feature_mu_param")
+    qx_feature_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], -1.0f0), name="qx_feature_sigma_param"))
     qx_feature = edmodels.MultivariateNormalDiag(qx_feature_mu_param, qx_feature_sigma_param)
 
-    qx_component_mu_mu_param = tf.Variable(x_component_mu_initial_mean)
-    qx_component_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_components], -1.0f0)))
+    qx_component_mu_mu_param = tf.Variable(x_component_mu_initial_mean, name="qx_component_mu_mu_param")
+    qx_component_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_components], -1.0f0), name="qx_component_mu_sigma_param"))
     qx_component_mu = edmodels.MultivariateNormalDiag(qx_component_mu_mu_param, qx_component_mu_sigma_param)
 
-    qx_component_mu_param = tf.Variable(x_component_mu_initial)
-    qx_component_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_components], -1.0f0)))
+    qx_component_mu_param = tf.Variable(x_component_mu_initial, name="qx_component_mu_param")
+    qx_component_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_components], -1.0f0), name="qx_component_sigma_param"))
     qx_component = edmodels.MultivariateNormalDiag(qx_component_mu_param, qx_component_sigma_param)
 
     inference = ed.KLqp(PyDict(Dict(x_feature      => qx_feature,
@@ -757,8 +820,19 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
                                     x_component_mu => qx_component_mu)),
                         data=PyDict(Dict(likapprox_laparam => input.likapprox_laparam)))
 
-    optimizer = tf.train[:AdamOptimizer](1e-2)
-    inference[:run](n_iter=1000, optimizer=optimizer)
+    optimizer = tf.train[:AdamOptimizer](1e-1)
+    # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
+    inference[:run](n_iter=5000, optimizer=optimizer)
+
+    sess = ed.get_session()
+    est = sess[:run](tf.sigmoid(qx_feature_mu_param))
+
+    tf.reset_default_graph()
+    old_sess = ed.get_session()
+    old_sess[:close]()
+    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
+
+    return est
 end
 
 

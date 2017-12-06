@@ -207,25 +207,31 @@ function estimate_splicing_expression(input::ModelInput)
 
     @show num_features
 
-    est =  estimate_nondisjoint_feature_expression(input, num_features,
-                                                   feature_idxs, feature_transcript_idxs,
-                                                   antifeature_idxs, antifeature_transcript_idxs)
+    est, lower_credible, upper_credible =
+        estimate_nondisjoint_feature_expression(input, num_features,
+                                                feature_idxs, feature_transcript_idxs,
+                                                antifeature_idxs, antifeature_transcript_idxs)
 
     if input.output_format == :csv
         output_filename = isnull(input.output_filename) ? "splicing-proportions.csv" : get(input.output_filename)
-        write_splicing_proportions_csv(output_filename, input.sample_names, num_features, est)
+        write_splicing_proportions_csv(
+            output_filename,input.sample_names, num_features, est,
+            lower_credible, upper_credible)
     elseif input.output_format == :sqlite3
         error("Sqlite3 output for splicing proportion is not implemented.")
     end
 end
 
 
-function write_splicing_proportions_csv(output_filename, sample_names, num_features, est)
+function write_splicing_proportions_csv(output_filename, sample_names,
+                                        num_features, est,
+                                        lower_credible, upper_credible)
     open(output_filename, "w") do output
-        println(output, "sample_name,feature_num,proportion")
+        println(output, "sample_name,feature_num,proportion,lower_credible,upper_credible")
         for (i, sample_name) in enumerate(sample_names)
             for j in 1:num_features
-                @printf(output, "%s,%d,%e\n", sample_name, j, est[i,j])
+                @printf(output, "%s,%d,%e,%e,%e\n", sample_name, j,
+                        est[i, j], lower_credible[i, j], upper_credible[i, j])
             end
         end
     end
@@ -822,17 +828,32 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
 
     optimizer = tf.train[:AdamOptimizer](1e-1)
     # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
-    inference[:run](n_iter=5000, optimizer=optimizer)
+    inference[:run](n_iter=1500, optimizer=optimizer)
 
     sess = ed.get_session()
-    est = sess[:run](tf.sigmoid(qx_feature_mu_param))
+    est  = sess[:run](tf.sigmoid(qx_feature_mu_param))
+    mean_est  = sess[:run](qx_feature_mu_param)
+    sigma_est = sess[:run](qx_feature_sigma_param)
+
+    # TODO: make this a command line parameter
+    credible_interval = (0.01, 0.99)
+
+    lower_credible = similar(mean_est)
+    upper_credible = similar(mean_est)
+    for i in 1:size(mean_est, 1)
+        for j in 1:size(mean_est, 2)
+            dist = Normal(mean_est[i, j], sigma_est[i, j])
+            lower_credible[i, j] = logistic(quantile(dist, credible_interval[1]))
+            upper_credible[i, j] = logistic(quantile(dist, credible_interval[2]))
+        end
+    end
 
     tf.reset_default_graph()
     old_sess = ed.get_session()
     old_sess[:close]()
     ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    return est
+    return est, lower_credible, upper_credible
 end
 
 

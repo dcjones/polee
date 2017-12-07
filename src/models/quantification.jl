@@ -784,10 +784,39 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
 
         push!(xs, x_i)
     end
+
     x = tf.squeeze(tf.stack(xs), axis=-1)
 
+    # TODO: variance should be a parameter here I'm afraid
+    # a separate paremetr for every transcript. No I think it should
+    # be pooled across samples.
+
+    # x_err_sigma = tf.fill([num_samples, n], 0.5)
+
+    x_err_log_sigma_mu0 = tf.constant(-4.0, shape=[n])
+    x_err_log_sigma_sigma0 = tf.constant(0.2, shape=[n])
+
+    x_err_log_sigma = edmodels.MultivariateNormalDiag(x_err_log_sigma_mu0,
+                                                      x_err_log_sigma_sigma0)
+    x_err_sigma = tf.exp(x_err_log_sigma)
+    x_err_sigma = tf_print_span(x_err_sigma, "x_err_sigma span")
+    # @show x_err_log_sigma_mu0
+    # @show x_err_log_sigma_sigma0
+    # @show x_err_log_sigma
+    # @show x_err_sigma
+    # @show tf.expand_dims(x_err_sigma, 0)
+    x_err_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
+                                  tf.expand_dims(x_err_sigma, 0))
+    # @show x_err_sigma_param
+    # exit()
+
+    @show x
+    @show x_err_sigma_param
+
+    x_err = edmodels.MultivariateNormalDiag(x, x_err_sigma_param)
+
     likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                    x=x,
+                    x=x_err,
                     efflens=input.likapprox_efflen,
                     invhsb_params=input.likapprox_invhsb_params,
                     value=input.likapprox_laparam)
@@ -808,6 +837,11 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     qx_feature_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0), name="qx_feature_mu_sigma_param"))
     qx_feature_mu = edmodels.MultivariateNormalDiag(qx_feature_mu_mu_param, qx_feature_mu_sigma_param)
 
+    qx_feature_log_sigma_mu_param = tf.Variable(tf.fill([num_features], 0.0f0), name="qx_feature_log_sigma_mu_param")
+    qx_feature_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0), name="qx_feature_log_sigma_sigma_param"))
+    qx_feature_log_sigma = edmodels.MultivariateNormalDiag(qx_feature_log_sigma_mu_param,
+                                                           qx_feature_log_sigma_sigma_param)
+
     qx_feature_mu_param = tf.Variable(x_feature_mu_initial, name="qx_feature_mu_param")
     qx_feature_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], -1.0f0), name="qx_feature_sigma_param"))
     qx_feature = edmodels.MultivariateNormalDiag(qx_feature_mu_param, qx_feature_sigma_param)
@@ -816,19 +850,38 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     qx_component_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_components], -1.0f0), name="qx_component_mu_sigma_param"))
     qx_component_mu = edmodels.MultivariateNormalDiag(qx_component_mu_mu_param, qx_component_mu_sigma_param)
 
+    qx_component_log_sigma_mu_param = tf.Variable(tf.fill([num_components], 0.0f0), name="qx_component_log_sigma_mu_param")
+    qx_component_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_components], -1.0f0), name="qx_component_log_sigma_sigma_param"))
+    qx_component_log_sigma = edmodels.MultivariateNormalDiag(qx_component_log_sigma_mu_param,
+                                                             qx_component_log_sigma_sigma_param)
+
     qx_component_mu_param = tf.Variable(x_component_mu_initial, name="qx_component_mu_param")
     qx_component_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_components], -1.0f0), name="qx_component_sigma_param"))
     qx_component = edmodels.MultivariateNormalDiag(qx_component_mu_param, qx_component_sigma_param)
 
-    inference = ed.KLqp(PyDict(Dict(x_feature      => qx_feature,
-                                    x_feature_mu   => qx_feature_mu,
-                                    x_component    => qx_component,
-                                    x_component_mu => qx_component_mu)),
+    qx_err_log_sigma_mu_param = tf.Variable(tf.fill([n], 0.0f0), name="qx_err_log_sigma_mu_param")
+    qx_err_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0), name="qx_err_log_sigma_sigma_param"))
+    qx_err_log_sigma = edmodels.MultivariateNormalDiag(qx_err_log_sigma_mu_param,
+                                                       qx_err_log_sigma_sigma_param)
+
+    # x0_log = tf.log(tf.constant(input.x0))
+    qx_err_mu_param = tf.Variable(tf.fill([num_samples, n], log(0.1)), name="qx_err_mu_param")
+    qx_err_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_err_sigma_param"))
+    qx_err = edmodels.MultivariateNormalDiag(qx_err_mu_param, qx_err_sigma_param)
+
+    inference = ed.KLqp(PyDict(Dict(x_feature             => qx_feature,
+                                    x_feature_mu          => qx_feature_mu,
+                                    x_feature_log_sigma   => qx_feature_log_sigma,
+                                    x_component           => qx_component,
+                                    x_component_mu        => qx_component_mu,
+                                    x_component_log_sigma => qx_component_log_sigma,
+                                    x_err_log_sigma       => qx_err_log_sigma,
+                                    x_err                 => qx_err)),
                         data=PyDict(Dict(likapprox_laparam => input.likapprox_laparam)))
 
-    optimizer = tf.train[:AdamOptimizer](1e-1)
+    optimizer = tf.train[:AdamOptimizer](5e-2)
     # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
-    inference[:run](n_iter=1500, optimizer=optimizer)
+    inference[:run](n_iter=2000, optimizer=optimizer)
 
     sess = ed.get_session()
     est  = sess[:run](tf.sigmoid(qx_feature_mu_param))

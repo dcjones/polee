@@ -4,8 +4,8 @@ function estimate_pca(input::ModelInput)
         error("PCA only implemented with transcripts")
     end
 
-    num_samples, n = input.x0[:get_shape]()[:as_list]()
-    num_components = 4
+    num_samples, n = size(input.x0)
+    num_components = 2
     @show num_components
 
     # w = edmodels.Normal(loc=tf.zeros([n, num_components]),

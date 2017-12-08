@@ -806,6 +806,88 @@ end
 
 
 """
+Build some index arrays needed in the tensorflow implementation of inverse hsb.
+"""
+function make_inverse_hsb_params(node_parent_idxs, node_js)
+    num_nodes = length(node_parent_idxs)
+    n = div(num_nodes + 1, 2)
+
+    # build leaf indexes
+    leafindex = Array{Int32}(n)
+    node_index_to_leaf_index = zeros(Int32, num_nodes)
+    k = 1
+    for i in 1:num_nodes
+        if node_js[i] != 0
+            leafindex[k] = node_js[i]
+            node_index_to_leaf_index[i] = k
+            k += 1
+        end
+    end
+
+    # build internal node left sibling indexes
+    left_child = fill(Int32(-1), num_nodes)
+    right_child = fill(Int32(-1), num_nodes)
+    for i in 2:num_nodes
+        parent_idx = node_parent_idxs[i]
+        if right_child[parent_idx] == -1
+            right_child[parent_idx] = i
+        else
+            left_child[parent_idx] = i
+        end
+    end
+
+    internal_node_indexes = zeros(Int32, n-1)
+    internal_node_left_indexes = zeros(Int32, n-1)
+    k = 1
+    for i in 1:num_nodes
+        if node_js[i] == 0
+            internal_node_indexes[k] = i
+            internal_node_left_indexes[k] = left_child[i]
+            k += 1
+        end
+    end
+
+    # need leftmost, rightmost, and node_js with all the zeros removed.
+    leftmost  = fill(Int32(num_nodes+1), num_nodes)
+    rightmost = fill(Int32(0), num_nodes)
+
+    for i in 1:num_nodes
+        if node_js[i] != 0
+            leftmost[i] = i
+            rightmost[i] = i
+        end
+    end
+
+    for i in num_nodes:-1:2
+        @assert leftmost[i] > 0
+        @assert rightmost[i] > 0
+        leftmost[node_parent_idxs[i]] =
+            min(leftmost[node_parent_idxs[i]], leftmost[i])
+        rightmost[node_parent_idxs[i]] =
+            max(rightmost[node_parent_idxs[i]], rightmost[i])
+    end
+
+    # update indexes to index into a length n array of lead nodes
+    for i in 1:num_nodes
+        leftmost[i] = node_index_to_leaf_index[leftmost[i]]
+        rightmost[i] = node_index_to_leaf_index[rightmost[i]]
+        @assert leftmost[i] > 0
+        @assert rightmost[i] > 0
+    end
+
+    @assert leftmost[1] == 1
+    @assert rightmost[1] == n
+
+    # make 0-based for tensorflow
+    return (leafindex .- Int32(1),
+            internal_node_indexes .- Int32(1),
+            internal_node_left_indexes .- Int32(1),
+            leftmost .- Int32(1),
+            rightmost)
+end
+
+
+"""
 If (Ia, Ja) and (Ib, Jb) represent two inverse hsb matrices, merge (Ib, Jb)
 into (Ia, Ja) return a new result (Ic, Jc).
 """

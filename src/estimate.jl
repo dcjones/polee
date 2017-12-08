@@ -46,9 +46,14 @@ function load_samples(filenames, ts_metadata::TranscriptsMetadata)
     x0_tensors = []
     node_parent_idxs_tensors = []
     node_js_tensors = []
-    As_tensors = []
 
-    for filename in filenames
+    leafindex_tensors = []
+    internal_node_indexes_tensors = []
+    internal_node_left_indexes_tensors = []
+    leftmost_tensors = []
+    rightmost_tensors = []
+
+    for (i, filename) in enumerate(filenames)
         input = h5open(filename, "r")
 
         n = read(input["n"])
@@ -62,8 +67,20 @@ function load_samples(filenames, ts_metadata::TranscriptsMetadata)
         node_js = read(input["node_js"])
         effective_lengths = read(input["effective_lengths"])
 
-        As = inverse_hsb_matrices(node_parent_idxs, node_js)
-        push!(As_tensors, As)
+        (leafindex, internal_node_indexes,
+         internal_node_left_indexes,
+         leftmost, rightmost) = make_inverse_hsb_params(node_parent_idxs, node_js)
+
+        idxs = fill(Int32(i-1), n)
+        push!(leafindex_tensors, tf.Variable(hcat(idxs, leafindex)))
+
+        idxs = fill(Int32(i-1), n-1)
+        push!(internal_node_indexes_tensors, tf.Variable(hcat(idxs, internal_node_indexes)))
+        push!(internal_node_left_indexes_tensors, tf.Variable(hcat(idxs, internal_node_left_indexes)))
+
+        idxs = fill(Int32(i-1), 2*n-1)
+        push!(leftmost_tensors, tf.Variable(hcat(idxs, leftmost)))
+        push!(rightmost_tensors, tf.Variable(hcat(idxs, rightmost)))
 
         # choose logit-normal mean (actually: not really the mean)
         y0 = Array{Float64}(n-1)
@@ -86,8 +103,15 @@ function load_samples(filenames, ts_metadata::TranscriptsMetadata)
         push!(node_js_tensors, node_js)
     end
 
+    hsb_params =
+        [tf.stack(leafindex_tensors),
+         tf.stack(internal_node_indexes_tensors),
+         tf.stack(internal_node_left_indexes_tensors),
+         tf.stack(leftmost_tensors),
+         tf.stack(rightmost_tensors)]
+
     return (tf.stack(laparam_tensors), tf.stack(efflen_tensors),
-            As_tensors, hcat(node_parent_idxs_tensors...),
+            hsb_params, hcat(node_parent_idxs_tensors...),
             hcat(node_js_tensors...), transpose(hcat(x0_tensors...)))
 end
 

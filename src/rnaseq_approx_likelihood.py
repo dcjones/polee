@@ -46,14 +46,14 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
     def _log_prob(self, laparam):
 
-        n = int(self.x.get_shape()[-1])
+        num_samples = int(self.x.get_shape()[0])
+        n           = int(self.x.get_shape()[-1])
+        num_nodes   = 2*n - 1
 
         mu    = tf.identity(laparam[...,0,:], name="mu")
         sigma = tf.identity(laparam[...,1,:], name="sigma")
         alpha = tf.identity(laparam[...,2,:], name="alpha")
 
-        num_samples = len(self.invhsb_params)
-        num_nodes = 2*n - 1
 
         # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X SCALE", summarize=6)
 
@@ -72,52 +72,33 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
 
-        # TODO: It may make more sense to build this on the julia side so we
-        # can save memory by passing it as a placeholder. Let's just build it
-        # here first so we can see if memory use is improved at all.
-        # x -> y transformation
+        leafindex = self.invhsb_params[0]
+        internal_node_indexes = self.invhsb_params[1]
+        internal_node_left_indexes = self.invhsb_params[2]
+        leftmost_indexes = self.invhsb_params[3]
+        rightmost_indexes = self.invhsb_params[4]
 
-        # TODO: A conceivably faster way we could do this is with temporary
-        # mutable tensors, accumulating values with scatter_add. If we do that,
-        # we'd have to manually compute gradients. Pretty tricky, but could be
-        # worth pursuing.
+        x_permed = tf.gather_nd(x_efflen, leafindex)
+        x_permed = tf.to_double(x_permed)
 
-        y_tensors = []
-        # hsb_ladj_tensors = []
+        x_cumsum = tf.cumsum(x_permed, axis=1)
+        x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.double), x_cumsum], axis=1)
 
-        for sample_num in range(num_samples):
-            print(sample_num)
+        x_lm = tf.gather_nd(x_cumsum, leftmost_indexes, name="x_lm")
+        x_rm = tf.gather_nd(x_cumsum, rightmost_indexes, name="x_rm")
 
-            As = self.invhsb_params[sample_num][0]
-            x_index = self.invhsb_params[sample_num][1]
-            internal_node_indexes = self.invhsb_params[sample_num][2]
-            internal_node_left_indexes = self.invhsb_params[sample_num][3]
+        u = x_rm - x_lm
+        u = tf.identity(u, name="u")
 
-            input_values = tf.scatter_nd(tf.expand_dims(x_index, -1), x_efflen[sample_num,:], [num_nodes])
+        internal_node_values = tf.gather_nd(u, internal_node_indexes)
+        left_node_values     = tf.gather_nd(u, internal_node_left_indexes)
 
-            for i in range(len(As)):
-                # NOTE: This works under the assumption that scatter_nd adds
-                # duplicate entries, which is currently true but not a garuntee of the API.
-                # See: https://github.com/tensorflow/tensorflow/issues/8102
-                input_values += tf.scatter_nd(tf.expand_dims(As[i][0], -1),
-                                              tf.gather_nd(input_values, tf.expand_dims(As[i][1], -1)),
-                                              [num_nodes])
+        y = tf.divide(left_node_values, internal_node_values, name="y")
 
-            input_values = tf.to_double(input_values)
-            input_values = tf.clip_by_value(input_values, 1e-10, 1.0 - 1e-10)
+        # hsb_ladj = tf.reduce_sum(-tf.log(internal_node_values), axis=1)
 
-            internal_node_values = tf.gather(input_values, internal_node_indexes)
-            # hsb_ladj_tensor = tf.log(internal_node_values)
-            # hsb_ladj_tensors.append(tf.to_float(-tf.reduce_sum(hsb_ladj_tensor)))
+        y = tf.clip_by_value(y, 1e-10, 1.0 - 1e-10)
 
-            left_node_values = tf.gather(input_values, internal_node_left_indexes)
-            y_h = tf.divide(left_node_values, internal_node_values)
-            y_tensors.append(y_h)
-
-        # hsb_ladj = tf.stack(hsb_ladj_tensors)
-
-        y = tf.stack(y_tensors, name="y")
-        y = tf.clip_by_value(y, 1e-10, 1 - 1e-10)
 
         # logit (inverse logistic) transform
         # ----------------------------------

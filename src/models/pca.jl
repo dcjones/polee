@@ -6,27 +6,43 @@ function estimate_pca(input::ModelInput)
 
     num_samples, n = size(input.x0)
     num_components = 2
-    @show num_components
-
-    # w = edmodels.Normal(loc=tf.zeros([n, num_components]),
-    #                     scale=tf.fill([n, num_components], 0.001f0))
-    # z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
-    #                     scale=tf.fill([num_samples, num_components], 1.0f0))
 
     w = edmodels.Normal(loc=tf.zeros([n, num_components]),
                         scale=tf.fill([n, num_components], 1.0f0))
     z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
                         scale=tf.fill([num_samples, num_components], 1.0f0))
 
+    w_ = tf_print_span(w, "w span")
+    z_ = tf_print_span(z, "z span")
+    z_ = tf.Print(z_, [z_[1,1], z_[1,2]], "z 00, 01")
 
-    # x_bias = log(1/n)
-    x_bias = edmodels.Normal(loc=tf.fill([1, n], log(1/n)), scale=tf.fill([1, n], 1.0f0))
-    x = tf.add(x_bias, tf.matmul(z, w, transpose_b=true))
+    # x_bias = edmodels.Normal(loc=tf.fill([1, n], log(0.001 * 1/n)), scale=tf.fill([1, n], 5.0f0))
+    x_bias = edmodels.Normal(loc=tf.fill([1, n], log(1/n)), scale=tf.fill([1, n], 5.0f0))
+    x_bias_ = tf_print_span(x_bias, "x_bias span")
 
-    @show x[:get_shape]()
+    x = tf.add(x_bias_, tf.matmul(z_, w_, transpose_b=true))
+    # x = tf.matmul(z_, w_, transpose_b=true)
+
+
+
+
+    x_err_log_sigma_mu0 = tf.constant(-8.0, shape=[n])
+    x_err_log_sigma_sigma0 = tf.constant(1.0, shape=[n])
+    x_err_log_sigma = edmodels.MultivariateNormalDiag(x_err_log_sigma_mu0,
+                                                      x_err_log_sigma_sigma0)
+    x_err_sigma = tf.exp(x_err_log_sigma)
+    x_err_sigma = tf_print_span(x_err_sigma, "x_err_sigma span")
+
+    x_err_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
+                                  tf.expand_dims(x_err_sigma, 0))
+    # x_err_sigma_param = tf.fill([num_samples, n], 0.0001)
+
+    x_err = edmodels.MultivariateNormalDiag(x, x_err_sigma_param)
+
 
     likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
                     x=x,
+                    # x=x_err,
                     efflens=input.likapprox_efflen,
                     invhsb_params=input.likapprox_invhsb_params,
                     value=input.likapprox_laparam)
@@ -36,27 +52,34 @@ function estimate_pca(input::ModelInput)
                               scale=tf.nn[:softplus](tf.Variable(tf.zeros([1, n]))))
 
     qw_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([n, num_components])))
-    # qw_loc = tf.Print(qw_loc, [tf.reduce_min(qw_loc), tf.reduce_max(qw_loc)], "QW LOC SPAN")
     qw = edmodels.Normal(loc=qw_loc,
                          scale=tf.nn[:softplus](tf.Variable(tf.zeros([n, num_components]))))
 
     qz_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_samples, num_components])))
-    # qz_loc = tf.Print(qz_loc, [tf.reduce_min(qz_loc), tf.reduce_max(qz_loc)], "QZ LOC SPAN")
     qz = edmodels.Normal(loc=qz_loc,
                          scale=tf.nn[:softplus](tf.Variable(tf.zeros([num_samples, num_components]))))
 
-    # qz = edmodels.Normal(loc=tf.Variable(tf.random_normal([num_samples, num_components])),
-    #                      scale=tf.nn[:softplus](tf.Variable(tf.random_normal([num_samples, num_components]))))
+    qx_err_log_sigma_mu_param = tf.Variable(tf.fill([n], 0.0f0), name="qx_err_log_sigma_mu_param")
+    qx_err_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0), name="qx_err_log_sigma_sigma_param"))
+    qx_err_log_sigma = edmodels.MultivariateNormalDiag(qx_err_log_sigma_mu_param,
+                                                       qx_err_log_sigma_sigma_param)
 
-    inference = ed.KLqp(Dict(w => qw, z => qz, x_bias => qx_bias),
+    qx_err_mu_param = tf.Variable(tf.fill([num_samples, n], log(0.1)), name="qx_err_mu_param")
+    qx_err_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_err_sigma_param"))
+    qx_err = edmodels.MultivariateNormalDiag(qx_err_mu_param, qx_err_sigma_param)
+
+    inference = ed.KLqp(Dict(w => qw, z => qz, x_bias => qx_bias,
+                             x_err_log_sigma => qx_err_log_sigma, x_err => qx_err),
                         data=Dict(likapprox_laparam => input.likapprox_laparam))
 
     optimizer = tf.train[:AdamOptimizer](1e-1)
-    inference[:run](n_iter=1000, optimizer=optimizer)
+    # inference[:run](n_iter=1000, optimizer=optimizer)
+    inference[:run](n_iter=500, optimizer=optimizer)
 
     sess = ed.get_session()
     qz_loc_values = @show sess[:run](qz_loc)
     @show extrema(qz_loc_values)
+    @show qz_loc_values
 
     open("estimates.csv", "w") do out
         print(out, "sample,")
@@ -85,7 +108,7 @@ function estimate_batch_pca(input::ModelInput)
         error("PCA only implemented with transcripts")
     end
 
-    num_samples, n = input.x0[:get_shape]()[:as_list]()
+    num_samples, n = size(input.x0)
     num_components = 2
 
     # build design matrix
@@ -128,7 +151,7 @@ function estimate_batch_pca(input::ModelInput)
     w_bias_mu0 = 0.0
     w_bias_sigma0 = 1.0
 
-    x_bias = edmodels.Normal(loc=tf.fill([1, n], log(1/n)), scale=tf.fill([1, n], 5.0f0))
+    x_bias = edmodels.Normal(loc=tf.fill([1, n], 0.0f0), scale=tf.fill([1, n], 5.0f0))
 
     # w_sigma = tf.concat(
     #               [tf.constant(w_bias_sigma0, shape=[1, n]),
@@ -187,7 +210,7 @@ function estimate_batch_pca(input::ModelInput)
     # x = x_batch
 
     likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                    x=x,
+                    x=x_mu,
                     efflens=input.likapprox_efflen,
                     invhsb_params=input.likapprox_invhsb_params,
                     value=input.likapprox_laparam)
@@ -240,7 +263,6 @@ function estimate_batch_pca(input::ModelInput)
 
     optimizer = tf.train[:AdamOptimizer](1e-1)
     # optimizer = tf.train[:MomentumOptimizer](1e-9, 0.99)
-    # inference[:run](n_iter=1000, optimizer=optimizer)
     inference[:run](n_iter=1000, optimizer=optimizer)
 
     sess = ed.get_session()
@@ -257,10 +279,11 @@ function estimate_batch_pca(input::ModelInput)
 
     qw_loc_values = sess[:run](qw_loc)
     open("pca-coefficients.csv", "w") do out
-        println(out, "component,id,coeff")
-        for i in 1:n
+        println(out, "component,id,transcript_id,coeff")
+        for t in input.ts
+            i = t.metadata.id
             for j in 1:num_components
-                @printf(out, "%d,%d,%e\n", j, i, qw_loc_values[i, j])
+                @printf(out, "%d,%d,%s,%e\n", j, i, t.metadata.name, qw_loc_values[i, j])
             end
         end
     end

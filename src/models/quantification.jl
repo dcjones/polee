@@ -108,6 +108,27 @@ end
 
 
 function estimate_splicing_expression(input::ModelInput)
+    vars, var_approximations, data, num_features = model_splicing_expression(input)
+    est, lower_credible, upper_credible =
+        estimate_nondisjoint_feature_expression(vars, var_approximations, data)
+
+    if input.output_format == :csv
+        output_filename = isnull(input.output_filename) ? "splicing-proportions.csv" : get(input.output_filename)
+        write_splicing_proportions_csv(
+            output_filename,input.sample_names, num_features, est,
+            lower_credible, upper_credible)
+    elseif input.output_format == :sqlite3
+        error("Sqlite3 output for splicing proportion is not implemented.")
+    end
+end
+
+
+function estimate_splicing_expression(vars, var_approximations, data)
+    estimate_nondisjoint_feature_expression(vars, var_approximations, data)
+end
+
+
+function model_splicing_expression(input::ModelInput)
     cassette_exons = get_cassette_exons(input.ts)
     # TODO: also include alt acceptor/donor sites and maybe alt UTRs
 
@@ -205,21 +226,12 @@ function estimate_splicing_expression(input::ModelInput)
         end
     end
 
-    @show num_features
-
-    est, lower_credible, upper_credible =
-        estimate_nondisjoint_feature_expression(input, num_features,
-                                                feature_idxs, feature_transcript_idxs,
-                                                antifeature_idxs, antifeature_transcript_idxs)
-
-    if input.output_format == :csv
-        output_filename = isnull(input.output_filename) ? "splicing-proportions.csv" : get(input.output_filename)
-        write_splicing_proportions_csv(
-            output_filename,input.sample_names, num_features, est,
-            lower_credible, upper_credible)
-    elseif input.output_format == :sqlite3
-        error("Sqlite3 output for splicing proportion is not implemented.")
-    end
+    vars, var_approximations, data =
+        model_nondisjoint_feature_expression(
+                input, num_features,
+                feature_idxs, feature_transcript_idxs,
+                antifeature_idxs, antifeature_transcript_idxs)
+    return vars, var_approximations, data, num_features
 end
 
 
@@ -606,6 +618,12 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
                                             feature_idxs, feature_transcript_idxs,
                                             antifeature_idxs, antifeature_transcript_idxs)
 
+    estimate_nondisjoint_feature_expression(vars, var_approximations, data)
+end
+
+
+function estimate_nondisjoint_feature_expression(vars, var_approximations, data)
+
     inference = ed.KLqp(latent_vars=PyDict(var_approximations),
                         data=PyDict(data))
 
@@ -614,9 +632,12 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     inference[:run](n_iter=2000, optimizer=optimizer)
 
     sess = ed.get_session()
-    est  = sess[:run](tf.sigmoid(qx_feature_mu_param))
-    mean_est  = sess[:run](qx_feature_mu_param)
-    sigma_est = sess[:run](qx_feature_sigma_param)
+    # est  = sess[:run](tf.sigmoid(qx_feature_mu_param))
+    # mean_est  = sess[:run](qx_feature_mu_param)
+    # sigma_est = sess[:run](qx_feature_sigma_param)
+    est  = sess[:run](tf.sigmoid(var_approximations[vars[:x_feature]][:mean]()))
+    mean_est  = sess[:run](var_approximations[vars[:x_feature]][:mean]())
+    sigma_est  = sess[:run](var_approximations[vars[:x_feature]][:variance]())
 
     # TODO: make this a command line parameter
     credible_interval = (0.01, 0.99)

@@ -568,37 +568,82 @@ function nondisjoint_feature_initialization(x0, num_components, num_features,
                                             antifeature_idxs, antifeature_transcript_idxs)
     num_samples, n = size(x0)
 
-    # We need reasonable estimates for x_feature and x_component meants.
-    # I'm thinking we just leave x_component initialized and 0.0 for now and
-    # set x_component to be a sum of constiuent transcript expressions.
-
-    # x_component_mu_initial = zeros(Float32, (num_samples, num_components))
+    # TODO: this would be better with a more informed initial estimate. Not
+    # sure what that would be though.
     x_component_mu_initial = fill(log(0.01f0 * 1f0/num_components), (num_samples, num_components))
     x_feature_mu_initial = zeros(Float32, (num_samples, num_features))
-
-    # @show extrema(x_component_mu_initial)
-
-    # for i in 1:num_samples
-    #     for (j, k) in zip(component_idxs, component_transcript_idxs)
-    #         x_component_mu_initial[i, j] += log(x0[i, k])
-    #     end
-    # end
-
-
-    # component_set = IntSet(component_idxs)
-    # for i in 1:num_components
-    #     if i ∉ component_set
-    #         @show i
-    #     end
-    # end
 
     return x_component_mu_initial, x_feature_mu_initial
 end
 
 
+"""
+Estimate the expression of non-disjoint features, each relative to an
+"anti-features".
+
+Concretely, a feature here is typically an cassette exon, and the
+anti-feature an intron skipping that exon. But this could also be
+intron-exclusion/inclusion, alternative poly-A sites, etc.
+
+Features here are non-dijoint in the sense that the sense that they don't
+necessarily partition the set of transcripts.
+
+Arguments:
+  * `input`: model input
+  * `num_features`: number of feature/anti-feature pairs.
+  * `feature_idxs`, `feature_transcript_idxs`: matched feature and transcript
+  *     indexes, respectively.
+  * `antifeature_idxs`, `antifeature_transcript_idxs`: matched antifeature and
+        transcript indexes, respectively.
+
+"""
 function estimate_nondisjoint_feature_expression(input::ModelInput, num_features,
                                                  feature_idxs, feature_transcript_idxs,
                                                  antifeature_idxs, antifeature_transcript_idxs)
+
+    vars, var_approximations, data =
+        model_nondisjoint_feature_expression(input, num_features,
+                                            feature_idxs, feature_transcript_idxs,
+                                            antifeature_idxs, antifeature_transcript_idxs)
+
+    inference = ed.KLqp(latent_vars=PyDict(var_approximations),
+                        data=PyDict(data))
+
+    optimizer = tf.train[:AdamOptimizer](5e-2)
+    # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
+    inference[:run](n_iter=2000, optimizer=optimizer)
+
+    sess = ed.get_session()
+    est  = sess[:run](tf.sigmoid(qx_feature_mu_param))
+    mean_est  = sess[:run](qx_feature_mu_param)
+    sigma_est = sess[:run](qx_feature_sigma_param)
+
+    # TODO: make this a command line parameter
+    credible_interval = (0.01, 0.99)
+
+    lower_credible = similar(mean_est)
+    upper_credible = similar(mean_est)
+    for i in 1:size(mean_est, 1)
+        for j in 1:size(mean_est, 2)
+            dist = Normal(mean_est[i, j], sigma_est[i, j])
+            lower_credible[i, j] = logistic(quantile(dist, credible_interval[1]))
+            upper_credible[i, j] = logistic(quantile(dist, credible_interval[2]))
+        end
+    end
+
+    tf.reset_default_graph()
+    old_sess = ed.get_session()
+    old_sess[:close]()
+    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
+
+    return est, lower_credible, upper_credible
+end
+
+
+
+function model_nondisjoint_feature_expression(input::ModelInput, num_features,
+                                              feature_idxs, feature_transcript_idxs,
+                                              antifeature_idxs, antifeature_transcript_idxs)
     num_samples, n = size(input.x0)
 
     p = sortperm(feature_transcript_idxs)
@@ -609,34 +654,15 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     permute!(antifeature_transcript_idxs, p)
     permute!(antifeature_idxs, p)
 
-
     num_components, component_idxs, component_transcript_idxs, transcripts_without_features =
         connected_components_from_features(n, num_features, feature_idxs,
                                         feature_transcript_idxs,
                                         antifeature_idxs,
                                         antifeature_transcript_idxs)
 
-
     p = sortperm(component_transcript_idxs)
     permute!(component_transcript_idxs, p)
     permute!(component_idxs, p)
-
-    # @show sum(component_transcript_idxs .== 90404)
-
-    # feature_num_oi = 21640
-    # println("features")
-    # for (tid, fid) in zip(feature_transcript_idxs, feature_idxs)
-    #     if fid == feature_num_oi
-    #         @show (tid, component_idxs[findlast(component_transcript_idxs, tid)])
-    #     end
-    # end
-
-    # println("antifeatures")
-    # for (tid, fid) in zip(antifeature_transcript_idxs, antifeature_idxs)
-    #     if fid == feature_num_oi
-    #         @show (tid, component_idxs[findlast(component_transcript_idxs, tid)])
-    #     end
-    # end
 
     transcripts_without_features_props = zeros(Float32, n)
     transcripts_without_features_props[transcripts_without_features] = 1.0f0
@@ -868,45 +894,32 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
     qx_err_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_err_sigma_param"))
     qx_err = edmodels.MultivariateNormalDiag(qx_err_mu_param, qx_err_sigma_param)
 
-    inference = ed.KLqp(PyDict(Dict(x_feature             => qx_feature,
-                                    x_feature_mu          => qx_feature_mu,
-                                    x_feature_log_sigma   => qx_feature_log_sigma,
-                                    x_component           => qx_component,
-                                    x_component_mu        => qx_component_mu,
-                                    x_component_log_sigma => qx_component_log_sigma,
-                                    x_err_log_sigma       => qx_err_log_sigma,
-                                    x_err                 => qx_err)),
-                        data=PyDict(Dict(likapprox_laparam => input.likapprox_laparam)))
+    vars = Dict(
+        :x_feature             => x_feature,
+        :x_feature_mu          => x_feature_mu,
+        :x_feature_log_sigma   => x_feature_log_sigma,
+        :x_component           => x_component,
+        :x_component_mu        => x_component_mu,
+        :x_component_log_sigma => x_component_log_sigma,
+        :x_err_log_sigma       => x_err_log_sigma,
+        :x_err                 => x_err)
 
-    optimizer = tf.train[:AdamOptimizer](5e-2)
-    # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
-    inference[:run](n_iter=2000, optimizer=optimizer)
+    var_approximations = Dict(
+        x_feature             => qx_feature,
+        x_feature_mu          => qx_feature_mu,
+        x_feature_log_sigma   => qx_feature_log_sigma,
+        x_component           => qx_component,
+        x_component_mu        => qx_component_mu,
+        x_component_log_sigma => qx_component_log_sigma,
+        x_err_log_sigma       => qx_err_log_sigma,
+        x_err                 => qx_err)
 
-    sess = ed.get_session()
-    est  = sess[:run](tf.sigmoid(qx_feature_mu_param))
-    mean_est  = sess[:run](qx_feature_mu_param)
-    sigma_est = sess[:run](qx_feature_sigma_param)
+    data = Dict(likapprox_laparam => input.likapprox_laparam)
 
-    # TODO: make this a command line parameter
-    credible_interval = (0.01, 0.99)
-
-    lower_credible = similar(mean_est)
-    upper_credible = similar(mean_est)
-    for i in 1:size(mean_est, 1)
-        for j in 1:size(mean_est, 2)
-            dist = Normal(mean_est[i, j], sigma_est[i, j])
-            lower_credible[i, j] = logistic(quantile(dist, credible_interval[1]))
-            upper_credible[i, j] = logistic(quantile(dist, credible_interval[2]))
-        end
-    end
-
-    tf.reset_default_graph()
-    old_sess = ed.get_session()
-    old_sess[:close]()
-    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
-
-    return est, lower_credible, upper_credible
+    return vars, var_approximations, data
 end
+
+
 
 
 EXTRUDER_MODELS["expression"] = estimate_expression

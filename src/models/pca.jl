@@ -203,7 +203,7 @@ function estimate_batch_pca(input::ModelInput)
 
     x_mu = tf.add(x_bias, tf.add(x_batch, x_pca))
 
-    x = edmodels.Normal(loc=x_mu, scale=tf.fill([num_samples, n], 0.1f0))
+    # x = edmodels.Normal(loc=x_mu, scale=tf.fill([num_samples, n], 0.1f0))
     # x = x_batch
 
     # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X", summarize=10)

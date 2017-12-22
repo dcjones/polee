@@ -795,7 +795,6 @@ function estimate_nondisjoint_feature_expression(input::ModelInput, num_features
 
     x_err_log_sigma_mu0 = tf.constant(-4.0, shape=[n])
     x_err_log_sigma_sigma0 = tf.constant(0.2, shape=[n])
-
     x_err_log_sigma = edmodels.MultivariateNormalDiag(x_err_log_sigma_mu0,
                                                       x_err_log_sigma_sigma0)
     x_err_sigma = tf.exp(x_err_log_sigma)

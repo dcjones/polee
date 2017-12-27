@@ -105,9 +105,9 @@ function Base.isless(a::Tuple{Float64, SubtreeListNode, SubtreeListNode},
 end
 
 
-function merge!(a::SubtreeListNode, b::SubtreeListNode,
-                merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{UInt32},
-                queue, queue_idxs, K)
+function Base.merge!(a::SubtreeListNode, b::SubtreeListNode,
+                     merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{UInt32},
+                     queue, queue_idxs, K)
 
     # if b has the larger array, let that be reused, and a's array be gced
     if length(b.vs) > length(a.vs)

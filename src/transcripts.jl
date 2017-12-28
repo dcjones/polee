@@ -256,6 +256,7 @@ end
 
 
 function get_cassette_exons(ts::Transcripts)
+    # build set of introns
     introns = IntervalCollection{Vector{Int}}()
     @time for t in ts
         for i in 2:length(t.metadata.exons)
@@ -280,6 +281,7 @@ function get_cassette_exons(ts::Transcripts)
                a.metadata[2] == b.metadata[2]
     end
 
+    # build a set representing introns flanking internal exons
     flanking_introns = IntervalCollection{Tuple{Int, Int, Vector{Int}}}()
     @time for t in ts
         i = 3
@@ -288,7 +290,7 @@ function get_cassette_exons(ts::Transcripts)
             e2 = t.metadata.exons[i-1]
             e3 = t.metadata.exons[i]
             key = Interval{Tuple{Int,Int}}(t.seqname, e1.last+1, e3.first-1, t.strand,
-                                           (e2.first, e3.last))
+                                           (e2.first, e2.last))
 
             entry = findfirst(flanking_introns, key, filter=match_strand_exon)
             if isnull(entry)

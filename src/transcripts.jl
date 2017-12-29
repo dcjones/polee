@@ -60,6 +60,7 @@ type TranscriptsMetadata
     filename::String
     gffsize::Int
     gffhash::Vector{UInt8}
+    excluded_transcripts_hash::Vector{UInt8}
 
     # kind indexed by transcript_id
     transcript_kind::Dict{String, String}
@@ -76,7 +77,7 @@ end
 
 function TranscriptsMetadata()
     return TranscriptsMetadata(
-        "", 0, UInt8[],
+        "", 0, UInt8[], UInt8[],
         Dict{String, String}(),
         Dict{String, String}(),
         Dict{String, String}(),
@@ -104,7 +105,7 @@ function getfirst_else_empty(rec::GFF3.Record, key::String)
 end
 
 
-function Transcripts(filename::String)
+function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{String}())
     prog_step = 1000
     prog = Progress(filesize(filename), 0.25, "Reading GFF3 file ", 60)
 
@@ -152,6 +153,11 @@ function Transcripts(filename::String)
             continue
         end
 
+        if startswith(parent_name, "transcript:") &&
+           replace(parent_name, "transcript:", "") ∈ excluded_transcripts
+            continue
+        end
+
         if parent_name == ""
             error("Exon has no parent")
         end
@@ -192,6 +198,7 @@ function Transcripts(filename::String)
     metadata.filename = filename
     metadata.gffsize = filesize(filename)
     metadata.gffhash = SHA.sha1(open(filename))
+    metadata.excluded_transcripts_hash = SHA.sha1(join(",", excluded_transcripts))
 
     return transcripts, metadata
 end

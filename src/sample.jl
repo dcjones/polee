@@ -86,9 +86,10 @@ function RNASeqSample(transcripts_filename::String,
                       genome_filename::String,
                       reads_filename::String,
                       excluded_seqs::Set{String},
+                      excluded_transcripts::Set{String},
                       output=Nullable{String}())
 
-    @time ts, ts_metadata = Transcripts(transcripts_filename)
+    @time ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     @time rs = Reads(reads_filename, excluded_seqs)
     read_transcript_sequences!(ts, genome_filename)
     fm = FragModel(rs, ts)
@@ -160,10 +161,11 @@ function RNASeqSample(transcripts_filename::String,
             out["rowval", "compress", 1] = M.rowval
             out["nzval", "compress", 1] = M.nzval
             out["effective_lengths", "compress", 1] = effective_lengths
-            # g = g_create(out, "metadata")
-            # attrs(g)["gfffilename"] = metadata.gfffilename
-            # attrs(g)["gffhash"]     = metadata.gffhash
-            # attrs(g)["gffsize"]     = metadata.gffsize
+            g = g_create(out, "metadata")
+            attrs(g)["gfffilename"] = ts_metadata.filename
+            attrs(g)["gffhash"]     = ts_metadata.gffhash
+            attrs(g)["gffsize"]     = ts_metadata.gffsize
+            attrs(g)["excluded_transcripts_hash"]     = ts_metadata.excluded_transcripts_hash
         end
     end
 

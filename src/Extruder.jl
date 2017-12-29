@@ -157,6 +157,8 @@ function main()
                 required = true
             "--excluded-seqs"
                 required = false
+            "--excluded-transcripts"
+                required = false
             "--likelihood-matrix"
                 required = false
             "--approx-method"
@@ -173,7 +175,16 @@ function main()
         if parsed_args["excluded-seqs"] != nothing
             open(parsed_args["excluded-seqs"]) do input
                 for line in eachline(input)
-                    push!(excluded_seqs, chop(line))
+                    push!(excluded_seqs, chomp(line))
+                end
+            end
+        end
+
+        excluded_transcripts = Set{String}()
+        if parsed_args["excluded-transcripts"] != nothing
+            open(parsed_args["excluded-transcripts"]) do input
+                for line in eachline(input)
+                    push!(excluded_transcripts, chomp(line))
                 end
             end
         end
@@ -182,6 +193,7 @@ function main()
                               parsed_args["genome_filename"],
                               parsed_args["reads_filename"],
                               excluded_seqs,
+                              excluded_transcripts,
                               parsed_args["likelihood-matrix"] == nothing ?
                                 Nullable{String}() :
                                 Nullable(parsed_args["likelihood-matrix"]))

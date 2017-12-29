@@ -127,8 +127,7 @@ function estimate_splicing_expression(input::ModelInput)
 
     optimizer = tf.train[:AdamOptimizer](5e-2)
     # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
-    # inference[:run](n_iter=2000, optimizer=optimizer)
-    inference[:run](n_iter=200, optimizer=optimizer)
+    inference[:run](n_iter=2000, optimizer=optimizer)
 
     sess = ed.get_session()
     # est  = sess[:run](tf.sigmoid(qx_feature_mu_param))

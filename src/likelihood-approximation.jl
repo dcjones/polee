@@ -622,21 +622,21 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
                 zs0[i] = randn(Float32)
             end
 
-            skew_ladj = sinh_asinh_transform!(alpha, zs0, zs, Val{GRADONLY}) # 0.013 seconds
-            ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY}) # 0.008 seconds
+            skew_ladj = sinh_asinh_transform!(alpha, zs0, zs, Val{GRADONLY}) # 0.015 seconds
+            ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY}) # 0.004 seconds
             ys = clamp!(ys, eps, 1 - eps)
 
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY}) # 0.023 seconds
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val{GRADONLY}) # 0.041 seconds
+                                X, Xt, xs, x_grad, Val{GRADONLY}) # 0.047 seconds
 
             elbo = lp + skew_ladj + ln_ladj + hsb_ladj
 
-            hsb_transform_gradients!(t, ys, y_grad, x_grad) # 0.024 seconds
-            logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad) # 0.002 seconds
-            sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad) # 0.013 seconds
+            hsb_transform_gradients!(t, ys, y_grad, x_grad) # 0.025 seconds
+            logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad) # 0.003 seconds
+            sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad) # 0.027 seconds
 
             # adjust for log transform and accumulate
             for i in 1:n-1

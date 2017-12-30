@@ -47,9 +47,8 @@ function log_likelihood{GRADONLY}(frag_probs, log_frag_probs, X, Xt, xs, x_grad,
         lp = sum(log_frag_probs)
         @assert isfinite(lp)
     end
-    inv!(frag_probs, m)
 
-    pAt_mul_B!(x_grad, X, frag_probs)
+    pAt_mulinv_B!(x_grad, X, frag_probs)
 
     return lp
 end

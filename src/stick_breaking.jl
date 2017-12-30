@@ -163,7 +163,7 @@ function hclust(X::SparseMatrixCSC)
 
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
-    K = 10
+    K = 25
 
     # order nodes by median compatible read index to group transcripts that
     # tend to share a lot of reads
@@ -236,7 +236,14 @@ function hclust(X::SparseMatrixCSC)
                     d_ljb = max_d
                 end
 
+                # averange linkage
                 d = (s_ja * d_lja + s_jb * d_ljb) / (s_ja + s_jb)
+
+                # complete linkage
+                # d = max(d_lja, d_ljb)
+
+                # single linkage
+                # d = min(d_lja, d_ljb)
 
                 # add (l, k) edge
                 new_edge = HClustEdge(l, k, d)

@@ -75,351 +75,6 @@ function write_node_heights(nodes::Vector{HClustNode})
 end
 
 
-# Node in a linked list of intermediate subtrees trees that still need to be merged
-type SubtreeListNode
-    # sparse vector contaaining probabilities or averaged probabilities
-    vs::Vector{Float32}
-    is::Vector{UInt32}
-    root::HClustNode
-    subcomp_sum::Float32
-
-    # used to mark nodes that have already been merged so they
-    # can be skipped when encountered in the priority queue
-    merged::Bool
-    left::SubtreeListNode
-    right::SubtreeListNode
-
-    function (::Type{SubtreeListNode})(vs::Vector{Float32}, is::Vector{UInt32},
-                                       root::HClustNode, subcomp_sum::Float32)
-        node = new(vs, is, root, subcomp_sum, false)
-        node.left = node
-        node.right = node
-        return node
-    end
-end
-
-
-function Base.isless(a::Tuple{Float64, SubtreeListNode, SubtreeListNode},
-                     b::Tuple{Float64, SubtreeListNode, SubtreeListNode})
-    return a[1] < b[1]
-end
-
-
-function Base.merge!(a::SubtreeListNode, b::SubtreeListNode,
-                     merge_buffer_v::Vector{Float32}, merge_buffer_i::Vector{UInt32},
-                     queue, queue_idxs, K)
-
-    # if b has the larger array, let that be reused, and a's array be gced
-    if length(b.vs) > length(a.vs)
-        a.vs, b.vs = b.vs, a.vs
-        a.is, b.is = b.is, a.is
-    end
-    alen = length(a.is)
-    blen = length(b.is)
-
-    if length(merge_buffer_v) < alen
-        resize!(merge_buffer_v, alen)
-        resize!(merge_buffer_i, alen)
-    end
-    copy!(merge_buffer_v, a.vs)
-    copy!(merge_buffer_i, a.is)
-
-    # figure out space needed for merge
-    merged_size = 0
-    i, j = 1, 1
-    while i <= alen && j <= blen
-        if merge_buffer_i[i] < b.is[j]
-            merged_size += 1
-            i += 1
-        elseif merge_buffer_i[i] > b.is[j]
-            merged_size += 1
-            j += 1
-        else
-            merged_size += 1
-            i += 1
-            j += 1
-        end
-    end
-
-    merged_size += alen - i + 1
-    merged_size += blen - j + 1
-
-    if alen < merged_size
-        resize!(a.is, merged_size)
-        resize!(a.vs, merged_size)
-    end
-
-    # merge
-    subcomp_sum = a.subcomp_sum + b.subcomp_sum
-    ca, cb = a.subcomp_sum / subcomp_sum, b.subcomp_sum / subcomp_sum
-    i, j, k = 1, 1, 1
-    while i <= alen || j <= blen
-        if j > blen || (i <= alen && merge_buffer_i[i] < b.is[j])
-            a.is[k] = merge_buffer_i[i]
-            a.vs[k] = ca * merge_buffer_v[i]
-            i += 1
-            k += 1
-        elseif i > alen || (j <= blen && merge_buffer_i[i] > b.is[j])
-            a.is[k] = b.is[j]
-            a.vs[k] = cb * b.vs[j]
-            j += 1
-            k += 1
-        else
-            a.is[k] = merge_buffer_i[i]
-            a.vs[k] = ca * merge_buffer_v[i] + cb * b.vs[j]
-            i += 1
-            j += 1
-            k += 1
-        end
-    end
-
-    @assert k == merged_size + 1
-
-    @assert issorted(a.is)
-
-    node = HClustNode(a.root, b.root)
-    a.root.parent = node
-    b.root.parent = node
-    ab = SubtreeListNode(a.vs, a.is, node, subcomp_sum)
-
-    promote!(queue, queue_idxs, a, K)
-    promote!(queue, queue_idxs, b, K)
-
-    # stick ab in a's place
-    if a.left !== a
-        a.left.right = ab
-        ab.left = a.left
-    end
-
-    if a.right !== a
-        a.right.left = ab
-        ab.right = a.right
-    end
-
-    # excise b
-    if b.left !== b
-        if b.right !== b
-            b.left.right = b.right
-            b.right.left = b.left
-        else
-            b.left.right = b.left
-        end
-    elseif b.right !== b
-        b.right.left = b.right
-    end
-
-    a.merged = true
-    b.merged = true
-
-    return ab
-end
-
-
-function distance(a::SubtreeListNode, b::SubtreeListNode)
-    d = 0.0
-    i = 1
-    j = 1
-    while i <= length(a.vs) && j <= length(b.vs)
-        if a.is[i] < b.is[j]
-            d -= a.vs[i]^2
-            i += 1
-        elseif a.is[i] > b.is[j]
-            d -= b.vs[j]^2
-            j += 1
-        else
-            d -= (a.vs[i] - b.vs[j])^2
-            i += 1
-            j += 1
-        end
-    end
-
-    while i <= length(a.vs)
-        d -= a.vs[i]^2
-        i += 1
-    end
-
-    while j <= length(b.vs)
-        d -= b.vs[j]^2
-        j += 1
-    end
-
-    # we inject a little noise to break ties randomly and lead to a more
-    # balanced tree
-    noise = 1e-20 * rand()
-    return abs(d) + noise
-end
-
-
-# Set adjacent node distances to 0.0 so they get popped immediately
-function promote!(queue, queue_idxs, a, K)
-    if a.left !== a
-        u = a.left
-        for _ in 1:K
-            if haskey(queue_idxs, (u, a))
-                idx = queue_idxs[(u,a)]
-                DataStructures.update!(queue, idx, (0.0, u, a))
-            end
-            if u.left === u
-                break
-            else
-                u = u.left
-            end
-        end
-    end
-
-    if a.right !== a
-        u = a.right
-        for _ in 1:K
-            if haskey(queue_idxs, (a, u))
-                idx = queue_idxs[(a,u)]
-                DataStructures.update!(queue, idx, (0.0, a, u))
-            end
-            if u.right === u
-                break
-            else
-                u = u.right
-            end
-        end
-    end
-end
-
-
-function update_distances!(queue, queue_idxs, a, K)
-    if a.left !== a
-        u = a.left
-        for _ in 1:K
-            d = distance(u, a)
-            queue_idxs[(u,a)] = push!(queue, (d, u, a))
-            if u.left === u
-                break
-            else
-                u = u.left
-            end
-        end
-    end
-
-    if a.right !== a
-        u = a.right
-        for _ in 1:K
-            d = distance(a, u)
-            queue_idxs[(a,u)] = push!(queue, (d, a, u))
-            if u.right === u
-                break
-            else
-                u = u.right
-            end
-        end
-    end
-end
-
-
-function hclust_initalize(X::SparseMatrixCSC, xs::Vector, n, K)
-    # construct nodes
-    I, J, V = findnz(X)
-    p = sortperm(J)
-    I = I[p]
-    J = J[p]
-    V = V[p]
-
-    tic()
-    k = 1
-    j = 1
-    nodes = Array{SubtreeListNode}(n)
-    while j <= n && k <= length(J)
-        if j < J[k]
-            nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j), xs[j])
-            j += 1
-        elseif j > J[k]
-            error("Error in clustering. This is a bug")
-        else
-            k0 = k
-            k += 1
-            while k <= length(J) && J[k] == j
-                k += 1
-            end
-            nodes[j] = SubtreeListNode(V[k0:k-1], I[k0:k-1], HClustNode(j), xs[j])
-            @assert issorted(nodes[j].is)
-            j += 1
-        end
-    end
-
-    while j <= n
-        nodes[j] = SubtreeListNode(Float32[], UInt32[], HClustNode(j), xs[j])
-        j += 1
-    end
-    toc() # 0.6 seconds
-
-    # order nodes by median compatible read index to group transcripts that
-    # tend to share a lot of reads
-    medreadidx = Array{UInt32}(n)
-    for (j, node) in enumerate(nodes)
-        medreadidx[j] = isempty(nodes[j].is) ? 0 : nodes[j].is[div(length(nodes[j].is) + 1, 2)]
-    end
-    nodes = nodes[sortperm(medreadidx)]
-
-    # turn nodes into a linked list
-    for i in 2:n
-        nodes[i].left = nodes[i-1]
-        nodes[i-1].right = nodes[i]
-    end
-
-    tic()
-    queue = mutable_binary_minheap(Tuple{Float64, SubtreeListNode, SubtreeListNode})
-    queue_idxs = Dict{Tuple{SubtreeListNode, SubtreeListNode}, Int}()
-    for i in 1:n
-        for j in i+1:min(i+K, n)
-            d = distance(nodes[i], nodes[j])
-            queue_idxs[(nodes[i], nodes[j])] = push!(queue, (d, nodes[i], nodes[j]))
-        end
-    end
-    toc() # 3 seconds
-
-    return queue, queue_idxs
-end
-
-
-#=
-function hclust(X::SparseMatrixCSC)
-    m, n = size(X)
-
-    # xs = approximate_likelihood(OptimizeHSBApprox(), X, Val{true}, num_steps=50)["x"]
-    xs = fill(1.0f0/n, n)
-
-    # compare this many neighbors to each neighbors left and right to find
-    # candidates to merge
-    K = 10
-    queue, queue_idxs = hclust_initalize(X, xs, n, K)
-
-    merge_buffer_v = Float32[]
-    merge_buffer_i = UInt32[]
-
-    steps = 0
-    merge_count = 0
-    prog = Progress(n-1, 0.25, "Clustering transcripts ", 60)
-    while true
-        steps += 1
-        d, a, b = pop!(queue)
-        delete!(queue_idxs, (a,b))
-
-        if a.merged || b.merged
-            continue
-        end
-
-        ab = merge!(a, b, merge_buffer_v, merge_buffer_i, queue, queue_idxs, K)
-        merge_count += 1
-        next!(prog)
-
-        # all trees have been merged
-        if ab.left === ab && ab.right === ab
-            return ab.root, xs
-        end
-
-        update_distances!(queue, queue_idxs, ab, K)
-    end
-end
-=#
-
-
 struct HClustEdge
     j1::Int
     j2::Int
@@ -501,22 +156,17 @@ end
 
 
 function hclust(X::SparseMatrixCSC)
-    println("HCLUST")
+    println("Clustering transcripts")
+    tic()
 
     m, n = size(X)
 
     # compare this many neighbors to each neighbors left and right to find
     # candidates to merge
-    # K = 10
-    K = 5
-
-    # TODO: We really don't need this linked list of nodes, if we have a way to
-    # look up the neighbors of each index. We do need to be able to compute
-    # distances using the matrix, and have a permutation of indexes.
+    K = 10
 
     # order nodes by median compatible read index to group transcripts that
     # tend to share a lot of reads
-    println("Ordering transcripts")
     medreadidx = Array{UInt32}(n)
     for j in 1:n
         if X.colptr[j] == X.colptr[j+1]
@@ -527,7 +177,7 @@ function hclust(X::SparseMatrixCSC)
     end
     idxs = (1:n)[sortperm(medreadidx)]
 
-    println("Adding initial edges")
+    # initial edges
     queue = mutable_binary_minheap(HClustEdge)
     queue_idxs = Dict{Tuple{Int, Int}, Int}()
     neighbors = MultiDict{Int, Int}()
@@ -548,7 +198,6 @@ function hclust(X::SparseMatrixCSC)
     end
     deleted_nodes = Set{Int}()
 
-    println("Clustering")
     # cluster
     next_node_idx = n + 1
     while !isempty(queue)
@@ -608,6 +257,8 @@ function hclust(X::SparseMatrixCSC)
         push!(deleted_nodes, e.j1)
         push!(deleted_nodes, e.j2)
     end
+
+    toc()
 
     root = nodes[next_node_idx-1]
     return root

@@ -378,6 +378,7 @@ function hclust_initalize(X::SparseMatrixCSC, xs::Vector, n, K)
 end
 
 
+#=
 function hclust(X::SparseMatrixCSC)
     m, n = size(X)
 
@@ -416,10 +417,205 @@ function hclust(X::SparseMatrixCSC)
         update_distances!(queue, queue_idxs, ab, K)
     end
 end
+=#
+
+
+struct HClustEdge
+    j1::Int
+    j2::Int
+    d::Float64
+end
+
+
+function Base.isless(a::HClustEdge, b::HClustEdge)
+    return a.d < b.d
+end
+
+
+"""
+Comparator used by delete! to force minheap items to the top.
+"""
+struct DeleteComparator
+end
+
+
+function DataStructures.compare(c::DeleteComparator, x, y)
+    return true
+end
+
+
+"""
+Delete and return the entry at index i.
+"""
+function Base.delete!(queue::MutableBinaryHeap, i::Int)
+    nodes = queue.nodes
+    nodemap = queue.node_map
+
+    nd_id = nodemap[i]
+    v0 = nodes[nd_id].value
+    DataStructures._heap_bubble_up!(DeleteComparator(), nodes, nodemap, nd_id)
+    return pop!(queue)
+end
+
+
+"""
+Compute euclidean distance between two columns of the sparse matrix.
+"""
+function distance(X::SparseMatrixCSC, j1::Int, j2::Int)
+    cp1 = Int(X.colptr[j1])
+    cp2 = Int(X.colptr[j2])
+
+    d = 0.0
+    while cp1 < X.colptr[j1+1] && cp2 < X.colptr[j2+1]
+        if X.rowval[cp1] < X.rowval[cp2]
+            d += X.nzval[cp1]^2
+            cp1 += 1
+        elseif X.rowval[cp1] > X.rowval[cp2]
+            d += X.nzval[cp2]^2
+            cp2 += 1
+        else
+            d += (X.nzval[cp1] - X.nzval[cp2])^2
+            cp1 += 1
+            cp2 += 1
+        end
+    end
+
+    while cp1 < X.colptr[j1+1]
+        d += X.nzval[cp1]^2
+        cp1 += 1
+    end
+
+    while cp2 < X.colptr[j2+1]
+        d += X.nzval[cp2]^2
+        cp2 += 1
+    end
+
+    # @show (Int(X.colptr[j1]), Int(X.colptr[j1+1]), Int(X.colptr[j2]), Int(X.colptr[j2+1]), cp1, cp2)
+    # @show d
+
+    # we inject a little noise to break ties randomly and lead to a more
+    # balanced tree
+    noise = 1e-20 * rand()
+    return d + noise
+end
+
+
+function hclust(X::SparseMatrixCSC)
+    println("HCLUST")
+
+    m, n = size(X)
+
+    # compare this many neighbors to each neighbors left and right to find
+    # candidates to merge
+    # K = 10
+    K = 5
+
+    # TODO: We really don't need this linked list of nodes, if we have a way to
+    # look up the neighbors of each index. We do need to be able to compute
+    # distances using the matrix, and have a permutation of indexes.
+
+    # order nodes by median compatible read index to group transcripts that
+    # tend to share a lot of reads
+    println("Ordering transcripts")
+    medreadidx = Array{UInt32}(n)
+    for j in 1:n
+        if X.colptr[j] == X.colptr[j+1]
+            medreadidx[j] = 0
+        else
+            medreadidx[j] = X.rowval[div(X.colptr[j] + X.colptr[j+1], 2)]
+        end
+    end
+    idxs = (1:n)[sortperm(medreadidx)]
+
+    println("Adding initial edges")
+    queue = mutable_binary_minheap(HClustEdge)
+    queue_idxs = Dict{Tuple{Int, Int}, Int}()
+    neighbors = MultiDict{Int, Int}()
+    set_size = Dict{Int, Int}()
+    nodes = Dict{Int, HClustNode}()
+    max_d = 0.0
+    for j1 in 1:n
+        for j2 in j1+1:min(j1+K, n)
+            d = distance(X, idxs[j1], idxs[j2])
+            max_d = max(max_d, d)
+            e = HClustEdge(j1, j2, d)
+            queue_idxs[(e.j1, e.j2)] = push!(queue, e)
+            insert!(neighbors, j1, j2)
+            insert!(neighbors, j2, j1)
+        end
+        set_size[j1] = 1
+        nodes[j1] = HClustNode(idxs[j1])
+    end
+    deleted_nodes = Set{Int}()
+
+    println("Clustering")
+    # cluster
+    next_node_idx = n + 1
+    while !isempty(queue)
+        e = pop!(queue)
+        delete!(queue_idxs, (e.j1, e.j2))
+
+        # introduce a new node
+        k = next_node_idx
+        next_node_idx += 1
+
+        for (ja, jb) in [(e.j1, e.j2), (e.j2, e.j1)]
+            s_ja = set_size[ja]
+            s_jb = set_size[jb]
+
+            for l in neighbors[ja]
+                if l == jb || l ∈ deleted_nodes
+                    continue
+                end
+                # delete old edge
+                u1, u2 = min((l, ja), (ja, l))
+                old_edge = delete!(queue, queue_idxs[(u1, u2)])
+                delete!(queue_idxs, (u1, u2))
+
+                # already added this edge
+                if haskey(queue_idxs, (l, k))
+                    continue
+                end
+
+                # estimate (l, k) distance
+                d_lja = old_edge.d
+
+                v1, v2 = min((l, jb), (jb, l))
+                if haskey(queue_idxs, (v1, v2))
+                    d_ljb = queue[queue_idxs[(v1, v2)]].d
+                else
+                    d_ljb = max_d
+                end
+
+                d = (s_ja * d_lja + s_jb * d_ljb) / (s_ja + s_jb)
+
+                # add (l, k) edge
+                new_edge = HClustEdge(l, k, d)
+                set_size[k] = s_ja + s_jb
+                queue_idxs[(l, k)] = push!(queue, new_edge)
+                insert!(neighbors, l, k)
+                insert!(neighbors, k, l)
+            end
+        end
+
+        nodes[k] = HClustNode(nodes[e.j1], nodes[e.j2])
+
+        delete!(neighbors, e.j1)
+        delete!(neighbors, e.j2)
+
+        delete!(set_size, e.j1)
+        delete!(set_size, e.j2)
+        push!(deleted_nodes, e.j1)
+        push!(deleted_nodes, e.j2)
+    end
+
+    root = nodes[next_node_idx-1]
+    return root
+end
 
 
 # Hierarchical stick breaking transformation
-type HSBTransform
+mutable struct HSBTransform
     # tree nodes in depth first traversal order
     nodes::Vector{HClustNode}
 
@@ -502,7 +698,8 @@ end
 function HSBTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
     m, n = size(X)
     if method == :cluster
-        root, x0 = hclust(X)
+        root = hclust(X)
+        x0 = fill(1.0f0/n, n)
         nodes = order_nodes(root, n)
     elseif method == :random
         nodes = rand_tree_nodes(n)

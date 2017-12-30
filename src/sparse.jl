@@ -8,9 +8,11 @@ function pAt_mul_B!{T,I}(y::Vector, A::SparseMatrixCSC{T,I}, x::Vector)
     colptr = A.colptr
     rowval = A.rowval
     nzval = A.nzval
-    Threads.@threads for j in 1:A.n
-        @inbounds for k in colptr[j]:colptr[j+1]-1
-            i = rowval[k]
+    Threads.@threads for j_ in 1:A.n
+        j = Int(j_)
+        @inbounds for k_ in colptr[j]:colptr[j+1]-1
+            k = Int(k_)
+            i = Int(rowval[k])
             y[j] += x[i] * nzval[k]
         end
     end

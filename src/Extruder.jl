@@ -155,9 +155,9 @@ function main()
                 required = true
             "reads_filename"
                 required = true
-            "--excluded-seqs"
+            "--exclude-seqs"
                 required = false
-            "--excluded-transcripts"
+            "--exclude-transcripts"
                 required = false
             "--likelihood-matrix"
                 required = false
@@ -172,8 +172,8 @@ function main()
         approx = select_approx_method(parsed_args["approx-method"], tree_method)
 
         excluded_seqs = Set{String}()
-        if parsed_args["excluded-seqs"] != nothing
-            open(parsed_args["excluded-seqs"]) do input
+        if parsed_args["exclude-seqs"] != nothing
+            open(parsed_args["exclude-seqs"]) do input
                 for line in eachline(input)
                     push!(excluded_seqs, chomp(line))
                 end
@@ -181,8 +181,8 @@ function main()
         end
 
         excluded_transcripts = Set{String}()
-        if parsed_args["excluded-transcripts"] != nothing
-            open(parsed_args["excluded-transcripts"]) do input
+        if parsed_args["exclude-transcripts"] != nothing
+            open(parsed_args["exclude-transcripts"]) do input
                 for line in eachline(input)
                     push!(excluded_transcripts, chomp(line))
                 end
@@ -206,6 +206,8 @@ function main()
                 default = Nullable{String}()
             "--output-format", "-F"
                 default = "csv"
+            "--exclude-transcripts"
+                required = false
             "feature"
                 required = true
             "model"
@@ -218,7 +220,16 @@ function main()
 
         parsed_args = parse_args(subcmd_args, arg_settings)
 
-        ts, ts_metadata = Transcripts(parsed_args["transcripts"])
+        excluded_transcripts = Set{String}()
+        if parsed_args["exclude-transcripts"] != nothing
+            open(parsed_args["exclude-transcripts"]) do input
+                for line in eachline(input)
+                    push!(excluded_transcripts, chomp(line))
+                end
+            end
+        end
+
+        ts, ts_metadata = Transcripts(parsed_args["transcripts"], excluded_transcripts)
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
         (likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,

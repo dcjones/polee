@@ -55,6 +55,18 @@ function load_samples(filenames, ts_metadata::TranscriptsMetadata)
 
     for (i, filename) in enumerate(filenames)
         input = h5open(filename, "r")
+        input_metadata = g_open(input, "metadata")
+        if base64decode(read(attrs(input_metadata)["gffhash"])) != ts_metadata.gffhash
+            true_filename = read(attrs(input_metadata)["gfffilename"])
+            error(
+                """
+                $(filename):
+                GFF3 file is not the same as the one used for sample preparation.
+                Filename of original GFF3 file: $(true_filename)
+                """)
+        end
+
+        # TODO: record and check transcript blacklist hash.
 
         n = read(input["n"])
 

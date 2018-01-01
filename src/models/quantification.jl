@@ -18,9 +18,10 @@ end
 
 
 function estimate_transcript_expression(input::ModelInput)
-    num_samples, n = size(input.x0)
-    x0_log = tf.log(tf.constant(input.x0))
+    num_samples, n = size(input.loaded_samples.x0_values)
     @show (num_samples, n)
+
+    x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
 
     x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam =
         transcript_quantification_model(input)
@@ -36,8 +37,9 @@ function estimate_transcript_expression(input::ModelInput)
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
-    inference = ed.KLqp(PyDict(Dict(x => qx, x_mu => qx_mu)),
-                        data=PyDict(Dict(likapprox_laparam => input.likapprox_laparam)))
+    inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu),
+                        data=merge(Dict(likapprox_laparam => input.loaded_samples.la_param_values),
+                                   input.loaded_samples.init_feed_dict))
 
     optimizer = tf.train[:AdamOptimizer](1e-2)
     inference[:run](n_iter=500, optimizer=optimizer)
@@ -48,7 +50,7 @@ function estimate_transcript_expression(input::ModelInput)
     qx_sigma_value = sess[:run](qx_sigma_param)
 
     est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
-    efflens = sess[:run](input.likapprox_efflen)
+    # efflens = sess[:run](input.loaded_samples.variables[:efflen])
 
     # reset session and graph to free up memory in case more needs to be done
     tf.reset_default_graph()
@@ -61,14 +63,14 @@ function estimate_transcript_expression(input::ModelInput)
 
     # TODO: this should be a temporary measure until we decide exactly how
     # results should be reported. Probably in sqlite or something.
-    write_estimates("estimates.csv", input.sample_names, est)
+    write_estimates("estimates.csv", input.loaded_samples.sample_names, est)
 
-    open("efflen.csv", "w") do out
-        println(out, "transcript_num,efflen")
-        for (i, efflen) in enumerate(efflens)
-            println(out, i, ",", efflen)
-        end
-    end
+    # open("efflen.csv", "w") do out
+    #     println(out, "transcript_num,efflen")
+    #     for (i, efflen) in enumerate(efflens)
+    #         println(out, i, ",", efflen)
+    #     end
+    # end
 
     return qx_mu_value, qx_sigma_value
 end
@@ -356,7 +358,7 @@ end
 Build basic transcript quantification model with some shrinkage towards a pooled mean.
 """
 function transcript_quantification_model(input::ModelInput)
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
 
     # y_mu: pooled mean
     # x_mu_mu0 = tf.constant(log(1/n), shape=[n])
@@ -380,12 +382,7 @@ function transcript_quantification_model(input::ModelInput)
                               tf.expand_dims(x_sigma, 0))
 
     x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
-
-    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                    x=x,
-                    efflens=input.likapprox_efflen,
-                    invhsb_params=input.likapprox_invhsb_params,
-                    value=input.likapprox_laparam)
+    likapprox_laparam = RNASeqApproxLikelihood(input, x)
 
     return x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam
 end

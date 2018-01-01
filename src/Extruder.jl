@@ -232,9 +232,8 @@ function main()
         ts, ts_metadata = Transcripts(parsed_args["transcripts"], excluded_transcripts)
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
-        (likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,
-         likapprox_parent_idxs, likapprox_js, x0, sample_factors, sample_names) =
-            load_samples_from_specification(parsed_args["experiment"], ts_metadata)
+        loaded_samples =
+            load_samples_from_specification(parsed_args["experiment"], ts, ts_metadata)
 
         feature = Symbol(parsed_args["feature"])
 
@@ -244,9 +243,7 @@ function main()
         end
 
         input = ModelInput(
-            likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,
-            likapprox_parent_idxs, likapprox_js, x0, sample_factors,
-            sample_names, feature, ts, ts_metadata,
+            loaded_samples, feature, ts, ts_metadata,
             parsed_args["output"], output_format, gene_db)
 
         EXTRUDER_MODELS[parsed_args["model"]](input)

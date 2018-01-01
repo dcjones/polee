@@ -7,6 +7,31 @@ unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Extruder", "src"))
 @pyimport rnaseq_approx_likelihood
 
 
+mutable struct LoadedSamples
+    # effective lengths
+    efflen_values::Array{Float32, 2}
+
+    # reasonable initial values
+    x0_values::Array{Float32, 2}
+
+    # likelihood approximation base distribution parameters
+    la_param_values::Array{Float32, 3}
+
+    # hsb parameters
+    leaf_indexes_values::Array{Int32, 3}
+    internal_node_indexes_values::Array{Int32, 3}
+    internal_node_left_indexes_values::Array{Int32, 3}
+    leftmost_indexes_values::Array{Int32, 3}
+    rightmost_indexes_values::Array{Int32, 3}
+
+    # tensorflow placeholder variables and initalizations
+    variables::Dict{Symbol, PyObject}
+    init_feed_dict::Dict{Any, Any}
+
+    sample_factors::Vector{Vector{String}}
+    sample_names::Vector{String}
+end
+
 
 """
 Load samples from a a YAML specification file.
@@ -15,21 +40,21 @@ Input:
     * experiment_spec_filename: filename of YAML experiment specification
     * ts_metadata: transcript metadata
 """
-function load_samples_from_specification(experiment_spec_filename, ts_metadata)
+function load_samples_from_specification(experiment_spec_filename, ts, ts_metadata)
     experiment_spec = YAML.load_file(experiment_spec_filename)
-    names = [entry["name"] for entry in experiment_spec]
+    sample_names = [entry["name"] for entry in experiment_spec]
     filenames = [entry["file"] for entry in experiment_spec]
     sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    (likapprox_laparam, likapprox_efflen, likapprox_invhsb_params,
-     likapprox_parent_idxs, likapprox_js, x0) = load_samples(filenames, ts_metadata)
+    loaded_samples = load_samples(filenames, ts, ts_metadata)
     println("Sample data loaded")
 
-    return (likapprox_laparam, likapprox_efflen,
-            likapprox_invhsb_params, likapprox_parent_idxs, likapprox_js,
-            x0, sample_factors, names)
+    loaded_samples.sample_factors = sample_factors
+    loaded_samples.sample_names = sample_names
+
+    return loaded_samples
 end
 
 
@@ -40,19 +65,24 @@ Input:
     * filenames: vector of filenames
     * ts_metadata: transcript metadata
 """
-function load_samples(filenames, ts_metadata::TranscriptsMetadata)
-    laparam_tensors = []
-    efflen_tensors = []
-    x0_tensors = []
-    node_parent_idxs_tensors = []
-    node_js_tensors = []
+function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
+    num_samples = length(filenames)
+    n = length(ts)
 
-    leafindex_tensors = []
-    internal_node_indexes_tensors = []
-    internal_node_left_indexes_tensors = []
-    leftmost_tensors = []
-    rightmost_tensors = []
+    efflen_values = Array{Float32}(num_samples, n)
+    x0_values     = Array{Float32}(num_samples, n)
 
+    # likelihood approximation base distribution parameters
+    la_param_values = Array{Float32}(num_samples, 3, n-1)
+
+    # index parameters used to compute inverse heirarchical stick breaking transform
+    leaf_indexes_values               = Array{Int32}(num_samples, n, 2)
+    internal_node_indexes_values      = Array{Int32}(num_samples, n-1, 2)
+    internal_node_left_indexes_values = Array{Int32}(num_samples, n-1, 2)
+    leftmost_indexes_values           = Array{Int32}(num_samples, 2*n-1, 2)
+    rightmost_indexes_values          = Array{Int32}(num_samples, 2*n-1, 2)
+
+    prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
     for (i, filename) in enumerate(filenames)
         input = h5open(filename, "r")
         input_metadata = g_open(input, "metadata")
@@ -68,81 +98,118 @@ function load_samples(filenames, ts_metadata::TranscriptsMetadata)
 
         # TODO: record and check transcript blacklist hash.
 
-        n = read(input["n"])
+        sample_n = read(input["n"])
+        if sample_n != n
+            error("Prepared sample has a different number of transcripts than provided GFF3 file.")
+        end
 
         mu = read(input["mu"])
-        sigma = read(input["omega"])
-        map!(exp, sigma, sigma)
+        sigma = exp.(read(input["omega"]))
         alpha = read(input["alpha"])
+
+        la_param_values[i, 1, :] = mu
+        la_param_values[i, 2, :] = sigma
+        la_param_values[i, 3, :] = alpha
+
+        efflen_values[i, :] = read(input["effective_lengths"])
 
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
-        effective_lengths = read(input["effective_lengths"])
 
         (leafindex, internal_node_indexes,
          internal_node_left_indexes,
          leftmost, rightmost) = make_inverse_hsb_params(node_parent_idxs, node_js)
 
         idxs = fill(Int32(i-1), n)
-        push!(leafindex_tensors, tf.Variable(hcat(idxs, leafindex)))
+        leaf_indexes_values[i, :, :] = hcat(idxs, leafindex)
 
         idxs = fill(Int32(i-1), n-1)
-        push!(internal_node_indexes_tensors, tf.Variable(hcat(idxs, internal_node_indexes)))
-        push!(internal_node_left_indexes_tensors, tf.Variable(hcat(idxs, internal_node_left_indexes)))
+        internal_node_indexes_values[i, :, :] = hcat(idxs, internal_node_indexes)
+        internal_node_left_indexes_values[i, :, :] = hcat(idxs, internal_node_left_indexes)
 
         idxs = fill(Int32(i-1), 2*n-1)
-        push!(leftmost_tensors, tf.Variable(hcat(idxs, leftmost)))
-        push!(rightmost_tensors, tf.Variable(hcat(idxs, rightmost)))
+        leftmost_indexes_values[i, :, :] = hcat(idxs, leftmost)
+        rightmost_indexes_values[i, :, :] = hcat(idxs, rightmost)
 
-        # choose logit-normal mean (actually: not really the mean)
+        # find reasonable initial valuse by taking the mean of the base normal
+        # distribution and transforming it
         y0 = Array{Float64}(n-1)
         x0 = Array{Float32}(n)
-        for i in 1:n-1
-            y0[i] = clamp(logistic(sinh(alpha[i]) + mu[i]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
+        for j in 1:n-1
+            y0[j] = clamp(logistic(sinh(alpha[j]) + mu[j]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
         end
         t = HSBTransform(node_parent_idxs, node_js)
         hsb_transform!(t, y0, x0, Val{true})
-        push!(x0_tensors, x0)
+        x0_values[i, :] = x0
 
-        tf_mu = tf.constant(mu)
-        tf_sigma = tf.constant(sigma)
-        tf_alpha = tf.constant(alpha)
-        tf_laparam = tf.stack([tf_mu, tf_sigma, tf_alpha])
-        tf_efflen = tf.constant(effective_lengths)
-        push!(laparam_tensors, tf_laparam)
-        push!(efflen_tensors, tf_efflen)
-        push!(node_parent_idxs_tensors, node_parent_idxs)
-        push!(node_js_tensors, node_js)
+        next!(prog)
     end
 
-    hsb_params =
-        [tf.stack(leafindex_tensors),
-         tf.stack(internal_node_indexes_tensors),
-         tf.stack(internal_node_left_indexes_tensors),
-         tf.stack(leftmost_tensors),
-         tf.stack(rightmost_tensors)]
+    var_names = [:efflen,
+                 :leaf_indexes,
+                 :internal_node_indexes,
+                 :internal_node_left_indexes,
+                 :leftmost_indexes,
+                 :rightmost_indexes]
+    var_values = Any[efflen_values,
+                  leaf_indexes_values,
+                  internal_node_indexes_values,
+                  internal_node_left_indexes_values,
+                  leftmost_indexes_values,
+                  rightmost_indexes_values]
 
-    return (tf.stack(laparam_tensors), tf.stack(efflen_tensors),
-            hsb_params, hcat(node_parent_idxs_tensors...),
-            hcat(node_js_tensors...), transpose(hcat(x0_tensors...)))
+    variables = Dict{Symbol, PyObject}()
+    init_feed_dict = Dict{Any, Any}()
+    for (name, val) in zip(var_names, var_values)
+        typ = eltype(val) == Float32 ? tf.float32 : tf.int32
+        var = tf.placeholder(typ, shape=size(val))
+        variables[name] = var
+        init_feed_dict[var] = val
+    end
+
+    return LoadedSamples(
+        efflen_values,
+        x0_values,
+        la_param_values,
+        leaf_indexes_values,
+        internal_node_indexes_values,
+        internal_node_left_indexes_values,
+        leftmost_indexes_values,
+        rightmost_indexes_values,
+        variables,
+        init_feed_dict,
+        Vector{String}[], String[])
 end
 
 
 struct ModelInput
-    likapprox_laparam::PyCall.PyObject
-    likapprox_efflen::PyCall.PyObject
-    likapprox_invhsb_params::Vector{PyCall.PyObject}
-    likapprox_parent_idxs::Array
-    likapprox_js::Array
-    x0::Array{Float32, 2}
-    sample_factors::Vector{Vector{String}}
-    sample_names::Vector{String}
+    loaded_samples::LoadedSamples
     feature::Symbol
     ts::Transcripts
     ts_metadata::TranscriptsMetadata
     output_filename::Nullable{String}
     output_format::Symbol
     gene_db::SQLite.DB
+end
+
+
+"""
+Construct a python RNASeqApproxLikelihood class.
+"""
+function RNASeqApproxLikelihood(input::ModelInput, x)
+    invhsb_params = [
+        input.loaded_samples.variables[:leaf_indexes],
+        input.loaded_samples.variables[:internal_node_indexes],
+        input.loaded_samples.variables[:internal_node_left_indexes],
+        input.loaded_samples.variables[:leftmost_indexes],
+        input.loaded_samples.variables[:rightmost_indexes]
+    ]
+
+    return rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+            x=x,
+            efflens=input.loaded_samples.variables[:efflen],
+            invhsb_params=invhsb_params,
+            value=input.loaded_samples.la_param_values)
 end
 
 

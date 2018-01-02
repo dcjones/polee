@@ -9,7 +9,7 @@ import sys
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
-    def __init__(self, x, efflens, invhsb_params,
+    def __init__(self, x, efflens, la_params, invhsb_params,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
@@ -24,6 +24,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         # self.x = x
         self.efflens = efflens
+        self.la_params = la_params
         self.invhsb_params = invhsb_params
 
         super(RNASeqApproxLikelihoodDist, self).__init__(
@@ -44,15 +45,14 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         print(self.x.get_shape())
         return self.x.get_shape()[:-1]
 
-    def _log_prob(self, laparam):
-
+    def _log_prob(self, _):
         num_samples = int(self.x.get_shape()[0])
         n           = int(self.x.get_shape()[-1])
         num_nodes   = 2*n - 1
 
-        mu    = tf.identity(laparam[...,0,:], name="mu")
-        sigma = tf.identity(laparam[...,1,:], name="sigma")
-        alpha = tf.identity(laparam[...,2,:], name="alpha")
+        mu    = tf.identity(self.la_params[...,0,:], name="mu")
+        sigma = tf.identity(self.la_params[...,1,:], name="sigma")
+        alpha = tf.identity(self.la_params[...,2,:], name="alpha")
 
 
         # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X SCALE", summarize=6)

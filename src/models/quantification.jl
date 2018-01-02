@@ -23,7 +23,7 @@ function estimate_transcript_expression(input::ModelInput)
 
     x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
 
-    x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam =
+    x, x_mu_param, x_sigma_param, x_mu, likapprox =
         transcript_quantification_model(input)
 
     println("Estimating...")
@@ -37,13 +37,9 @@ function estimate_transcript_expression(input::ModelInput)
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
-    inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu),
-                        data=merge(Dict(likapprox_laparam => input.loaded_samples.la_param_values),
-                                   input.loaded_samples.init_feed_dict))
-
+    inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu), data=Dict(likapprox => Float32[]))
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    inference[:run](n_iter=500, optimizer=optimizer)
-
+    run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
     qx_mu_value    = sess[:run](qx_mu_param)

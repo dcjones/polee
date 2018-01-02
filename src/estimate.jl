@@ -145,26 +145,29 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         next!(prog)
     end
 
-    var_names = [:efflen,
+    var_names = [:la_param,
+                 :efflen,
                  :leaf_indexes,
                  :internal_node_indexes,
                  :internal_node_left_indexes,
                  :leftmost_indexes,
                  :rightmost_indexes]
-    var_values = Any[efflen_values,
-                  leaf_indexes_values,
-                  internal_node_indexes_values,
-                  internal_node_left_indexes_values,
-                  leftmost_indexes_values,
-                  rightmost_indexes_values]
+    var_values = Any[la_param_values,
+                     efflen_values,
+                     leaf_indexes_values,
+                     internal_node_indexes_values,
+                     internal_node_left_indexes_values,
+                     leftmost_indexes_values,
+                     rightmost_indexes_values]
 
     variables = Dict{Symbol, PyObject}()
     init_feed_dict = Dict{Any, Any}()
     for (name, val) in zip(var_names, var_values)
         typ = eltype(val) == Float32 ? tf.float32 : tf.int32
-        var = tf.placeholder(typ, shape=size(val))
+        var_init = tf.placeholder(typ, shape=size(val))
+        var      = tf.Variable(var_init)
         variables[name] = var
-        init_feed_dict[var] = val
+        init_feed_dict[var_init] = val
     end
 
     return LoadedSamples(
@@ -208,8 +211,29 @@ function RNASeqApproxLikelihood(input::ModelInput, x)
     return rnaseq_approx_likelihood.RNASeqApproxLikelihood(
             x=x,
             efflens=input.loaded_samples.variables[:efflen],
+            la_params=input.loaded_samples.variables[:la_param],
             invhsb_params=invhsb_params,
-            value=input.loaded_samples.la_param_values)
+            value=Float32[])
+end
+
+
+"""
+This is essentiall Inference.run from edward, but customized to avoid
+reinitializing variables on each iteration.
+"""
+function run_inference(input, inference, n_iter, optimizer)
+    sess = ed.get_session()
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+
+    sess[:run](tf.global_variables_initializer(),
+               feed_dict=input.loaded_samples.init_feed_dict)
+
+    for iter in 1:n_iter
+        info_dict = inference[:update]()
+        inference[:print_progress](info_dict)
+    end
+
+    inference[:finalize]()
 end
 
 

@@ -73,7 +73,7 @@ end
 
 
 function estimate_gene_expression(input::ModelInput)
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
     num_features, gene_idxs, transcript_idxs, gene_names = gene_feature_matrix(input.ts, input.ts_metadata)
     num_aux_features = regularize_disjoint_feature_matrix!(gene_idxs, transcript_idxs, n)
 
@@ -378,15 +378,15 @@ function transcript_quantification_model(input::ModelInput)
                               tf.expand_dims(x_sigma, 0))
 
     x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
-    likapprox_laparam = RNASeqApproxLikelihood(input, x)
+    likapprox = RNASeqApproxLikelihood(input, x)
 
-    return x, x_mu_param, x_sigma_param, x_mu, likapprox_laparam
+    return x, x_mu_param, x_sigma_param, x_mu, likapprox
 end
 
 
 function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
                                               transcript_idxs, num_features)
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
 
     # feature expression
     x_feature_mu_mu0 = tf.constant(log(0.01 * 1/num_features), shape=[num_features])
@@ -649,7 +649,7 @@ end
 
 
 function model_nondisjoint_feature_prior(input::ModelInput, num_features)
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
 
     x_feature_mu_mu0 = tf.constant(0.0, shape=[num_features])
     x_feature_mu_sigma0 = tf.constant(5.0, shape=[num_features])
@@ -710,7 +710,7 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
                                               feature_idxs, feature_transcript_idxs,
                                               antifeature_idxs, antifeature_transcript_idxs,
                                               x_feature)
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
 
     p = sortperm(feature_transcript_idxs)
     permute!(feature_transcript_idxs, p)
@@ -879,22 +879,16 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
     # @show x_err_sigma_param
     # exit()
 
-    @show x
-    @show x_err_sigma_param
-
     x_err = edmodels.MultivariateNormalDiag(x, x_err_sigma_param)
 
-    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                    x=x_err,
-                    efflens=input.likapprox_efflen,
-                    invhsb_params=input.likapprox_invhsb_params,
-                    value=input.likapprox_laparam)
+    likapprox = RNASeqApproxLikelihood(input, x)
 
     # Inference
     # ---------
 
     x_component_mu_initial, x_feature_mu_initial =
-        nondisjoint_feature_initialization(input.x0, num_components, num_features,
+        nondisjoint_feature_initialization(input.loaded_samples.x0_values,
+                                           num_components, num_features,
                                            component_idxs, component_transcript_idxs,
                                            feature_idxs, feature_transcript_idxs,
                                            antifeature_idxs, antifeature_transcript_idxs)
@@ -938,7 +932,7 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
         x_err_log_sigma       => qx_err_log_sigma,
         x_err                 => qx_err)
 
-    data = Dict(likapprox_laparam => input.likapprox_laparam)
+    data = Dict(likapprox => Float32[])
 
     return vars, var_approximations, data
 end

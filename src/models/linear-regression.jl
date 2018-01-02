@@ -11,10 +11,10 @@ end
 
 
 function build_linear_regression_design_matrix(input::ModelInput)
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
     factoridx = Dict{String, Int}()
     factoridx["bias"] = 1
-    for factors in input.sample_factors
+    for factors in input.loaded_samples.sample_factors
         for factor in factors
             get!(factoridx, factor, length(factoridx) + 1)
         end
@@ -23,7 +23,7 @@ function build_linear_regression_design_matrix(input::ModelInput)
     num_factors = length(factoridx)
     X_ = zeros(Float32, (num_samples, num_factors))
     for i in 1:num_samples
-        for factor in input.sample_factors[i]
+        for factor in input.loaded_samples.sample_factors[i]
             j = factoridx[factor]
             X_[i, j] = 1
         end
@@ -37,7 +37,7 @@ end
 
 function estimate_transcript_linear_regression(input::ModelInput)
 
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_vaues)
     num_factors, factoridx, X = build_linear_regression_design_matrix(input)
 
     println("Sample data loaded")
@@ -96,7 +96,7 @@ end
 
 
 function estimate_splicing_linear_regression(input::ModelInput)
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
     num_factors, factoridx, X = build_linear_regression_design_matrix(input)
 
     (num_features,
@@ -135,11 +135,10 @@ function estimate_splicing_linear_regression(input::ModelInput)
     vars[:w] = w
     var_approximations[w] = qw
 
-    inference = ed.KLqp(latent_vars=PyDict(var_approximations),
-                        data=PyDict(data))
+    inference = ed.KLqp(latent_vars=var_approximations, data=data)
 
     optimizer = tf.train[:AdamOptimizer](5e-2)
-    inference[:run](n_iter=2000, optimizer=optimizer)
+    run_inference(input, inference, 2000, optimizer)
 
     sess = ed.get_session()
 

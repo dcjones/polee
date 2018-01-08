@@ -1,6 +1,7 @@
 unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Extruder", "src"))
 @pyimport tensorflow as tf
 @pyimport tensorflow.contrib.distributions as tfdist
+@pyimport tensorflow.contrib.tfprof as tfprof
 @pyimport tensorflow.python.client.timeline as tftl
 @pyimport edward as ed
 @pyimport edward.models as edmodels
@@ -222,6 +223,12 @@ This is essentiall Inference.run from edward, but customized to avoid
 reinitializing variables on each iteration.
 """
 function run_inference(input, inference, n_iter, optimizer)
+    # enable XLA
+    # config = tf.ConfigProto()
+    # config[:graph_options][:optimizer_options][:global_jit_level] = tf.OptimizerOptions[:ON_1]
+    # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession(config=config)
+    # println("MADE XLA SESSION")
+
     sess = ed.get_session()
     inference[:initialize](n_iter=n_iter, optimizer=optimizer)
 
@@ -232,6 +239,30 @@ function run_inference(input, inference, n_iter, optimizer)
         info_dict = inference[:update]()
         inference[:print_progress](info_dict)
     end
+
+    # profiler
+    # --------
+    # prof_opt_builder = tf.profiler[:ProfileOptionBuilder]
+    # prof_opts = prof_opt_builder(prof_opt_builder[:time_and_memory]())[:order_by]("micros")[:build]()
+
+    # run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    # run_metadata = tf.RunMetadata()
+    # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
+    #            options=run_options, run_metadata=run_metadata)
+
+    # tf.profiler[:profile](sess[:graph], run_meta=run_metadata, options=prof_opts)
+
+    # timeline profiler
+    # -----------------
+    # run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    # run_metadata = tf.RunMetadata()
+    # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
+    #            options=run_options, run_metadata=run_metadata)
+    # tl = tftl.Timeline(run_metadata[:step_stats])
+    # ctf = tl[:generate_chrome_trace_format]()
+    # trace_out = pybuiltin(:open)("timeline.json", "w")
+    # trace_out[:write](ctf)
+    # trace_out[:close]()
 
     inference[:finalize]()
 end

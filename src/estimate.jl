@@ -20,7 +20,6 @@ mutable struct LoadedSamples
 
     # hsb parameters
     leaf_indexes_values::Array{Int32, 3}
-    internal_node_indexes_values::Array{Int32, 3}
     internal_node_left_indexes_values::Array{Int32, 3}
     internal_node_right_indexes_values::Array{Int32, 3}
     leftmost_indexes_values::Array{Int32, 3}
@@ -79,7 +78,6 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
 
     # index parameters used to compute inverse heirarchical stick breaking transform
     leaf_indexes_values                = Array{Int32}(num_samples, n, 2)
-    internal_node_indexes_values       = Array{Int32}(num_samples, n-1, 2)
     internal_node_left_indexes_values  = Array{Int32}(num_samples, n-1, 2)
     internal_node_right_indexes_values = Array{Int32}(num_samples, n-1, 2)
     leftmost_indexes_values            = Array{Int32}(num_samples, 2*n-1, 2)
@@ -119,20 +117,14 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
 
-        # (leafindex, internal_node_indexes,
-        #  internal_node_left_indexes, internal_node_right_indexes,
-        #  leftmost, rightmost) = make_inverse_hsb_params(node_parent_idxs, node_js)
         invhsb_params = make_inverse_hsb_params(node_parent_idxs, node_js)
-        (leafindex, internal_node_indexes,
-         internal_node_left_indexes, internal_node_right_indexes,
+        (leafindex, internal_node_left_indexes, internal_node_right_indexes,
          leftmost, rightmost) = invhsb_params
-
 
         idxs = fill(Int32(i-1), n)
         leaf_indexes_values[i, :, :] = hcat(idxs, leafindex)
 
         idxs = fill(Int32(i-1), n-1)
-        internal_node_indexes_values[i, :, :] = hcat(idxs, internal_node_indexes)
         internal_node_left_indexes_values[i, :, :] = hcat(idxs, internal_node_left_indexes)
         internal_node_right_indexes_values[i, :, :] = hcat(idxs, internal_node_right_indexes)
 
@@ -157,7 +149,6 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
     var_names = [:la_param,
                  :efflen,
                  :leaf_indexes,
-                 :internal_node_indexes,
                  :internal_node_left_indexes,
                  :internal_node_right_indexes,
                  :leftmost_indexes,
@@ -165,7 +156,6 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
     var_values = Any[la_param_values,
                      efflen_values,
                      leaf_indexes_values,
-                     internal_node_indexes_values,
                      internal_node_left_indexes_values,
                      internal_node_right_indexes_values,
                      leftmost_indexes_values,
@@ -186,7 +176,6 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         x0_values,
         la_param_values,
         leaf_indexes_values,
-        internal_node_indexes_values,
         internal_node_left_indexes_values,
         internal_node_right_indexes_values,
         leftmost_indexes_values,
@@ -214,7 +203,6 @@ Construct a python RNASeqApproxLikelihood class.
 function RNASeqApproxLikelihood(input::ModelInput, x)
     invhsb_params = [
         input.loaded_samples.variables[:leaf_indexes],
-        input.loaded_samples.variables[:internal_node_indexes],
         input.loaded_samples.variables[:internal_node_left_indexes],
         input.loaded_samples.variables[:internal_node_right_indexes],
         input.loaded_samples.variables[:leftmost_indexes],

@@ -73,11 +73,10 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # ---------------------------------------------
 
         leafindex = self.invhsb_params[0]
-        internal_node_indexes = self.invhsb_params[1]
-        internal_node_left_indexes = self.invhsb_params[2]
-        internal_node_right_indexes = self.invhsb_params[3]
-        leftmost_indexes = self.invhsb_params[4]
-        rightmost_indexes = self.invhsb_params[5]
+        internal_node_left_indexes = self.invhsb_params[1]
+        internal_node_right_indexes = self.invhsb_params[2]
+        leftmost_indexes = self.invhsb_params[3]
+        rightmost_indexes = self.invhsb_params[4]
 
         x_permed = tf.gather_nd(x_efflen, leafindex)
 
@@ -126,29 +125,19 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_permed = tf.to_double(x_permed)
 
         x_cumsum = tf.cumsum(x_permed, axis=1)
-        x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.double), x_cumsum], axis=1)
+        x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.float64), x_cumsum], axis=1)
 
         x_lm = tf.gather_nd(x_cumsum, leftmost_indexes, name="x_lm")
         x_rm = tf.gather_nd(x_cumsum, rightmost_indexes, name="x_rm")
 
         u = x_rm - x_lm
-        u = tf.identity(u, name="u")
+        u = tf.to_float(u)
+        u_log = tf.log(u)
 
-        internal_node_values = tf.gather_nd(u, internal_node_indexes)
-        left_node_values     = tf.gather_nd(u, internal_node_left_indexes)
+        left_node_values  = tf.gather_nd(u_log, internal_node_left_indexes)
+        right_node_values = tf.gather_nd(u_log, internal_node_right_indexes)
 
-        y = tf.divide(left_node_values, internal_node_values, name="y")
-
-        y = tf.clip_by_value(y, 1e-10, 1.0 - 1e-10)
-
-        # logit (inverse logistic) transform
-        # ----------------------------------
-
-        y_log = tf.log(y)
-        y_om_log = tf.log(1.0 - y)
-        y_logit = tf.to_float(y_log - y_om_log)
-
-
+        y_logit = left_node_values - right_node_values
 
         # normal standardization transform
         # --------------------------------

@@ -22,6 +22,7 @@ mutable struct LoadedSamples
     leaf_indexes_values::Array{Int32, 3}
     internal_node_indexes_values::Array{Int32, 3}
     internal_node_left_indexes_values::Array{Int32, 3}
+    internal_node_right_indexes_values::Array{Int32, 3}
     leftmost_indexes_values::Array{Int32, 3}
     rightmost_indexes_values::Array{Int32, 3}
 
@@ -77,11 +78,12 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
     la_param_values = Array{Float32}(num_samples, 3, n-1)
 
     # index parameters used to compute inverse heirarchical stick breaking transform
-    leaf_indexes_values               = Array{Int32}(num_samples, n, 2)
-    internal_node_indexes_values      = Array{Int32}(num_samples, n-1, 2)
-    internal_node_left_indexes_values = Array{Int32}(num_samples, n-1, 2)
-    leftmost_indexes_values           = Array{Int32}(num_samples, 2*n-1, 2)
-    rightmost_indexes_values          = Array{Int32}(num_samples, 2*n-1, 2)
+    leaf_indexes_values                = Array{Int32}(num_samples, n, 2)
+    internal_node_indexes_values       = Array{Int32}(num_samples, n-1, 2)
+    internal_node_left_indexes_values  = Array{Int32}(num_samples, n-1, 2)
+    internal_node_right_indexes_values = Array{Int32}(num_samples, n-1, 2)
+    leftmost_indexes_values            = Array{Int32}(num_samples, 2*n-1, 2)
+    rightmost_indexes_values           = Array{Int32}(num_samples, 2*n-1, 2)
 
     prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
     for (i, filename) in enumerate(filenames)
@@ -117,9 +119,14 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
 
+        # (leafindex, internal_node_indexes,
+        #  internal_node_left_indexes, internal_node_right_indexes,
+        #  leftmost, rightmost) = make_inverse_hsb_params(node_parent_idxs, node_js)
+        invhsb_params = make_inverse_hsb_params(node_parent_idxs, node_js)
         (leafindex, internal_node_indexes,
-         internal_node_left_indexes,
-         leftmost, rightmost) = make_inverse_hsb_params(node_parent_idxs, node_js)
+         internal_node_left_indexes, internal_node_right_indexes,
+         leftmost, rightmost) = invhsb_params
+
 
         idxs = fill(Int32(i-1), n)
         leaf_indexes_values[i, :, :] = hcat(idxs, leafindex)
@@ -127,6 +134,7 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         idxs = fill(Int32(i-1), n-1)
         internal_node_indexes_values[i, :, :] = hcat(idxs, internal_node_indexes)
         internal_node_left_indexes_values[i, :, :] = hcat(idxs, internal_node_left_indexes)
+        internal_node_right_indexes_values[i, :, :] = hcat(idxs, internal_node_right_indexes)
 
         idxs = fill(Int32(i-1), 2*n-1)
         leftmost_indexes_values[i, :, :] = hcat(idxs, leftmost)
@@ -151,6 +159,7 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
                  :leaf_indexes,
                  :internal_node_indexes,
                  :internal_node_left_indexes,
+                 :internal_node_right_indexes,
                  :leftmost_indexes,
                  :rightmost_indexes]
     var_values = Any[la_param_values,
@@ -158,6 +167,7 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
                      leaf_indexes_values,
                      internal_node_indexes_values,
                      internal_node_left_indexes_values,
+                     internal_node_right_indexes_values,
                      leftmost_indexes_values,
                      rightmost_indexes_values]
 
@@ -178,6 +188,7 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         leaf_indexes_values,
         internal_node_indexes_values,
         internal_node_left_indexes_values,
+        internal_node_right_indexes_values,
         leftmost_indexes_values,
         rightmost_indexes_values,
         variables,
@@ -205,6 +216,7 @@ function RNASeqApproxLikelihood(input::ModelInput, x)
         input.loaded_samples.variables[:leaf_indexes],
         input.loaded_samples.variables[:internal_node_indexes],
         input.loaded_samples.variables[:internal_node_left_indexes],
+        input.loaded_samples.variables[:internal_node_right_indexes],
         input.loaded_samples.variables[:leftmost_indexes],
         input.loaded_samples.variables[:rightmost_indexes]
     ]

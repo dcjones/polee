@@ -39,7 +39,7 @@ function estimate_transcript_expression(input::ModelInput)
 
     inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu), data=Dict(likapprox => Float32[]))
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    run_inference(input, inference, 500, optimizer)
+    run_inference(input, inference, 50, optimizer)
 
     sess = ed.get_session()
     qx_mu_value    = sess[:run](qx_mu_param)

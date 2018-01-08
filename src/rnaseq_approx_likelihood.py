@@ -75,10 +75,54 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         leafindex = self.invhsb_params[0]
         internal_node_indexes = self.invhsb_params[1]
         internal_node_left_indexes = self.invhsb_params[2]
-        leftmost_indexes = self.invhsb_params[3]
-        rightmost_indexes = self.invhsb_params[4]
+        internal_node_right_indexes = self.invhsb_params[3]
+        leftmost_indexes = self.invhsb_params[4]
+        rightmost_indexes = self.invhsb_params[5]
 
         x_permed = tf.gather_nd(x_efflen, leafindex)
+
+        # 31-bit fixed point
+        # This version convers numbers to 31bit fixed point to do cumsum and
+        # ensuring calculations
+
+            # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X SPAN")
+
+            # smallest number that can be represented in 31-bit fixed point
+            # fixed32_eps = 4.656613e-10
+
+            # x_permed = tf.clip_by_value(x_permed, fixed32_eps, 1.0)
+
+            # x_fixed = tf.to_int32(tf.round(x_permed * 2**31)) - 1 # to fixed
+
+            # x_fixed = tf.Print(x_fixed, [tf.reduce_min(x_fixed), tf.reduce_max(x_fixed)], "X FIXED SPAN")
+
+            # x_cumsum = tf.cumsum(x_fixed, axis=1)
+            # x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.int32), x_cumsum], axis=1)
+
+            # x_cumsum = tf.Print(x_cumsum, [tf.reduce_min(x_cumsum), tf.reduce_max(x_cumsum)], "X CUMSUM SPAN")
+
+            # x_lm = tf.gather_nd(x_cumsum, leftmost_indexes, name="x_lm")
+            # x_rm = tf.gather_nd(x_cumsum, rightmost_indexes, name="x_rm")
+            # u_fixed = x_rm - x_lm
+            # u = tf.to_float(u_fixed + 1) / 2**31
+            # u_log = tf.log(u)
+
+            # u_log = tf.Print(u_log, [tf.reduce_min(u_log), tf.reduce_max(u_log)], "U LOG SPAN")
+
+            # internal_node_values  = tf.gather_nd(u_log, internal_node_indexes)
+            # left_node_values      = tf.gather_nd(u_log, internal_node_left_indexes)
+            # right_node_values     = tf.gather_nd(u_log, internal_node_right_indexes)
+
+            # y_logit = tf.divide(left_node_values - internal_node_values,
+            #                     right_node_values - internal_node_values )
+
+            # tmp = left_node_values - internal_node_values
+            # y_logit = tf.Print(y_logit, [tf.reduce_min(tmp), tf.reduce_max(tmp)], "TMP SPAN")
+
+        # double precision
+        # This version is probably simpler and safer, but uses al ot of memory
+        # and time by doing everything with float64
+
         x_permed = tf.to_double(x_permed)
 
         x_cumsum = tf.cumsum(x_permed, axis=1)
@@ -95,10 +139,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         y = tf.divide(left_node_values, internal_node_values, name="y")
 
-        # hsb_ladj = tf.reduce_sum(-tf.log(internal_node_values), axis=1)
-
         y = tf.clip_by_value(y, 1e-10, 1.0 - 1e-10)
-
 
         # logit (inverse logistic) transform
         # ----------------------------------
@@ -106,7 +147,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         y_log = tf.log(y)
         y_om_log = tf.log(1.0 - y)
         y_logit = tf.to_float(y_log - y_om_log)
-        # y_logit_ladj = tf.reduce_sum(tf.to_float(-y_log - y_om_log), axis=1)
+
 
 
         # normal standardization transform

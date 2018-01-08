@@ -693,11 +693,13 @@ function make_inverse_hsb_params(node_parent_idxs, node_js)
 
     internal_node_indexes = zeros(Int32, n-1)
     internal_node_left_indexes = zeros(Int32, n-1)
+    internal_node_right_indexes = zeros(Int32, n-1)
     k = 1
     for i in 1:num_nodes
         if node_js[i] == 0
             internal_node_indexes[k] = i
             internal_node_left_indexes[k] = left_child[i]
+            internal_node_right_indexes[k] = right_child[i]
             k += 1
         end
     end
@@ -737,6 +739,7 @@ function make_inverse_hsb_params(node_parent_idxs, node_js)
     return (leafindex .- Int32(1),
             internal_node_indexes .- Int32(1),
             internal_node_left_indexes .- Int32(1),
+            internal_node_right_indexes .- Int32(1),
             leftmost .- Int32(1),
             rightmost)
 end

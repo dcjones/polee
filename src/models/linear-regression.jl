@@ -37,7 +37,7 @@ end
 
 function estimate_transcript_linear_regression(input::ModelInput)
 
-    num_samples, n = size(input.loaded_samples.x0_vaues)
+    num_samples, n = size(input.loaded_samples.x0_values)
     num_factors, factoridx, X = build_linear_regression_design_matrix(input)
 
     println("Sample data loaded")
@@ -61,11 +61,7 @@ function estimate_transcript_linear_regression(input::ModelInput)
 
     x = tf.matmul(X, w)
 
-    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                    x=x,
-                    efflens=input.likapprox_efflen,
-                    invhsb_params=input.likapprox_invhsb_params,
-                    value=input.likapprox_laparam)
+    likapprox = RNASeqApproxLikelihood(input, x)
 
     # inference
     # ---------
@@ -76,11 +72,10 @@ function estimate_transcript_linear_regression(input::ModelInput)
     qw_scale = tf.nn[:softplus](tf.Variable(tf.zeros([num_factors, n])))
     qw = edmodels.Normal(loc=qw_loc, scale=qw_scale)
 
-    inference = ed.KLqp(Dict(w => qw),
-                        data=Dict(likapprox_laparam => input.likapprox_laparam))
+    inference = ed.KLqp(Dict(w => qw), data=Dict(likapprox => Float32[]))
 
     optimizer = tf.train[:AdamOptimizer](0.1)
-    inference[:run](n_iter=1000, optimizer=optimizer)
+    run_inference(input, inference, 1000, optimizer)
 
 
     sess = ed.get_session()

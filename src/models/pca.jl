@@ -4,7 +4,7 @@ function estimate_pca(input::ModelInput)
         error("PCA only implemented with transcripts")
     end
 
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
     num_components = 2
 
     w = edmodels.Normal(loc=tf.zeros([n, num_components]),
@@ -23,9 +23,6 @@ function estimate_pca(input::ModelInput)
     x = tf.add(x_bias_, tf.matmul(z_, w_, transpose_b=true))
     # x = tf.matmul(z_, w_, transpose_b=true)
 
-
-
-
     x_err_log_sigma_mu0 = tf.constant(-8.0, shape=[n])
     x_err_log_sigma_sigma0 = tf.constant(1.0, shape=[n])
     x_err_log_sigma = edmodels.MultivariateNormalDiag(x_err_log_sigma_mu0,
@@ -39,13 +36,7 @@ function estimate_pca(input::ModelInput)
 
     x_err = edmodels.MultivariateNormalDiag(x, x_err_sigma_param)
 
-
-    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                    x=x,
-                    # x=x_err,
-                    efflens=input.likapprox_efflen,
-                    invhsb_params=input.likapprox_invhsb_params,
-                    value=input.likapprox_laparam)
+    likapprox = RNASeqApproxLikelihood(input, x)
 
     qx_bias_loc = tf.Variable(tf.fill([1,n], log(1/n)))
     qx_bias = edmodels.Normal(loc=qx_bias_loc,
@@ -70,11 +61,11 @@ function estimate_pca(input::ModelInput)
 
     inference = ed.KLqp(Dict(w => qw, z => qz, x_bias => qx_bias,
                              x_err_log_sigma => qx_err_log_sigma, x_err => qx_err),
-                        data=Dict(likapprox_laparam => input.likapprox_laparam))
+                        data=Dict(likapprox => Float32[]))
 
     optimizer = tf.train[:AdamOptimizer](1e-1)
     # inference[:run](n_iter=1000, optimizer=optimizer)
-    inference[:run](n_iter=500, optimizer=optimizer)
+    run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
     qz_loc_values = @show sess[:run](qz_loc)
@@ -108,7 +99,7 @@ function estimate_batch_pca(input::ModelInput)
         error("PCA only implemented with transcripts")
     end
 
-    num_samples, n = size(input.x0)
+    num_samples, n = size(input.loaded_samples.x0_values)
     num_components = 2
 
     # build design matrix
@@ -116,7 +107,7 @@ function estimate_batch_pca(input::ModelInput)
 
     factoridx = Dict{String, Int}()
     # factoridx["bias"] = 1
-    for factors in input.sample_factors
+    for factors in input.loaded_samples.sample_factors
         for factor in factors
             get!(factoridx, factor, length(factoridx) + 1)
         end
@@ -125,7 +116,7 @@ function estimate_batch_pca(input::ModelInput)
     num_factors = length(factoridx)
     X_ = zeros(Float32, (num_samples, num_factors))
     for i in 1:num_samples
-        for factor in input.sample_factors[i]
+        for factor in input.loaded_samples.sample_factors[i]
             j = factoridx[factor]
             X_[i, j] = 1
         end
@@ -209,12 +200,7 @@ function estimate_batch_pca(input::ModelInput)
     # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X", summarize=10)
     # x = x_batch
 
-    likapprox_laparam = rnaseq_approx_likelihood.RNASeqApproxLikelihood(
-                    x=x_mu,
-                    efflens=input.likapprox_efflen,
-                    invhsb_params=input.likapprox_invhsb_params,
-                    value=input.likapprox_laparam)
-
+    likapprox = RNASeqApproxLikelihood(input, x_mu)
 
     qx_bias_loc = tf.Variable(tf.fill([1,n], log(1/n)))
     qx_bias = edmodels.Normal(loc=qx_bias_loc,
@@ -254,16 +240,19 @@ function estimate_batch_pca(input::ModelInput)
     qz = edmodels.Normal(loc=qz_loc, scale=qz_scale)
 
 
-    qx_loc = tf.Variable(tf.fill([num_samples,n], log(1/n)))
-    qx = edmodels.Normal(loc=qx_loc,
-                         scale=tf.nn[:softplus](tf.Variable(tf.zeros([num_samples, n]))))
+    # qx_loc = tf.Variable(tf.fill([num_samples,n], log(1/n)))
+    # qx = edmodels.Normal(loc=qx_loc,
+    #                      scale=tf.nn[:softplus](tf.Variable(tf.zeros([num_samples, n]))))
 
-    inference = ed.KLqp(Dict(w => qw, w_batch => qw_batch, z => qz, x => qx, x_bias => qx_bias),
-                        data=Dict(likapprox_laparam => input.likapprox_laparam))
+    # inference = ed.KLqp(Dict(w => qw, w_batch => qw_batch, z => qz, x => qx, x_bias => qx_bias),
+    #                     data=Dict(likapprox => Float32[]))
+
+    inference = ed.KLqp(Dict(w => qw, w_batch => qw_batch, z => qz, x_bias => qx_bias),
+                        data=Dict(likapprox => Float32[]))
 
     optimizer = tf.train[:AdamOptimizer](1e-1)
     # optimizer = tf.train[:MomentumOptimizer](1e-9, 0.99)
-    inference[:run](n_iter=1000, optimizer=optimizer)
+    run_inference(input, inference, 1000, optimizer)
 
     sess = ed.get_session()
     qz_loc_values = @show sess[:run](qz_loc)

@@ -39,14 +39,27 @@ function estimate_transcript_expression(input::ModelInput)
 
     inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu), data=Dict(likapprox => Float32[]))
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    run_inference(input, inference, 100, optimizer)
+    run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
-    qx_mu_value    = sess[:run](qx_mu_param)
-    qx_sigma_value = sess[:run](qx_sigma_param)
 
     est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
-    # efflens = sess[:run](input.loaded_samples.variables[:efflen])
+    mean_est  = sess[:run](qx_mu_param)
+    sigma_est = sess[:run](qx_sigma_param)
+
+    # TODO: make this a command line parameter
+    credible_interval = (0.01, 0.99)
+
+    lower_credible = similar(mean_est)
+    upper_credible = similar(mean_est)
+    for i in 1:size(mean_est, 1)
+        for j in 1:size(mean_est, 2)
+            dist = Normal(mean_est[i, j], sigma_est[i, j])
+
+            lower_credible[i, j] = quantile(dist, credible_interval[1])
+            upper_credible[i, j] = quantile(dist, credible_interval[2])
+        end
+    end
 
     # reset session and graph to free up memory in case more needs to be done
     tf.reset_default_graph()
@@ -54,12 +67,11 @@ function estimate_transcript_expression(input::ModelInput)
     old_sess[:close]()
     ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    # @show minimum(qx_mu_value), median(qx_mu_value), maximum(qx_mu_value)
-    # @show minimum(qx_sigma_value), median(qx_sigma_value), maximum(qx_sigma_value)
-
     # TODO: this should be a temporary measure until we decide exactly how
     # results should be reported. Probably in sqlite or something.
-    write_estimates("estimates.csv", input.loaded_samples.sample_names, est)
+    write_transcript_expression_csv("estimates.csv",
+                                    input.loaded_samples.sample_names,
+                                    mean_est, lower_credible, upper_credible)
 
     # open("efflen.csv", "w") do out
     #     println(out, "transcript_num,efflen")
@@ -68,7 +80,22 @@ function estimate_transcript_expression(input::ModelInput)
     #     end
     # end
 
-    return qx_mu_value, qx_sigma_value
+    return mean_est, sigma_est
+end
+
+
+function write_transcript_expression_csv(output_filename, sample_names,
+                                         est, lower_credible, upper_credible)
+    num_samples, n = size(est)
+    open(output_filename, "w") do output
+        println(output, "sample_name,feature_num,proportion,lower_credible,upper_credible")
+        for (i, sample_name) in enumerate(sample_names)
+            for j in 1:n
+                @printf(output, "%s,%d,%e,%e,%e\n", sample_name, j,
+                        est[i, j], lower_credible[i, j], upper_credible[i, j])
+            end
+        end
+    end
 end
 
 

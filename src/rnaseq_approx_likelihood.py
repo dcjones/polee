@@ -130,14 +130,14 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_lm = tf.gather_nd(x_cumsum, leftmost_indexes, name="x_lm")
         x_rm = tf.gather_nd(x_cumsum, rightmost_indexes, name="x_rm")
 
-        u = x_rm - x_lm
+        u = tf.identity(x_rm - x_lm, name="u")
         u = tf.to_float(u)
-        u_log = tf.log(u)
+        u_log = tf.log(u, name="u_log")
 
         left_node_values  = tf.gather_nd(u_log, internal_node_left_indexes)
         right_node_values = tf.gather_nd(u_log, internal_node_right_indexes)
 
-        y_logit = left_node_values - right_node_values
+        y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
 
         # normal standardization transform
         # --------------------------------

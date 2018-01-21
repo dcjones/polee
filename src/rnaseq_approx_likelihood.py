@@ -55,17 +55,30 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         alpha = tf.identity(self.la_params[...,2,:], name="alpha")
 
 
-        # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X SCALE", summarize=6)
+        # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X scale", summarize=6)
+        # self.x = tf.Print(self.x, [tf.reduce_min(self.x), tf.reduce_max(self.x)], "X span")
 
         x = tf.nn.softmax(self.x)
 
         # effective length transform
         # --------------------------
 
-        x_scaled = x * self.efflens
+        efflens = self.efflens
+        # efflens = tf.clip_by_value(efflens, 200.0, 1e9)
+        # efflens = tf.Print(efflens, [tf.reduce_min(efflens), tf.reduce_max(efflens)], "efflens scale")
+        x_scaled = x * efflens
+        # x_scaled = x * self.efflens
+        # x_scaled = tf.Print(x_scaled, [tf.reduce_min(x_scaled), tf.reduce_max(x_scaled)], "X_SCALED SCALE")
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
         x_efflen = x_scaled / x_scaled_sum
 
+        # x_scaled = tf.to_double(x * self.efflens)
+        # x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
+        # x_efflen = tf.to_float(x_scaled / x_scaled_sum)
+
+        # x_efflen = x
+
+        # I think it's actually the negation of this
         # efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
 
 
@@ -138,6 +151,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         right_node_values = tf.gather_nd(u_log, internal_node_right_indexes)
 
         y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
+        # y_logit = tf.Print(y_logit, [tf.reduce_min(y_logit), tf.reduce_max(y_logit)], "y_logit span")
 
         # normal standardization transform
         # --------------------------------

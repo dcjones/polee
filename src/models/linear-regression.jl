@@ -40,15 +40,13 @@ function estimate_transcript_linear_regression(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
     num_factors, factoridx, X = build_linear_regression_design_matrix(input)
 
-    println("Sample data loaded")
-
     # model specification
     # -------------------
 
     w_mu0 = 0.0
-    w_sigma0 = 1.0
+    w_sigma0 = 2.0
     w_bias_mu0 = log(1/n)
-    w_bias_sigma0 = 5.0
+    w_bias_sigma0 = 10.0
 
     w_sigma = tf.concat(
                   [tf.constant(w_bias_sigma0, shape=[1, n]),
@@ -57,9 +55,41 @@ function estimate_transcript_linear_regression(input::ModelInput)
                   [tf.constant(w_bias_mu0, shape=[1, n]),
                    tf.constant(w_mu0, shape=[num_factors-1, n])], 0)
 
-    w = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
 
-    x = tf.matmul(X, w)
+    # sess = ed.get_session()
+    # @show sum(sess[:run](tf.matmul(X, w_mu)), 1)
+    # @show sum(exp.(sess[:run](tf.matmul(X, w_mu))), 2)
+    # exit()
+
+
+    w = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
+    x_mu = tf.matmul(X, w)
+
+    # x_mu = x_mu + 0.0
+    # x_mu = tf.Print(x_mu, [tf.reduce_min(x_mu), tf.reduce_max(x_mu)], "x_mu span")
+
+    x_log_sigma_mu0 = tf.constant(-0.5, shape=[n])
+    x_log_sigma_sigma0 = tf.constant(1.0, shape=[n])
+    x_log_sigma = edmodels.MultivariateNormalDiag(x_log_sigma_mu0,
+                                                  x_log_sigma_sigma0)
+    x_sigma = tf.exp(x_log_sigma)
+    x_sigma = tf.expand_dims(x_sigma, 0)
+
+    # x_sigma = tf_print_span(x_sigma, "x_sigma span")
+
+    x_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
+                              x_sigma, name="x_sigma_param")
+                            #   tf.expand_dims(x_sigma, 0), name="x_sigma_param")
+    @show x_sigma_param
+
+    # x = edmodels.MultivariateNormalDiag(x_mu, x_sigma_param)
+
+    x_df = tf.constant(1.0, shape=[num_samples, n])
+    x = edmodels.StudentT(df=x_df, loc=x_mu, scale=x_sigma_param)
+
+    # x_ = x + 0.0
+    # x_ = tf.Print(x_, [tf.reduce_min(x_), tf.reduce_max(x_)], "x_ span")
+
 
     likapprox = RNASeqApproxLikelihood(input, x)
 
@@ -68,25 +98,58 @@ function estimate_transcript_linear_regression(input::ModelInput)
 
     println("Estimating...")
 
-    qw_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_factors, n])))
-    qw_scale = tf.nn[:softplus](tf.Variable(tf.zeros([num_factors, n])))
-    qw = edmodels.Normal(loc=qw_loc, scale=qw_scale)
+    qw_loc = tf.Variable(w_mu)
+    # qw_loc = tf.Print(qw_loc, [tf.reduce_min(qw_loc), tf.reduce_max(qw_loc)], "QW_LOC SPAN")
+    # Xqw = tf.matmul(X, qw_loc)
+    # qw_loc = tf.Print(qw_loc, [tf.reduce_min(Xqw), tf.reduce_max(Xqw)], "Xqw SPAN")
 
-    inference = ed.KLqp(Dict(w => qw), data=Dict(likapprox => Float32[]))
+    qw_scale = tf.nn[:softplus](tf.Variable(tf.fill([num_factors, n], -4.0)))
+    # qw_scale = tf.Print(qw_scale, [tf.reduce_min(qw_scale), tf.reduce_max(qw_scale)], "QW_SCALE SPAN")
+    qw = edmodels.MultivariateNormalDiag(qw_loc, qw_scale)
+    # Xqw = tf.matmul(X, qw)
+    # qw = tf.Print(qw, [tf.reduce_min(Xqw), tf.reduce_max(Xqw)], "Xqw SPAN")
+
+    qx_log_sigma_mu_param = tf.Variable(tf.fill([n], 0.0f0), name="qx_log_sigma_mu_param")
+    qx_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0), name="qx_log_sigma_sigma_param"))
+    qx_log_sigma = edmodels.MultivariateNormalDiag(qx_log_sigma_mu_param,
+                                                   qx_log_sigma_sigma_param)
+
+    qx_mu_param = tf.Variable(tf.fill([num_samples, n], w_bias_mu0), name="qx_mu_param")
+    qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_sigma_param"))
+    qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
+
+    inference = ed.KLqp(Dict(w => qw, x => qx, x_log_sigma => qx_log_sigma),
+                        data=Dict(likapprox => Float32[]))
 
     optimizer = tf.train[:AdamOptimizer](0.1)
-    run_inference(input, inference, 1000, optimizer)
-
+    # run_inference(input, inference, 2000, optimizer)
+    run_inference(input, inference, 20, optimizer)
 
     sess = ed.get_session()
 
     output_filename = isnull(input.output_filename) ?
         "effects.db" : get(input.output_filename)
 
-    @time write_effects(output_filename, factoridx,
-                        sess[:run](qw_loc),
-                        sess[:run](qw_scale),
-                        input.feature)
+    mean_est = sess[:run](qw_loc)
+    sigma_est = sess[:run](qw_scale)
+    error_sigma = exp.(sess[:run](qx_log_sigma_mu_param))
+    lower_credible = similar(mean_est)
+    upper_credible = similar(mean_est)
+    for i in 1:size(mean_est, 1)
+        for j in 1:size(mean_est, 2)
+            dist = Normal(mean_est[i, j], sigma_est[i, j])
+
+            lower_credible[i, j] = quantile(dist, input.credible_interval[1])
+            upper_credible[i, j] = quantile(dist, input.credible_interval[2])
+        end
+    end
+
+    write_effects(output_filename, factoridx,
+                  mean_est,
+                  lower_credible,
+                  upper_credible,
+                  error_sigma,
+                  input.feature)
 end
 
 

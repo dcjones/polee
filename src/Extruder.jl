@@ -208,6 +208,10 @@ function main()
                 default = "csv"
             "--exclude-transcripts"
                 required = false
+            "--credible-lower"
+                default = 0.025
+            "--credible-upper"
+                default = 0.975
             "feature"
                 required = true
             "model"
@@ -242,9 +246,14 @@ function main()
             error("Output format must be either \"csv\" or \"sqlite3\".")
         end
 
+        credible_interval =
+            (Float64(parsed_args["credible-lower"]),
+             Float64(parsed_args["credible-upper"]))
+
         input = ModelInput(
             loaded_samples, feature, ts, ts_metadata,
-            parsed_args["output"], output_format, gene_db)
+            parsed_args["output"], output_format, gene_db,
+            credible_interval)
 
         EXTRUDER_MODELS[parsed_args["model"]](input)
 

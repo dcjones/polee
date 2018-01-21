@@ -194,6 +194,7 @@ struct ModelInput
     output_filename::Nullable{String}
     output_format::Symbol
     gene_db::SQLite.DB
+    credible_interval::Tuple{Float64, Float64}
 end
 
 
@@ -230,7 +231,9 @@ function run_inference(input, inference, n_iter, optimizer)
     # println("MADE XLA SESSION")
 
     sess = ed.get_session()
+    # TODO: default optimizer seems to be better, should we keep that?
     inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+    # inference[:initialize](n_iter=n_iter)
 
     sess[:run](tf.global_variables_initializer(),
                feed_dict=input.loaded_samples.init_feed_dict)
@@ -242,15 +245,15 @@ function run_inference(input, inference, n_iter, optimizer)
 
     # profiler
     # --------
-    # prof_opt_builder = tf.profiler[:ProfileOptionBuilder]
-    # prof_opts = prof_opt_builder(prof_opt_builder[:time_and_memory]())[:order_by]("micros")[:build]()
+    prof_opt_builder = tf.profiler[:ProfileOptionBuilder]
+    prof_opts = prof_opt_builder(prof_opt_builder[:time_and_memory]())[:order_by]("micros")[:build]()
 
-    # run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
-    # run_metadata = tf.RunMetadata()
-    # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
-    #            options=run_options, run_metadata=run_metadata)
+    run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    run_metadata = tf.RunMetadata()
+    sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
+               options=run_options, run_metadata=run_metadata)
 
-    # tf.profiler[:profile](sess[:graph], run_meta=run_metadata, options=prof_opts)
+    tf.profiler[:profile](sess[:graph], run_meta=run_metadata, options=prof_opts)
 
     # timeline profiler
     # -----------------
@@ -258,11 +261,12 @@ function run_inference(input, inference, n_iter, optimizer)
     # run_metadata = tf.RunMetadata()
     # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
     #            options=run_options, run_metadata=run_metadata)
-    # tl = tftl.Timeline(run_metadata[:step_stats])
-    # ctf = tl[:generate_chrome_trace_format]()
-    # trace_out = pybuiltin(:open)("timeline.json", "w")
-    # trace_out[:write](ctf)
-    # trace_out[:close]()
+
+    tl = tftl.Timeline(run_metadata[:step_stats])
+    ctf = tl[:generate_chrome_trace_format]()
+    trace_out = pybuiltin(:open)("timeline.json", "w")
+    trace_out[:write](ctf)
+    trace_out[:close]()
 
     inference[:finalize]()
 end
@@ -282,7 +286,8 @@ function write_effects_csv(filename, factoridx, W)
 end
 
 
-function write_effects(output_filename, factoridx, W, sigma, feature)
+function write_effects(output_filename, factoridx, W,
+                       lower_credible, upper_credible, error_sigma, feature)
     println("Writing regression results to ", output_filename)
 
     db = SQLite.DB(output_filename)
@@ -291,10 +296,10 @@ function write_effects(output_filename, factoridx, W, sigma, feature)
     SQLite.execute!(db,
         """
         create table effects
-        ($(feature)_num INT, factor TEXT, w REAL, sigma REAL)
+        ($(feature)_num INT, factor TEXT, w REAL, w_lower REAL, w_upper REAL, error_sigma REAL)
         """)
 
-    ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3, ?4)")
+    ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3, ?4, ?5, ?6)")
 
     SQLite.execute!(db, "begin transaction")
     n = size(W, 2)
@@ -304,7 +309,9 @@ function write_effects(output_filename, factoridx, W, sigma, feature)
             SQLite.bind!(ins_stmt, 1, j)
             SQLite.bind!(ins_stmt, 2, factor)
             SQLite.bind!(ins_stmt, 3, W[idx, j])
-            SQLite.bind!(ins_stmt, 4, sigma[j])
+            SQLite.bind!(ins_stmt, 4, lower_credible[idx, j])
+            SQLite.bind!(ins_stmt, 5, upper_credible[idx, j])
+            SQLite.bind!(ins_stmt, 6, error_sigma[j])
             SQLite.execute!(ins_stmt)
         end
     end

@@ -23,7 +23,7 @@ function estimate_transcript_expression(input::ModelInput)
 
     x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
 
-    x, x_mu_param, x_sigma_param, x_mu, likapprox =
+    x, x_log_sigma, x_mu_param, x_sigma_param, x_mu, likapprox =
         transcript_quantification_model(input)
 
     println("Estimating...")
@@ -37,7 +37,13 @@ function estimate_transcript_expression(input::ModelInput)
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
-    inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu), data=Dict(likapprox => Float32[]))
+    qx_log_sigma_mu_param = tf.Variable(tf.fill([n], 0.0f0), name="qx_log_sigma_mu_param")
+    qx_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0), name="qx_log_sigma_sigma_param"))
+    qx_log_sigma = edmodels.MultivariateNormalDiag(qx_log_sigma_mu_param,
+                                                   qx_log_sigma_sigma_param)
+
+    inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu, x_log_sigma => qx_log_sigma),
+                        data=Dict(likapprox => Float32[]))
     optimizer = tf.train[:AdamOptimizer](1e-2)
     run_inference(input, inference, 500, optimizer)
 
@@ -47,25 +53,24 @@ function estimate_transcript_expression(input::ModelInput)
     mean_est  = sess[:run](qx_mu_param)
     sigma_est = sess[:run](qx_sigma_param)
 
-    # TODO: make this a command line parameter
-    credible_interval = (0.01, 0.99)
-
     lower_credible = similar(mean_est)
     upper_credible = similar(mean_est)
     for i in 1:size(mean_est, 1)
         for j in 1:size(mean_est, 2)
             dist = Normal(mean_est[i, j], sigma_est[i, j])
 
-            lower_credible[i, j] = quantile(dist, credible_interval[1])
-            upper_credible[i, j] = quantile(dist, credible_interval[2])
+            lower_credible[i, j] = quantile(dist, input.credible_interval[1])
+            upper_credible[i, j] = quantile(dist, input.credible_interval[2])
         end
     end
 
     # reset session and graph to free up memory in case more needs to be done
-    tf.reset_default_graph()
-    old_sess = ed.get_session()
-    old_sess[:close]()
-    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
+    # TODO: This doesn't seem to work on the latest version of Edward.
+    # Do I even still need it?
+    # tf.reset_default_graph()
+    # old_sess = ed.get_session()
+    # old_sess[:close]()
+    # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
     # TODO: this should be a temporary measure until we decide exactly how
     # results should be reported. Probably in sqlite or something.
@@ -88,7 +93,7 @@ function write_transcript_expression_csv(output_filename, sample_names,
                                          est, lower_credible, upper_credible)
     num_samples, n = size(est)
     open(output_filename, "w") do output
-        println(output, "sample_name,feature_num,proportion,lower_credible,upper_credible")
+        println(output, "sample_name,transcript_num,expression,lower_credible,upper_credible")
         for (i, sample_name) in enumerate(sample_names)
             for j in 1:n
                 @printf(output, "%s,%d,%e,%e,%e\n", sample_name, j,
@@ -383,16 +388,32 @@ Build basic transcript quantification model with some shrinkage towards a pooled
 function transcript_quantification_model(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
 
-    # y_mu: pooled mean
-    # x_mu_mu0 = tf.constant(log(1/n), shape=[n])
-    # x_mu_sigma0 = tf.constant(10.0, shape=[n])
-    # TODO: 
     x_mu_mu0 = tf.constant(log(0.01 * 1/n), shape=[n])
-    x_mu_sigma0 = tf.constant(5.0, shape=[n])
+    # x_mu_mu0 = tf.constant(log(1/n), shape=[n])
+    x_mu_sigma0 = tf.constant(2.0, shape=[n])
     x_mu = edmodels.MultivariateNormalDiag(x_mu_mu0, x_mu_sigma0)
 
+    # x_mu_mu0a = tf.constant(log(0.01 * 1/n), shape=[n])
+    # x_mu_sigma0a = tf.constant(0.5, shape=[n])
+
+    # x_mu_mu0b = tf.constant(log(0.1 * 1/n), shape=[n])
+    # x_mu_sigma0b = tf.constant(5.0, shape=[n])
+
+    # x_mu_probs = tf.stack([tf.constant(0.80, shape=[n]),
+    #                        tf.constant(0.20, shape=[n])], -1)
+
+    # x_mu = edmodels.Mixture(
+    #     cat=tfdist.Categorical(probs=x_mu_probs),
+    #     components=[
+    #         edmodels.Normal(loc=x_mu_mu0a, scale=x_mu_sigma0a),
+    #         edmodels.Normal(loc=x_mu_mu0b, scale=x_mu_sigma0b)])
+
+        # components=[
+        #     edmodels.MultivariateNormalDiag(x_mu_mu0a, x_mu_sigma0a),
+        #     edmodels.MultivariateNormalDiag(x_mu_mu0b, x_mu_sigma0b)])
+
     # x_sigma: variance around pooled mean
-    x_sigma_mu0 = tf.constant(0.0, shape=[n])
+    x_sigma_mu0 = tf.constant(-2.0, shape=[n])
     x_sigma_sigma0 = tf.constant(1.0, shape=[n])
     x_log_sigma = edmodels.MultivariateNormalDiag(x_sigma_mu0, x_sigma_sigma0)
     x_sigma = tf.exp(x_log_sigma)
@@ -407,7 +428,7 @@ function transcript_quantification_model(input::ModelInput)
     x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
     likapprox = RNASeqApproxLikelihood(input, x)
 
-    return x, x_mu_param, x_sigma_param, x_mu, likapprox
+    return x, x_log_sigma, x_mu_param, x_sigma_param, x_mu, likapprox
 end
 
 

@@ -173,7 +173,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # standand normal log-probability
         # -------------------------------
 
-        lp = tf.reduce_sum((-np.log(2.0*np.pi) - tf.square(z)) / 2.0, axis=1)
+        lp = (-np.log(2.0*np.pi) -  tf.reduce_sum(tf.square(z), axis=1)) / 2.0
 
         # TODO: Really there should be jacobian terms, but this seems to only
         # cause problems. I don't know why.

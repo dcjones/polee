@@ -55,41 +55,15 @@ function estimate_transcript_linear_regression(input::ModelInput)
                   [tf.constant(w_bias_mu0, shape=[1, n]),
                    tf.constant(w_mu0, shape=[num_factors-1, n])], 0)
 
-
-    # sess = ed.get_session()
-    # @show sum(sess[:run](tf.matmul(X, w_mu)), 1)
-    # @show sum(exp.(sess[:run](tf.matmul(X, w_mu))), 2)
-    # exit()
-
-
     w = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
     x_mu = tf.matmul(X, w)
-
-    # x_mu = x_mu + 0.0
-    # x_mu = tf.Print(x_mu, [tf.reduce_min(x_mu), tf.reduce_max(x_mu)], "x_mu span")
 
     x_log_sigma_mu0 = tf.constant(-0.5, shape=[n])
     x_log_sigma_sigma0 = tf.constant(1.0, shape=[n])
     x_log_sigma = edmodels.MultivariateNormalDiag(x_log_sigma_mu0,
                                                   x_log_sigma_sigma0)
     x_sigma = tf.exp(x_log_sigma)
-    x_sigma = tf.expand_dims(x_sigma, 0)
-
-    # x_sigma = tf_print_span(x_sigma, "x_sigma span")
-
-    x_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
-                              x_sigma, name="x_sigma_param")
-                            #   tf.expand_dims(x_sigma, 0), name="x_sigma_param")
-    @show x_sigma_param
-
-    # x = edmodels.MultivariateNormalDiag(x_mu, x_sigma_param)
-
-    x_df = tf.constant(1.0, shape=[num_samples, n])
-    x = edmodels.StudentT(df=x_df, loc=x_mu, scale=x_sigma_param)
-
-    # x_ = x + 0.0
-    # x_ = tf.Print(x_, [tf.reduce_min(x_), tf.reduce_max(x_)], "x_ span")
-
+    x = edmodels.StudentT(df=1.0, loc=x_mu, scale=x_sigma)
 
     likapprox = RNASeqApproxLikelihood(input, x)
 

@@ -3,8 +3,11 @@ unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Extruder", "src"))
 @pyimport tensorflow.contrib.distributions as tfdist
 @pyimport tensorflow.contrib.tfprof as tfprof
 @pyimport tensorflow.python.client.timeline as tftl
+@pyimport tensorflow.python.util.all_util as tfutil
 @pyimport edward as ed
 @pyimport edward.models as edmodels
+tfutil.reveal_undocumented("edward.util.graphs")
+# @pyimport edward.util.graphs as edgraphs
 @pyimport rnaseq_approx_likelihood
 
 
@@ -224,13 +227,15 @@ This is essentiall Inference.run from edward, but customized to avoid
 reinitializing variables on each iteration.
 """
 function run_inference(input, inference, n_iter, optimizer)
+    sess = ed.get_session()
+
     # enable XLA
     # config = tf.ConfigProto()
+    # config = tf.ConfigProto(device_count = Dict("GPU" => 0))
     # config[:graph_options][:optimizer_options][:global_jit_level] = tf.OptimizerOptions[:ON_1]
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession(config=config)
-    # println("MADE XLA SESSION")
+    # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    sess = ed.get_session()
     # TODO: default optimizer seems to be better, should we keep that?
     inference[:initialize](n_iter=n_iter, optimizer=optimizer)
     # inference[:initialize](n_iter=n_iter)
@@ -245,15 +250,15 @@ function run_inference(input, inference, n_iter, optimizer)
 
     # profiler
     # --------
-    prof_opt_builder = tf.profiler[:ProfileOptionBuilder]
-    prof_opts = prof_opt_builder(prof_opt_builder[:time_and_memory]())[:order_by]("micros")[:build]()
+    # prof_opt_builder = tf.profiler[:ProfileOptionBuilder]
+    # prof_opts = prof_opt_builder(prof_opt_builder[:time_and_memory]())[:order_by]("micros")[:build]()
 
-    run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
-    run_metadata = tf.RunMetadata()
-    sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
-               options=run_options, run_metadata=run_metadata)
+    # run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    # run_metadata = tf.RunMetadata()
+    # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
+    #            options=run_options, run_metadata=run_metadata)
 
-    tf.profiler[:profile](sess[:graph], run_meta=run_metadata, options=prof_opts)
+    # tf.profiler[:profile](sess[:graph], run_meta=run_metadata, options=prof_opts)
 
     # timeline profiler
     # -----------------
@@ -262,11 +267,11 @@ function run_inference(input, inference, n_iter, optimizer)
     # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
     #            options=run_options, run_metadata=run_metadata)
 
-    tl = tftl.Timeline(run_metadata[:step_stats])
-    ctf = tl[:generate_chrome_trace_format]()
-    trace_out = pybuiltin(:open)("timeline.json", "w")
-    trace_out[:write](ctf)
-    trace_out[:close]()
+    # tl = tftl.Timeline(run_metadata[:step_stats])
+    # ctf = tl[:generate_chrome_trace_format]()
+    # trace_out = pybuiltin(:open)("timeline.json", "w")
+    # trace_out[:write](ctf)
+    # trace_out[:close]()
 
     inference[:finalize]()
 end

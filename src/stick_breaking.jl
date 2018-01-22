@@ -733,11 +733,10 @@ function make_inverse_hsb_params(node_parent_idxs, node_js)
     @assert leftmost[1] == 1
     @assert rightmost[1] == n
 
-    # make 0-based for tensorflow
-    return (leafindex .- Int32(1),
-            internal_node_left_indexes .- Int32(1),
-            internal_node_right_indexes .- Int32(1),
-            leftmost .- Int32(1),
+    return (leafindex,
+            internal_node_left_indexes,
+            internal_node_right_indexes,
+            leftmost,
             rightmost)
 end
 

@@ -23,10 +23,10 @@ mutable struct LoadedSamples
 
     # hsb parameters
     leaf_indexes_values::Array{Int32, 3}
-    internal_node_left_indexes_values::Array{Int32, 3}
-    internal_node_right_indexes_values::Array{Int32, 3}
-    leftmost_indexes_values::Array{Int32, 3}
-    rightmost_indexes_values::Array{Int32, 3}
+    left_child_rightmost_index::Array{Int32, 3}
+    left_child_leftmost_index::Array{Int32, 3}
+    right_child_rightmost_index::Array{Int32, 3}
+    right_child_leftmost_index::Array{Int32, 3}
 
     # tensorflow placeholder variables and initalizations
     variables::Dict{Symbol, PyObject}
@@ -81,10 +81,10 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
 
     # index parameters used to compute inverse heirarchical stick breaking transform
     leaf_indexes_values                = Array{Int32}(num_samples, n, 2)
-    internal_node_left_indexes_values  = Array{Int32}(num_samples, n-1, 2)
-    internal_node_right_indexes_values = Array{Int32}(num_samples, n-1, 2)
-    leftmost_indexes_values            = Array{Int32}(num_samples, 2*n-1, 2)
-    rightmost_indexes_values           = Array{Int32}(num_samples, 2*n-1, 2)
+    left_child_rightmost_index  = Array{Int32}(num_samples, n-1, 2)
+    left_child_leftmost_index   = Array{Int32}(num_samples, n-1, 2)
+    right_child_rightmost_index = Array{Int32}(num_samples, n-1, 2)
+    right_child_leftmost_index  = Array{Int32}(num_samples, n-1, 2)
 
     prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
     for (i, filename) in enumerate(filenames)
@@ -124,16 +124,21 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         (leafindex, internal_node_left_indexes, internal_node_right_indexes,
          leftmost, rightmost) = invhsb_params
 
+        # make 0-based for python/tensorflow
+        leafindex .-= Int32(1)
+
+        # make 1-based exclusive
+        leftmost .-= Int32(1)
+
         idxs = fill(Int32(i-1), n)
         leaf_indexes_values[i, :, :] = hcat(idxs, leafindex)
 
         idxs = fill(Int32(i-1), n-1)
-        internal_node_left_indexes_values[i, :, :] = hcat(idxs, internal_node_left_indexes)
-        internal_node_right_indexes_values[i, :, :] = hcat(idxs, internal_node_right_indexes)
+        left_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_left_indexes])
+        left_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_left_indexes])
 
-        idxs = fill(Int32(i-1), 2*n-1)
-        leftmost_indexes_values[i, :, :] = hcat(idxs, leftmost)
-        rightmost_indexes_values[i, :, :] = hcat(idxs, rightmost)
+        right_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_right_indexes])
+        right_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_right_indexes])
 
         # find reasonable initial valuse by taking the mean of the base normal
         # distribution and transforming it
@@ -152,17 +157,17 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
     var_names = [:la_param,
                  :efflen,
                  :leaf_indexes,
-                 :internal_node_left_indexes,
-                 :internal_node_right_indexes,
-                 :leftmost_indexes,
-                 :rightmost_indexes]
+                 :left_child_rightmost_index,
+                 :left_child_leftmost_index,
+                 :right_child_rightmost_index,
+                 :right_child_leftmost_index]
     var_values = Any[la_param_values,
                      efflen_values,
                      leaf_indexes_values,
-                     internal_node_left_indexes_values,
-                     internal_node_right_indexes_values,
-                     leftmost_indexes_values,
-                     rightmost_indexes_values]
+                     left_child_rightmost_index,
+                     left_child_leftmost_index,
+                     right_child_rightmost_index,
+                     right_child_leftmost_index]
 
     variables = Dict{Symbol, PyObject}()
     init_feed_dict = Dict{Any, Any}()
@@ -179,10 +184,10 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         x0_values,
         la_param_values,
         leaf_indexes_values,
-        internal_node_left_indexes_values,
-        internal_node_right_indexes_values,
-        leftmost_indexes_values,
-        rightmost_indexes_values,
+        left_child_rightmost_index,
+        left_child_leftmost_index,
+        right_child_rightmost_index,
+        right_child_leftmost_index,
         variables,
         init_feed_dict,
         Vector{String}[], String[])
@@ -207,10 +212,10 @@ Construct a python RNASeqApproxLikelihood class.
 function RNASeqApproxLikelihood(input::ModelInput, x)
     invhsb_params = [
         input.loaded_samples.variables[:leaf_indexes],
-        input.loaded_samples.variables[:internal_node_left_indexes],
-        input.loaded_samples.variables[:internal_node_right_indexes],
-        input.loaded_samples.variables[:leftmost_indexes],
-        input.loaded_samples.variables[:rightmost_indexes]
+        input.loaded_samples.variables[:left_child_rightmost_index],
+        input.loaded_samples.variables[:left_child_leftmost_index],
+        input.loaded_samples.variables[:right_child_rightmost_index],
+        input.loaded_samples.variables[:right_child_leftmost_index]
     ]
 
     return rnaseq_approx_likelihood.RNASeqApproxLikelihood(

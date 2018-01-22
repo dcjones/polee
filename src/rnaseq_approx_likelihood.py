@@ -86,10 +86,10 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # ---------------------------------------------
 
         leafindex = self.invhsb_params[0]
-        internal_node_left_indexes = self.invhsb_params[1]
-        internal_node_right_indexes = self.invhsb_params[2]
-        leftmost_indexes = self.invhsb_params[3]
-        rightmost_indexes = self.invhsb_params[4]
+        left_child_rightmost_index  = self.invhsb_params[1]
+        left_child_leftmost_index   = self.invhsb_params[2]
+        right_child_rightmost_index = self.invhsb_params[3]
+        right_child_leftmost_index  = self.invhsb_params[4]
 
         x_permed = tf.gather_nd(x_efflen, leafindex)
 
@@ -140,17 +140,13 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_cumsum = tf.cumsum(x_permed, axis=1)
         x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.float64), x_cumsum], axis=1)
 
-        x_lm = tf.gather_nd(x_cumsum, leftmost_indexes, name="x_lm")
-        x_rm = tf.gather_nd(x_cumsum, rightmost_indexes, name="x_rm")
-
-        u = tf.identity(x_rm - x_lm, name="u")
-        u = tf.to_float(u)
-        u_log = tf.log(u, name="u_log")
-
-        left_node_values  = tf.gather_nd(u_log, internal_node_left_indexes)
-        right_node_values = tf.gather_nd(u_log, internal_node_right_indexes)
+        left_node_values  = tf.log(tf.to_float(tf.gather_nd(x_cumsum, left_child_rightmost_index) -
+                                               tf.gather_nd(x_cumsum, left_child_leftmost_index)))
+        right_node_values = tf.log(tf.to_float(tf.gather_nd(x_cumsum, right_child_rightmost_index) -
+                                               tf.gather_nd(x_cumsum, right_child_leftmost_index)))
 
         y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
+
         # y_logit = tf.Print(y_logit, [tf.reduce_min(y_logit), tf.reduce_max(y_logit)], "y_logit span")
 
         # normal standardization transform

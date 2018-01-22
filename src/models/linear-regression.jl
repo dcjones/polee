@@ -96,8 +96,8 @@ function estimate_transcript_linear_regression(input::ModelInput)
                         data=Dict(likapprox => Float32[]))
 
     optimizer = tf.train[:AdamOptimizer](0.1)
-    # run_inference(input, inference, 2000, optimizer)
-    run_inference(input, inference, 20, optimizer)
+    run_inference(input, inference, 1500, optimizer)
+    # run_inference(input, inference, 20, optimizer)
 
     sess = ed.get_session()
 

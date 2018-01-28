@@ -63,7 +63,7 @@ function estimate_transcript_linear_regression(input::ModelInput)
     x_log_sigma = edmodels.MultivariateNormalDiag(x_log_sigma_mu0,
                                                   x_log_sigma_sigma0)
     x_sigma = tf.exp(x_log_sigma)
-    x = edmodels.StudentT(df=1.0, loc=x_mu, scale=x_sigma)
+    x = edmodels.StudentT(df=5.0, loc=x_mu, scale=x_sigma)
 
     likapprox = RNASeqApproxLikelihood(input, x)
 

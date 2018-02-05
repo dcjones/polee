@@ -44,9 +44,9 @@ function estimate_transcript_linear_regression(input::ModelInput)
     # -------------------
 
     w_mu0 = 0.0
-    w_sigma0 = 2.0
+    w_sigma0 = 1.0
     w_bias_mu0 = log(1/n)
-    w_bias_sigma0 = 10.0
+    w_bias_sigma0 = 2.5
 
     w_sigma = tf.concat(
                   [tf.constant(w_bias_sigma0, shape=[1, n]),
@@ -58,12 +58,12 @@ function estimate_transcript_linear_regression(input::ModelInput)
     w = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
     x_mu = tf.matmul(X, w)
 
-    x_log_sigma_mu0 = tf.constant(-0.5, shape=[n])
+    x_log_sigma_mu0 = tf.constant(-1.0, shape=[n])
     x_log_sigma_sigma0 = tf.constant(1.0, shape=[n])
     x_log_sigma = edmodels.MultivariateNormalDiag(x_log_sigma_mu0,
                                                   x_log_sigma_sigma0)
     x_sigma = tf.exp(x_log_sigma)
-    x = edmodels.StudentT(df=5.0, loc=x_mu, scale=x_sigma)
+    x = edmodels.StudentT(df=10.0, loc=x_mu, scale=x_sigma)
 
     likapprox = RNASeqApproxLikelihood(input, x)
 
@@ -72,31 +72,32 @@ function estimate_transcript_linear_regression(input::ModelInput)
 
     println("Estimating...")
 
-    qw_loc = tf.Variable(w_mu)
-    # qw_loc = tf.Print(qw_loc, [tf.reduce_min(qw_loc), tf.reduce_max(qw_loc)], "QW_LOC SPAN")
-    # Xqw = tf.matmul(X, qw_loc)
-    # qw_loc = tf.Print(qw_loc, [tf.reduce_min(Xqw), tf.reduce_max(Xqw)], "Xqw SPAN")
+    x0_log = log.(input.loaded_samples.x0_values)
+    qw_loc_init = vcat(
+        mean(x0_log, 1),
+        fill(0.0f0, (num_factors - 1, n)))
 
-    qw_scale = tf.nn[:softplus](tf.Variable(tf.fill([num_factors, n], -4.0)))
-    # qw_scale = tf.Print(qw_scale, [tf.reduce_min(qw_scale), tf.reduce_max(qw_scale)], "QW_SCALE SPAN")
+    qw_loc = tf.Variable(qw_loc_init)
+
+
+    qw_scale = tf.nn[:softplus](tf.Variable(tf.fill([num_factors, n], -1.0)))
     qw = edmodels.MultivariateNormalDiag(qw_loc, qw_scale)
-    # Xqw = tf.matmul(X, qw)
-    # qw = tf.Print(qw, [tf.reduce_min(Xqw), tf.reduce_max(Xqw)], "Xqw SPAN")
 
     qx_log_sigma_mu_param = tf.Variable(tf.fill([n], 0.0f0), name="qx_log_sigma_mu_param")
     qx_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0), name="qx_log_sigma_sigma_param"))
     qx_log_sigma = edmodels.MultivariateNormalDiag(qx_log_sigma_mu_param,
                                                    qx_log_sigma_sigma_param)
 
-    qx_mu_param = tf.Variable(tf.fill([num_samples, n], w_bias_mu0), name="qx_mu_param")
+    qx_mu_param = tf.Variable(x0_log, name="qx_mu_param")
     qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_sigma_param"))
     qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
 
     inference = ed.KLqp(Dict(w => qw, x => qx, x_log_sigma => qx_log_sigma),
                         data=Dict(likapprox => Float32[]))
 
-    optimizer = tf.train[:AdamOptimizer](0.1)
+    optimizer = tf.train[:AdamOptimizer](0.05)
     run_inference(input, inference, 1500, optimizer)
+
     # run_inference(input, inference, 20, optimizer)
 
     sess = ed.get_session()

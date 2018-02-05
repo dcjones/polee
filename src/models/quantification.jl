@@ -17,7 +17,7 @@ function estimate_expression(input::ModelInput)
 end
 
 
-function estimate_transcript_expression(input::ModelInput)
+function estimate_transcript_expression(input::ModelInput, write_results::Bool=true)
     num_samples, n = size(input.loaded_samples.x0_values)
     @show (num_samples, n)
 
@@ -45,7 +45,7 @@ function estimate_transcript_expression(input::ModelInput)
     inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu, x_log_sigma => qx_log_sigma),
                         data=Dict(likapprox => Float32[]))
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    run_inference(input, inference, 500, optimizer)
+    run_inference(input, inference, 1500, optimizer)
 
     sess = ed.get_session()
 
@@ -74,9 +74,11 @@ function estimate_transcript_expression(input::ModelInput)
 
     # TODO: this should be a temporary measure until we decide exactly how
     # results should be reported. Probably in sqlite or something.
-    write_transcript_expression_csv("estimates.csv",
-                                    input.loaded_samples.sample_names,
-                                    mean_est, lower_credible, upper_credible)
+    if write_results
+        write_transcript_expression_csv("estimates.csv",
+                                        input.loaded_samples.sample_names,
+                                        mean_est, lower_credible, upper_credible)
+    end
 
     # open("efflen.csv", "w") do out
     #     println(out, "transcript_num,efflen")

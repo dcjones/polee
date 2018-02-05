@@ -147,8 +147,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
 
-        # y_logit = tf.Print(y_logit, [tf.reduce_min(y_logit), tf.reduce_max(y_logit)], "y_logit span")
-
         # normal standardization transform
         # --------------------------------
 

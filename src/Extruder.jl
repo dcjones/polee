@@ -106,6 +106,8 @@ function main()
                 required = true
             "--excluded-seqs"
                 required = false
+            "--exclude-transcripts"
+                required = false
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
 
@@ -118,11 +120,21 @@ function main()
             end
         end
 
+        excluded_transcripts = Set{String}()
+        if parsed_args["exclude-transcripts"] != nothing
+            open(parsed_args["exclude-transcripts"]) do input
+                for line in eachline(input)
+                    push!(excluded_transcripts, chomp(line))
+                end
+            end
+        end
+
         sample = RNASeqSample(parsed_args["transcripts_filename"],
                               parsed_args["genome_filename"],
                               parsed_args["reads_filename"],
                               excluded_seqs,
-                              Nullable(parsed_args["output"]))
+                              excluded_transcripts,
+                              Nullable{String}(parsed_args["output"]))
         return
 
     elseif subcmd == "likelihood-approx"
@@ -270,6 +282,71 @@ function main()
         parsed_args = parse_args(subcmd_args, arg_settings)
         gibbs_sampler(parsed_args["likelihood_matrix"],
                       parsed_args["output"])
+        return
+    elseif subcmd == "approx-sample"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "post_mean.csv"
+            "transcripts"
+                required = true
+            "prepared_sample"
+                required = true
+        end
+        parsed_args = parse_args(subcmd_args, arg_settings)
+        excluded_transcripts = Set{String}()
+
+        ts, ts_metadata = Transcripts(parsed_args["transcripts"], excluded_transcripts)
+        n = length(ts)
+
+        input = h5open(parsed_args["prepared_sample"])
+        node_parent_idxs = read(input["node_parent_idxs"])
+        node_js          = read(input["node_js"])
+        efflens          = read(input["effective_lengths"])
+
+        @show quantile(efflens, [0.1, 0.2, 0.5, 0.8, 0.9])
+        efflens = map(x -> max(200.0, x), efflens)
+
+        mu    = read(input["mu"])
+        sigma = exp.(read(input["omega"]))
+        alpha = read(input["alpha"])
+
+        t = HSBTransform(node_parent_idxs, node_js)
+
+        num_samples = 1000
+        samples = Array{Float32}((num_samples, n))
+
+        zs0 = Array{Float32}(n-1)
+        zs = Array{Float32}(n-1)
+        ys = Array{Float64}(n-1)
+        xs = Array{Float32}(n)
+
+        prog = Progress(num_samples, 0.25, "Sampling from approx. likelihood ", 60)
+        for i in 1:num_samples
+            next!(prog)
+            for j in 1:n-1
+                zs0[j] = randn(Float32)
+            end
+            sinh_asinh_transform!(alpha, zs0, zs, Val{true})
+            logit_normal_transform!(mu, sigma, zs, ys, Val{true})
+            hsb_transform!(t, ys, xs, Val{true})
+
+            # effective length transform
+            xs ./= efflens
+            xs ./= sum(xs)
+            samples[i, :] = xs
+        end
+        finish!(prog)
+
+        # TODO: only interested in the mean for now, but we may want to dump
+        # all the samples some time.
+        post_mean = mean(samples, 1)
+        @show size(post_mean)
+        open(parsed_args["output"], "w") do output
+            for j in 1:length(post_mean)
+                println(output, post_mean[j])
+            end
+        end
+
         return
     else
         println("Unknown command: ", subcmd, "\n")

@@ -54,33 +54,22 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         sigma = tf.identity(self.la_params[...,1,:], name="sigma")
         alpha = tf.identity(self.la_params[...,2,:], name="alpha")
 
-
-        # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "X scale", summarize=6)
-        # self.x = tf.Print(self.x, [tf.reduce_min(self.x), tf.reduce_max(self.x)], "X span")
-
         x = tf.nn.softmax(self.x)
 
         # effective length transform
         # --------------------------
 
         efflens = self.efflens
-        # efflens = tf.clip_by_value(efflens, 200.0, 1e9)
-        # efflens = tf.Print(efflens, [tf.reduce_min(efflens), tf.reduce_max(efflens)], "efflens scale")
         x_scaled = x * efflens
-        # x_scaled = x * self.efflens
-        # x_scaled = tf.Print(x_scaled, [tf.reduce_min(x_scaled), tf.reduce_max(x_scaled)], "X_SCALED SCALE")
-        x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
+        x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keepdims=True)
         x_efflen = x_scaled / x_scaled_sum
 
-        # x_scaled = tf.to_double(x * self.efflens)
-        # x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keep_dims=True)
-        # x_efflen = tf.to_float(x_scaled / x_scaled_sum)
-
-        # x_efflen = x
-
-        # I think it's actually the negation of this
-        # efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
-
+        # Approximated likelihood assumes a uniform prior over x * efflens. We
+        # want instead a uniform prior over x (i.e. a function proportional to
+        # the likelihood). To get that, we correct the approximate likelihood
+        # using the log absolute determinant of the jacobian for the effective
+        # length transformation.
+        efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
 
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
@@ -92,49 +81,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         right_child_leftmost_index  = self.invhsb_params[4]
 
         x_permed = tf.gather_nd(x_efflen, leafindex)
-
-        # 31-bit fixed point
-        # This version convers numbers to 31bit fixed point to do cumsum and
-        # ensuring calculations
-
-            # x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "X SPAN")
-
-            # smallest number that can be represented in 31-bit fixed point
-            # fixed32_eps = 4.656613e-10
-
-            # x_permed = tf.clip_by_value(x_permed, fixed32_eps, 1.0)
-
-            # x_fixed = tf.to_int32(tf.round(x_permed * 2**31)) - 1 # to fixed
-
-            # x_fixed = tf.Print(x_fixed, [tf.reduce_min(x_fixed), tf.reduce_max(x_fixed)], "X FIXED SPAN")
-
-            # x_cumsum = tf.cumsum(x_fixed, axis=1)
-            # x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.int32), x_cumsum], axis=1)
-
-            # x_cumsum = tf.Print(x_cumsum, [tf.reduce_min(x_cumsum), tf.reduce_max(x_cumsum)], "X CUMSUM SPAN")
-
-            # x_lm = tf.gather_nd(x_cumsum, leftmost_indexes, name="x_lm")
-            # x_rm = tf.gather_nd(x_cumsum, rightmost_indexes, name="x_rm")
-            # u_fixed = x_rm - x_lm
-            # u = tf.to_float(u_fixed + 1) / 2**31
-            # u_log = tf.log(u)
-
-            # u_log = tf.Print(u_log, [tf.reduce_min(u_log), tf.reduce_max(u_log)], "U LOG SPAN")
-
-            # internal_node_values  = tf.gather_nd(u_log, internal_node_indexes)
-            # left_node_values      = tf.gather_nd(u_log, internal_node_left_indexes)
-            # right_node_values     = tf.gather_nd(u_log, internal_node_right_indexes)
-
-            # y_logit = tf.divide(left_node_values - internal_node_values,
-            #                     right_node_values - internal_node_values )
-
-            # tmp = left_node_values - internal_node_values
-            # y_logit = tf.Print(y_logit, [tf.reduce_min(tmp), tf.reduce_max(tmp)], "TMP SPAN")
-
-        # double precision
-        # This version is probably simpler and safer, but uses al ot of memory
-        # and time by doing everything with float64
-
         x_permed = tf.to_double(x_permed)
 
         x_cumsum = tf.cumsum(x_permed, axis=1)
@@ -151,7 +97,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # --------------------------------
 
         z_std = tf.divide(tf.subtract(y_logit, mu), sigma)
-        # z_std_ladj = -tf.reduce_sum(tf.log(sigma), axis=1)
 
         # inverse sinh-asinh transform
         # ----------------------------
@@ -159,22 +104,12 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         z_c = tf.subtract(tf.asinh(z_std), alpha)
         z = tf.sinh(z_c)
 
-        z_ladj = tf.reduce_sum(
-            tf.subtract(tf.log(tf.cosh(z_c)),
-                        tf.multiply(0.5, tf.log1p(tf.square(z_std)))),
-            axis=1)
-
         # standand normal log-probability
         # -------------------------------
 
         lp = (-np.log(2.0*np.pi) -  tf.reduce_sum(tf.square(z), axis=1)) / 2.0
 
-        # TODO: Really there should be jacobian terms, but this seems to only
-        # cause problems. I don't know why.
-        # return lp + z_ladj + z_std_ladj + y_logit_ladj + \
-        #     hsb_ladj + efflen_ladj
-
-        return lp
+        return lp - efflen_ladj
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):
     def __init__(self, *args, **kwargs):

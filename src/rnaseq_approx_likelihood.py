@@ -19,10 +19,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
             framework.assert_same_float_dtype([self.x])
         parameters = locals()
 
-        # print(self.x)
-        # print(self.x.get_shape())
-
-        # self.x = x
         self.efflens = efflens
         self.la_params = la_params
         self.invhsb_params = invhsb_params

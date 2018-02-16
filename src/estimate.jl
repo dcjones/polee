@@ -242,8 +242,8 @@ function run_inference(input, inference, n_iter, optimizer)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
     # TODO: default optimizer seems to be better, should we keep that?
-    inference[:initialize](n_iter=n_iter, optimizer=optimizer)
-    # inference[:initialize](n_iter=n_iter)
+    # inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+    inference[:initialize](n_iter=n_iter)
 
     sess[:run](tf.global_variables_initializer(),
                feed_dict=input.loaded_samples.init_feed_dict)

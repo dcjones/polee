@@ -23,7 +23,7 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
 
     x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
 
-    x, x_log_sigma, x_mu_param, x_sigma_param, x_mu, likapprox =
+    x, x_sigma_sq, x_mu_param, x_sigma_param, x_mu, likapprox =
         transcript_quantification_model(input)
 
     println("Estimating...")
@@ -32,20 +32,21 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
     qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
     qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
 
-    # qx_mu_mu_param = tf.Variable(tf.log(x0[1]))
     qx_mu_mu_param = tf.Variable(tf.reduce_mean(x0_log, 0))
     qx_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0)))
     qx_mu = edmodels.MultivariateNormalDiag(qx_mu_mu_param, qx_mu_sigma_param)
 
-    qx_log_sigma_mu_param = tf.Variable(tf.fill([n], 0.0f0), name="qx_log_sigma_mu_param")
-    qx_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0), name="qx_log_sigma_sigma_param"))
-    qx_log_sigma = edmodels.MultivariateNormalDiag(qx_log_sigma_mu_param,
-                                                   qx_log_sigma_sigma_param)
+    qx_sigma_sq_mu_param    = tf.Variable(tf.fill([n], 0.0f0), name="qx_sigma_sq_mu_param")
+    qx_sigma_sq_sigma_param = tf.Variable(tf.fill([n], 1.0f0), name="qx_sigma_sq_sigma_param")
+    qx_sigma_sq = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(qx_sigma_sq_mu_param, qx_sigma_sq_sigma_param),
+        bijector=tfdist.bijectors[:Exp](),
+        name="LogNormalTransformedDistribution")
 
-    inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu, x_log_sigma => qx_log_sigma),
+    inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu, x_sigma_sq => qx_sigma_sq),
                         data=Dict(likapprox => Float32[]))
     optimizer = tf.train[:AdamOptimizer](1e-2)
-    run_inference(input, inference, 1500, optimizer)
+    run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
 
@@ -390,8 +391,7 @@ Build basic transcript quantification model with some shrinkage towards a pooled
 function transcript_quantification_model(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
 
-    x_mu_mu0 = tf.constant(log(0.01 * 1/n), shape=[n])
-    # x_mu_mu0 = tf.constant(log(1/n), shape=[n])
+    x_mu_mu0 = tf.constant(log(1/n), shape=[n])
     x_mu_sigma0 = tf.constant(2.0, shape=[n])
     x_mu = edmodels.MultivariateNormalDiag(x_mu_mu0, x_mu_sigma0)
 
@@ -414,11 +414,10 @@ function transcript_quantification_model(input::ModelInput)
         #     edmodels.MultivariateNormalDiag(x_mu_mu0a, x_mu_sigma0a),
         #     edmodels.MultivariateNormalDiag(x_mu_mu0b, x_mu_sigma0b)])
 
-    # x_sigma: variance around pooled mean
-    x_sigma_mu0 = tf.constant(-2.0, shape=[n])
-    x_sigma_sigma0 = tf.constant(1.0, shape=[n])
-    x_log_sigma = edmodels.MultivariateNormalDiag(x_sigma_mu0, x_sigma_sigma0)
-    x_sigma = tf.exp(x_log_sigma)
+    x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n])
+    x_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[n])
+    x_sigma_sq = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
+    x_sigma = tf.sqrt(x_sigma_sq)
 
     # y: quantification
     x_mu_param = tf.matmul(tf.ones([num_samples, 1]),
@@ -430,7 +429,7 @@ function transcript_quantification_model(input::ModelInput)
     x = edmodels.MultivariateNormalDiag(x_mu_param, x_sigma_param)
     likapprox = RNASeqApproxLikelihood(input, x)
 
-    return x, x_log_sigma, x_mu_param, x_sigma_param, x_mu, likapprox
+    return x, x_sigma_sq, x_mu_param, x_sigma_param, x_mu, likapprox
 end
 
 

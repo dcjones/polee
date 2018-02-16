@@ -90,8 +90,8 @@ function RNASeqSample(transcripts_filename::String,
                       output=Nullable{String}())
 
     @time ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
-    @time rs = Reads(reads_filename, excluded_seqs)
     read_transcript_sequences!(ts, genome_filename)
+    @time rs = Reads(reads_filename, excluded_seqs)
     fm = FragModel(rs, ts)
 
     println("intersecting reads and transcripts...")

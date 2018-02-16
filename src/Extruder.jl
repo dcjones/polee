@@ -303,9 +303,6 @@ function main()
         node_js          = read(input["node_js"])
         efflens          = read(input["effective_lengths"])
 
-        @show quantile(efflens, [0.1, 0.2, 0.5, 0.8, 0.9])
-        efflens = map(x -> max(200.0, x), efflens)
-
         mu    = read(input["mu"])
         sigma = exp.(read(input["omega"]))
         alpha = read(input["alpha"])

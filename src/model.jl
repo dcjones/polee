@@ -54,3 +54,28 @@ function log_likelihood{GRADONLY}(frag_probs, log_frag_probs, X, Xt, xs, x_grad,
 end
 
 
+# prior probability correction: without this, there is an implicit
+# assumption of a uniform prior over effective length weighted expression
+# values. We actually want to assume a uniform prior over unweighted
+# expression values, so we correct using the log determinant of the
+# jacobian of the effective length transformation.
+function effective_length_jacobian_adjustment!(efflens, xs, x_grad)
+    n = length(efflens)
+
+    x_scaled_sum = 0.0
+    for i in 1:n
+        x_scaled_sum += xs[i] / efflens[i]
+    end
+
+    # @show extrema([n * efflens[i] / x_scaled_sum for i in 1:n])
+    # @show extrema(x_grad)
+
+    for i in 1:n
+        x_grad[i] -= n * (1/efflens[i]) / x_scaled_sum
+    end
+
+    # TODO: if I care about the objective function value, I might want to
+    # compute that.
+    return 0.0
+end
+

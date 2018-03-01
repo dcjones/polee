@@ -50,7 +50,6 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
 
     sess = ed.get_session()
 
-    est = sess[:run](tf.nn[:softmax](qx_mu_param, dim=-1))
     mean_est  = sess[:run](qx_mu_param)
     sigma_est = sess[:run](qx_sigma_param)
 
@@ -87,6 +86,54 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
     #         println(out, i, ",", efflen)
     #     end
     # end
+
+    return mean_est, sigma_est
+end
+
+
+"""
+Estimate transcript expression treating each sample as independent. (As
+apposed to using pooled mean and variance parameters as
+`estimate_transcript_expression``)
+"""
+function estimate_simple_transcript_expression(input::ModelInput, write_results::Bool=true)
+    num_samples, n = size(input.loaded_samples.x0_values)
+
+    x = edmodels.MultivariateNormalDiag(tf.constant(log(1/n), shape=[num_samples, n]),
+                                        tf.constant(10.0, shape=[num_samples, n]))
+
+    likapprox = RNASeqApproxLikelihood(input, x)
+
+    x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
+    qx_mu_param = tf.Variable(x0_log)
+    qx_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0)))
+    qx = edmodels.MultivariateNormalDiag(qx_mu_param, qx_sigma_param)
+    inference = ed.KLqp(Dict(x => qx),
+                        data=Dict(likapprox => Float32[]))
+    optimizer = tf.train[:AdamOptimizer](1e-2)
+    run_inference(input, inference, 500, optimizer)
+
+    sess = ed.get_session()
+
+    mean_est  = sess[:run](qx_mu_param)
+    sigma_est = sess[:run](qx_sigma_param)
+
+    lower_credible = similar(mean_est)
+    upper_credible = similar(mean_est)
+    for i in 1:size(mean_est, 1)
+        for j in 1:size(mean_est, 2)
+            dist = Normal(mean_est[i, j], sigma_est[i, j])
+
+            lower_credible[i, j] = quantile(dist, input.credible_interval[1])
+            upper_credible[i, j] = quantile(dist, input.credible_interval[2])
+        end
+    end
+
+    if write_results
+        write_transcript_expression_csv("estimates.csv",
+                                        input.loaded_samples.sample_names,
+                                        mean_est, lower_credible, upper_credible)
+    end
 
     return mean_est, sigma_est
 end
@@ -388,7 +435,7 @@ end
 """
 Build basic transcript quantification model with some shrinkage towards a pooled mean.
 """
-function transcript_quantification_model(input::ModelInput)
+function transcript_quantification_model(input::ModelInput, pooled_means::Bool=true)
     num_samples, n = size(input.loaded_samples.x0_values)
 
     x_mu_mu0 = tf.constant(log(1/n), shape=[n])

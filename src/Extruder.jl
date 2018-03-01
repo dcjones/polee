@@ -222,8 +222,12 @@ function main()
                 required = false
             "--credible-lower"
                 default = 0.025
+                arg_type = Float64
             "--credible-upper"
                 default = 0.975
+                arg_type = Float64
+            "--inference"
+                default = "variational"
             "feature"
                 required = true
             "model"
@@ -251,6 +255,7 @@ function main()
         loaded_samples =
             load_samples_from_specification(parsed_args["experiment"], ts, ts_metadata)
 
+        inference = Symbol(parsed_args["inference"])
         feature = Symbol(parsed_args["feature"])
 
         output_format = Symbol(parsed_args["output-format"])
@@ -263,7 +268,7 @@ function main()
              Float64(parsed_args["credible-upper"]))
 
         input = ModelInput(
-            loaded_samples, feature, ts, ts_metadata,
+            loaded_samples, inference, feature, ts, ts_metadata,
             parsed_args["output"], output_format, gene_db,
             credible_interval)
 
@@ -287,13 +292,26 @@ function main()
         @add_arg_table arg_settings begin
             "--output", "-o"
                 default = "post_mean.csv"
+            "--exclude-transcripts"
+                required = false
+            "--num-samples"
+                default = 1000
+                arg_type = Int
             "transcripts"
                 required = true
             "prepared_sample"
                 required = true
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
+
         excluded_transcripts = Set{String}()
+        if parsed_args["exclude-transcripts"] != nothing
+            open(parsed_args["exclude-transcripts"]) do input
+                for line in eachline(input)
+                    push!(excluded_transcripts, chomp(line))
+                end
+            end
+        end
 
         ts, ts_metadata = Transcripts(parsed_args["transcripts"], excluded_transcripts)
         n = length(ts)
@@ -309,7 +327,7 @@ function main()
 
         t = HSBTransform(node_parent_idxs, node_js)
 
-        num_samples = 1000
+        num_samples = parsed_args["num-samples"]
         samples = Array{Float32}((num_samples, n))
 
         zs0 = Array{Float32}(n-1)

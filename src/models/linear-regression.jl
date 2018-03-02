@@ -43,10 +43,10 @@ function estimate_transcript_linear_regression(input::ModelInput)
     # model specification
     # -------------------
 
-    w_mu0 = 0.0
-    w_sigma0 = 1.0
-    w_bias_mu0 = log(1/n)
-    w_bias_sigma0 = 2.5
+    w_mu0 = 0.0f0
+    w_sigma0 = 1.0f0
+    w_bias_mu0 = log(1f0/n)
+    w_bias_sigma0 = 2.5f0
 
     w_sigma = tf.concat(
                   [tf.constant(w_bias_sigma0, shape=[1, n]),
@@ -63,7 +63,7 @@ function estimate_transcript_linear_regression(input::ModelInput)
     x_sigma_sq     = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
     x_sigma        = tf.sqrt(x_sigma_sq)
 
-    x = edmodels.StudentT(df=10.0, loc=x_mu, scale=x_sigma)
+    x = edmodels.StudentT(df=10.0f0, loc=x_mu, scale=x_sigma)
 
     likapprox = RNASeqApproxLikelihood(input, x)
 

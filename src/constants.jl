@@ -34,5 +34,5 @@ const LIKAP_NUM_MC_SAMPLES = 5
 # Parameters to InverseGamma priors on variance parameters
 # const SIGMA_ALPHA0 = 0.1
 # const SIGMA_BETA0  = 10.0
-const SIGMA_ALPHA0 = 0.1
-const SIGMA_BETA0  = 0.1
+const SIGMA_ALPHA0 = 10.0f0
+const SIGMA_BETA0  = 0.1f0

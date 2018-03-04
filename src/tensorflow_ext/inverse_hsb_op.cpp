@@ -64,8 +64,7 @@ class InvHSBOp : public OpKernel {
             //         (int) start_batch, (int) limit_batch);
 
             // intermediate values
-            auto shp = TensorShape({2*n - 1});
-            auto u_tens = Tensor(DT_DOUBLE, shp);
+            auto u_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
             auto u = u_tens.flat<double>();
             double* u_data = &u(0);
 
@@ -89,7 +88,7 @@ class InvHSBOp : public OpKernel {
                         u_data[j] = u_left + u_right;
                         double y_ik = u_left / u_data[j];
                         y_logit_i[k] = (float) (log(y_ik) - log(1.0 - y_ik));
-                        k -= 1;
+                        --k;
                     }
                 }
             }
@@ -106,23 +105,27 @@ class InvHSBOp : public OpKernel {
 REGISTER_KERNEL_BUILDER(Name("InvHSB").Device(DEVICE_CPU), InvHSBOp);
 
 
-REGISTER_OP("InvHSBGradOp")
+REGISTER_OP("InvHSBGrad")
     .Input("gradients: float32")
-    .Input("x: float32")
+    .Input("y_logit: float32")
     .Input("left_index: int32")
     .Input("right_index: int32")
     .Input("leaf_index: int32")
     .Output("backprops: float32")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
-        shape_inference::ShapeHandle x;
-        TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &x));
+        shape_inference::ShapeHandle y_logit;
+        TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &y_logit));
 
         shape_inference::ShapeHandle unused;
         TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 2, &unused));
         TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 2, &unused));
         TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 2, &unused));
 
-        c->set_output(0, x);
+        shape_inference::DimensionHandle m = c->Dim(y_logit, 0);
+        shape_inference::DimensionHandle n_minus_one = c->Dim(y_logit, 1);
+        shape_inference::DimensionHandle n = c->MakeDim(c->Value(n_minus_one) + 1);
+
+        c->set_output(0, c->MakeShape({m, n}));
         return Status::OK();
     });
 
@@ -132,7 +135,77 @@ class InvHSBGradOp : public OpKernel {
     explicit InvHSBGradOp(OpKernelConstruction* context) : OpKernel(context) {}
 
     void Compute(OpKernelContext* context) override {
-        // TODO:
+        const Tensor& input_gradients   = context->input(0);
+        const Tensor& input_y_logit     = context->input(1);
+        const Tensor& input_left_index  = context->input(2);
+        const Tensor& input_right_index = context->input(3);
+        const Tensor& input_leaf_index  = context->input(4);
+
+        const int64 m = input_y_logit.dim_size(0);
+        const int64 n = input_y_logit.dim_size(1) + 1;
+
+        Tensor* output_backprops = nullptr;
+        OP_REQUIRES_OK(
+            context, context->allocate_output(
+                0, TensorShape({m, n}), &output_backprops));
+
+        auto gradients   = input_gradients.flat_inner_dims<float>();
+        auto y_logit    = input_y_logit.flat_inner_dims<float>();
+        auto backprops   = output_backprops->flat_inner_dims<float>();
+        auto left_index  = input_left_index.flat_inner_dims<int32>();
+        auto right_index = input_right_index.flat_inner_dims<int32>();
+        auto leaf_index  = input_leaf_index.flat_inner_dims<int32>();
+
+        auto InvHSBGradBatch = [&, context](int start_batch, int limit_batch) {
+            // intermediate values storing subtree sums
+            auto u_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
+            auto u = u_tens.flat<double>();
+            double* u_data = &u(0);
+
+            // intermediate values storing gradients wrt subtree sums
+            auto v_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
+            auto v = v_tens.flat<double>();
+            double* v_data = &u(0);
+
+            for (int i = start_batch; i < limit_batch; ++i) {
+                const float* gradients_i = &gradients(i, 0);
+                const float* y_logit_i = &y_logit(i, 0);
+                float* backprops_i = &backprops(i, 0);
+                const int32* left_index_i  = &left_index(i, 0);
+                const int32* right_index_i = &right_index(i, 0);
+                const int32* leaf_index_i  = &leaf_index(i, 0);
+
+                u_data[0] = 1.0;
+                int k = 0;
+                for(int j = 0; j < 2*n-1; ++j) {
+                    // leaf node
+                    if (leaf_index_i[j] >= 0) {
+                        backprops_i[leaf_index_i[j]] = u_data[j];
+                    }
+                    // internal node
+                    else {
+                        double y_logit_ik = y_logit_i[k];
+                        double y = 1.0 / (1.0 + exp(-y_logit_ik));
+
+                        double u_left = u_data[j] * y;
+                        double u_right = u_data[j] * (1.0 - y);
+
+                        v_data[left_index_i[j]] = v_data[j] + (1/u_left) * gradients_i[k];
+                        v_data[right_index_i[j]] = v_data[j] - (1/u_right) * gradients_i[k];
+
+                        u_data[left_index_i[j]] = u_left;
+                        u_data[right_index_i[j]] = u_right;
+
+                        ++k;
+                    }
+                }
+            }
+        };
+
+        const int64 cost_est = n * 10; // total wild guess
+        auto worker_threads = *(context->device()->tensorflow_cpu_worker_threads());
+        Shard(worker_threads.num_threads, worker_threads.workers,
+              m, cost_est, InvHSBGradBatch);
     }
 };
 

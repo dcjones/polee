@@ -1,11 +1,27 @@
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.framework import ops
 from tensorflow.contrib import distributions
 from tensorflow.contrib import framework
 import edward
 from queue import Queue
 import sys
+
+# TODO: compute this path
+inverse_hsb_op_module = tf.load_op_library("/home/dcjones/prj/extruder/src/tensorflow_ext/inverse_hsb_op.so")
+
+@ops.RegisterGradient("InvHSB")
+def _inv_hsb_grad(op, grad):
+    left_index  = op.inputs[1]
+    right_index = op.inputs[2]
+    leaf_index  = op.inputs[3]
+    y_logit     = op.outputs[0]
+
+    x_grad = inverse_hsb_op_module.inv_hsb_grad(grad, y_logit, left_index,
+                                                 right_index, leaf_index)
+    return [x_grad, None, None, None]
+
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
@@ -70,24 +86,30 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
 
-        leafindex = self.invhsb_params[0]
-        left_child_rightmost_index  = self.invhsb_params[1]
-        left_child_leftmost_index   = self.invhsb_params[2]
-        right_child_rightmost_index = self.invhsb_params[3]
-        right_child_leftmost_index  = self.invhsb_params[4]
+        # leafindex = self.invhsb_params[0]
+        # left_child_rightmost_index  = self.invhsb_params[1]
+        # left_child_leftmost_index   = self.invhsb_params[2]
+        # right_child_rightmost_index = self.invhsb_params[3]
+        # right_child_leftmost_index  = self.invhsb_params[4]
 
-        x_permed = tf.gather_nd(x_efflen, leafindex)
-        x_permed = tf.to_double(x_permed)
+        # x_permed = tf.gather_nd(x_efflen, leafindex)
+        # x_permed = tf.to_double(x_permed)
 
-        x_cumsum = tf.cumsum(x_permed, axis=1)
-        x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.float64), x_cumsum], axis=1)
+        # x_cumsum = tf.cumsum(x_permed, axis=1)
+        # x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.float64), x_cumsum], axis=1)
 
-        left_node_values  = tf.log(tf.to_float(tf.gather_nd(x_cumsum, left_child_rightmost_index) -
-                                               tf.gather_nd(x_cumsum, left_child_leftmost_index)))
-        right_node_values = tf.log(tf.to_float(tf.gather_nd(x_cumsum, right_child_rightmost_index) -
-                                               tf.gather_nd(x_cumsum, right_child_leftmost_index)))
+        # left_node_values  = tf.log(tf.to_float(tf.gather_nd(x_cumsum, left_child_rightmost_index) -
+        #                                        tf.gather_nd(x_cumsum, left_child_leftmost_index)))
+        # right_node_values = tf.log(tf.to_float(tf.gather_nd(x_cumsum, right_child_rightmost_index) -
+        #                                        tf.gather_nd(x_cumsum, right_child_leftmost_index)))
 
-        y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
+        # y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
+
+        left_index  = self.invhsb_params[0]
+        right_index = self.invhsb_params[1]
+        leaf_index  = self.invhsb_params[2]
+
+        y_logit = inverse_hsb_op_module.inv_hsb(x_efflen, left_index, right_index, leaf_index)
 
         # normal standardization transform
         # --------------------------------

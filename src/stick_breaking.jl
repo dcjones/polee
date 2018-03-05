@@ -660,6 +660,7 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
 end
 
 
+#=
 """
 Build some index arrays needed in the tensorflow implementation of inverse hsb.
 """
@@ -738,6 +739,26 @@ function make_inverse_hsb_params(node_parent_idxs, node_js)
             internal_node_right_indexes,
             leftmost,
             rightmost)
+end
+=#
+
+
+function make_inverse_hsb_params(node_parent_idxs, node_js)
+    num_nodes = length(node_js)
+
+    left_index = fill(Int32(-1), num_nodes)
+    right_index = fill(Int32(-1), num_nodes)
+    for i in 2:num_nodes
+        parent_idx = node_parent_idxs[i]
+        if right_index[parent_idx] == -1
+            right_index[parent_idx] = i - 1
+        else
+            left_index[parent_idx] = i - 1
+        end
+    end
+    leaf_index = Int32[j-1 for j in node_js]
+
+    return (left_index, right_index, leaf_index)
 end
 
 

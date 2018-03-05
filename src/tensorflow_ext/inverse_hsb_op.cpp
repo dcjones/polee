@@ -6,6 +6,7 @@
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/util/work_sharder.h"
 
+#include <thread>
 #include <cstdio>
 
 using namespace tensorflow;
@@ -59,14 +60,32 @@ class InvHSBOp : public OpKernel {
         auto right_index = input_right_index.flat_inner_dims<int32>();
         auto leaf_index  = input_leaf_index.flat_inner_dims<int32>();
 
+        std::unordered_map<size_t, std::vector<double>> us_map;
+        mutex map_mutex;
+
         auto InvHSBBatch = [&, context](int start_batch, int limit_batch) {
-            // fprintf(stderr, "start_batch = %d, limit_batch = %d\n",
-            //         (int) start_batch, (int) limit_batch);
+            // this is cribing from wals_solver_op.cc
+            const std::thread::id thread_id = std::this_thread::get_id();
+            const size_t id_hash = std::hash<std::thread::id>()(thread_id);
+
+            map_mutex.lock();
+            const auto key_count = us_map.count(id_hash);
+            map_mutex.unlock();
+            if (!key_count) {
+                map_mutex.lock();
+                us_map.emplace(
+                    std::piecewise_construct, std::forward_as_tuple(id_hash),
+                    std::forward_as_tuple(2*n - 1));
+                map_mutex.unlock();
+            }
+            map_mutex.lock();
+            auto& u_data = us_map[id_hash];
+            map_mutex.unlock();
 
             // intermediate values
-            auto u_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
-            auto u = u_tens.flat<double>();
-            double* u_data = &u(0);
+            // auto u_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
+            // auto u = u_tens.flat<double>();
+            // double* u_data = &u(0);
 
             for (int i = start_batch; i < limit_batch; ++i) {
                 const float* x_i = &x(i, 0);
@@ -165,7 +184,7 @@ class InvHSBGradOp : public OpKernel {
             // intermediate values storing gradients wrt subtree sums
             auto v_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
             auto v = v_tens.flat<double>();
-            double* v_data = &u(0);
+            double* v_data = &v(0);
 
             for (int i = start_batch; i < limit_batch; ++i) {
                 const float* gradients_i = &gradients(i, 0);
@@ -176,11 +195,12 @@ class InvHSBGradOp : public OpKernel {
                 const int32* leaf_index_i  = &leaf_index(i, 0);
 
                 u_data[0] = 1.0;
+                v_data[0] = 0.0;
                 int k = 0;
                 for(int j = 0; j < 2*n-1; ++j) {
                     // leaf node
                     if (leaf_index_i[j] >= 0) {
-                        backprops_i[leaf_index_i[j]] = u_data[j];
+                        backprops_i[leaf_index_i[j]] = v_data[j];
                     }
                     // internal node
                     else {

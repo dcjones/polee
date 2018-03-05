@@ -41,9 +41,6 @@ function main()
     ys_true = Array{Float32}(n-1)
     hsb_inverse_transform!(t, xs, ys_true)
     ys_logit_true = logit.(ys_true)
-    # @show extrema(xs)
-    # @show extrema(ys_true)
-    # @show extrema(ys_logit_true)
 
     sess = tf.InteractiveSession()
     ys = inverse_hsb_op_module[:inv_hsb](
@@ -53,14 +50,18 @@ function main()
         tf.expand_dims(tf.constant(leaf_index), 0))
     ys_logit_tf = sess[:run](ys)[1,:]
 
-    # @show extrema(ys_logit_tf)
     @show extrema(abs.(ys_logit_tf .- ys_logit_true))
+    @show ys
 
-    # idx = indmax(abs.(ys_logit_tf .- ys_logit_true))
-    # @show (idx, ys_logit_true[idx], ys_logit_tf[idx])
-
-    # @show ys_logit_true[1:10]
-    # @show ys_logit_tf[1:10]
+    # test gradients
+    grad = ones(Float32, n-1)
+    backprop = inverse_hsb_op_module[:inv_hsb_grad](
+        tf.expand_dims(tf.constant(grad), 0),
+        ys,
+        tf.expand_dims(tf.constant(left_child), 0),
+        tf.expand_dims(tf.constant(right_child), 0),
+        tf.expand_dims(tf.constant(leaf_index), 0))
+    sess[:run](backprop)
 end
 
 main()

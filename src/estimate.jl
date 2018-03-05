@@ -22,14 +22,13 @@ mutable struct LoadedSamples
     la_param_values::Array{Float32, 3}
 
     # hsb parameters
-    leaf_indexes_values::Array{Int32, 3}
-    left_child_rightmost_index::Array{Int32, 3}
-    left_child_leftmost_index::Array{Int32, 3}
-    right_child_rightmost_index::Array{Int32, 3}
-    right_child_leftmost_index::Array{Int32, 3}
+    left_index::Array{Int32, 2}
+    right_index::Array{Int32, 2}
+    leaf_index::Array{Int32, 2}
 
     # tensorflow placeholder variables and initalizations
-    variables::Dict{Symbol, PyObject}
+    # variables::Dict{Symbol, PyObject}
+    variables::Dict{Symbol, Any}
     init_feed_dict::Dict{Any, Any}
 
     sample_factors::Vector{Vector{String}}
@@ -80,15 +79,25 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
     la_param_values = Array{Float32}(num_samples, 3, n-1)
 
     # index parameters used to compute inverse heirarchical stick breaking transform
-    leaf_indexes_values                = Array{Int32}(num_samples, n, 2)
-    left_child_rightmost_index  = Array{Int32}(num_samples, n-1, 2)
-    left_child_leftmost_index   = Array{Int32}(num_samples, n-1, 2)
-    right_child_rightmost_index = Array{Int32}(num_samples, n-1, 2)
-    right_child_leftmost_index  = Array{Int32}(num_samples, n-1, 2)
+    # leaf_indexes_values                = Array{Int32}(num_samples, n, 2)
+    # left_child_rightmost_index  = Array{Int32}(num_samples, n-1, 2)
+    # left_child_leftmost_index   = Array{Int32}(num_samples, n-1, 2)
+    # right_child_rightmost_index = Array{Int32}(num_samples, n-1, 2)
+    # right_child_leftmost_index  = Array{Int32}(num_samples, n-1, 2)
+
+    left_index_values  = Array{Int32}(num_samples, 2*n-1)
+    right_index_values = Array{Int32}(num_samples, 2*n-1)
+    leaf_index_values  = Array{Int32}(num_samples, 2*n-1)
 
     prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
     for (i, filename) in enumerate(filenames)
-        input = h5open(filename, "r")
+        input = h5open(filename)
+
+        sample_n = read(input["n"])
+        if sample_n != n
+            error("Prepared sample has a different number of transcripts than provided GFF3 file.")
+        end
+
         input_metadata = g_open(input, "metadata")
         if base64decode(read(attrs(input_metadata)["gffhash"])) != ts_metadata.gffhash
             true_filename = read(attrs(input_metadata)["gfffilename"])
@@ -99,13 +108,9 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
                 Filename of original GFF3 file: $(true_filename)
                 """)
         end
+        close(input_metadata)
 
         # TODO: record and check transcript blacklist hash.
-
-        sample_n = read(input["n"])
-        if sample_n != n
-            error("Prepared sample has a different number of transcripts than provided GFF3 file.")
-        end
 
         mu = read(input["mu"])
         sigma = exp.(read(input["omega"]))
@@ -120,25 +125,32 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
 
-        invhsb_params = make_inverse_hsb_params(node_parent_idxs, node_js)
-        (leafindex, internal_node_left_indexes, internal_node_right_indexes,
-         leftmost, rightmost) = invhsb_params
+        # invhsb_params = make_inverse_hsb_params(node_parent_idxs, node_js)
+        # (leafindex, internal_node_left_indexes, internal_node_right_indexes,
+        #  leftmost, rightmost) = invhsb_params
 
-        # make 0-based for python/tensorflow
-        leafindex .-= Int32(1)
+        # # make 0-based for python/tensorflow
+        # leafindex .-= Int32(1)
 
-        # make 1-based exclusive
-        leftmost .-= Int32(1)
+        # # make 1-based exclusive
+        # leftmost .-= Int32(1)
 
-        idxs = fill(Int32(i-1), n)
-        leaf_indexes_values[i, :, :] = hcat(idxs, leafindex)
+        # idxs = fill(Int32(i-1), n)
+        # leaf_indexes_values[i, :, :] = hcat(idxs, leafindex)
 
-        idxs = fill(Int32(i-1), n-1)
-        left_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_left_indexes])
-        left_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_left_indexes])
+        # idxs = fill(Int32(i-1), n-1)
+        # left_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_left_indexes])
+        # left_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_left_indexes])
 
-        right_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_right_indexes])
-        right_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_right_indexes])
+        # right_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_right_indexes])
+        # right_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_right_indexes])
+
+        left_index, right_index, leaf_index =
+            make_inverse_hsb_params(node_parent_idxs, node_js)
+
+        left_index_values[i, :]  = left_index
+        right_index_values[i, :] = right_index
+        leaf_index_values[i, :]  = leaf_index
 
         # find reasonable initial valuse by taking the mean of the base normal
         # distribution and transforming it
@@ -151,23 +163,20 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         hsb_transform!(t, y0, x0, Val{true})
         x0_values[i, :] = x0
 
+        close(input)
         next!(prog)
     end
 
     var_names = [:la_param,
                  :efflen,
-                 :leaf_indexes,
-                 :left_child_rightmost_index,
-                 :left_child_leftmost_index,
-                 :right_child_rightmost_index,
-                 :right_child_leftmost_index]
+                 :left_index,
+                 :right_index,
+                 :leaf_index]
     var_values = Any[la_param_values,
                      efflen_values,
-                     leaf_indexes_values,
-                     left_child_rightmost_index,
-                     left_child_leftmost_index,
-                     right_child_rightmost_index,
-                     right_child_leftmost_index]
+                     left_index_values,
+                     right_index_values,
+                     leaf_index_values]
 
     variables = Dict{Symbol, PyObject}()
     init_feed_dict = Dict{Any, Any}()
@@ -183,11 +192,9 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
         efflen_values,
         x0_values,
         la_param_values,
-        leaf_indexes_values,
-        left_child_rightmost_index,
-        left_child_leftmost_index,
-        right_child_rightmost_index,
-        right_child_leftmost_index,
+        left_index_values,
+        right_index_values,
+        leaf_index_values,
         variables,
         init_feed_dict,
         Vector{String}[], String[])
@@ -212,11 +219,9 @@ Construct a python RNASeqApproxLikelihood class.
 """
 function RNASeqApproxLikelihood(input::ModelInput, x)
     invhsb_params = [
-        input.loaded_samples.variables[:leaf_indexes],
-        input.loaded_samples.variables[:left_child_rightmost_index],
-        input.loaded_samples.variables[:left_child_leftmost_index],
-        input.loaded_samples.variables[:right_child_rightmost_index],
-        input.loaded_samples.variables[:right_child_leftmost_index]
+        input.loaded_samples.variables[:left_index],
+        input.loaded_samples.variables[:right_index],
+        input.loaded_samples.variables[:leaf_index]
     ]
 
     return rnaseq_approx_likelihood.RNASeqApproxLikelihood(
@@ -267,16 +272,16 @@ function run_inference(input, inference, n_iter, optimizer)
 
     # timeline profiler
     # -----------------
-    # run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
-    # run_metadata = tf.RunMetadata()
-    # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
-    #            options=run_options, run_metadata=run_metadata)
+    run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    run_metadata = tf.RunMetadata()
+    sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
+               options=run_options, run_metadata=run_metadata)
 
-    # tl = tftl.Timeline(run_metadata[:step_stats])
-    # ctf = tl[:generate_chrome_trace_format]()
-    # trace_out = pybuiltin(:open)("timeline.json", "w")
-    # trace_out[:write](ctf)
-    # trace_out[:close]()
+    tl = tftl.Timeline(run_metadata[:step_stats])
+    ctf = tl[:generate_chrome_trace_format]()
+    trace_out = pybuiltin(:open)("timeline.json", "w")
+    trace_out[:write](ctf)
+    trace_out[:close]()
 
     inference[:finalize]()
 end
@@ -296,7 +301,7 @@ function write_effects_csv(filename, factoridx, W)
 end
 
 
-function write_effects(output_filename, factoridx, W,
+function write_effects(output_filename, factoridx, W, w_sigma,
                        lower_credible, upper_credible, error_sigma, feature)
     println("Writing regression results to ", output_filename)
 
@@ -306,10 +311,10 @@ function write_effects(output_filename, factoridx, W,
     SQLite.execute!(db,
         """
         create table effects
-        ($(feature)_num INT, factor TEXT, w REAL, w_lower REAL, w_upper REAL, error_sigma REAL)
+        ($(feature)_num INT, factor TEXT, w REAL, w_sigma REAL, w_lower REAL, w_upper REAL, error_sigma REAL)
         """)
 
-    ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3, ?4, ?5, ?6)")
+    ins_stmt = SQLite.Stmt(db, "insert into effects values (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
 
     SQLite.execute!(db, "begin transaction")
     n = size(W, 2)
@@ -319,9 +324,10 @@ function write_effects(output_filename, factoridx, W,
             SQLite.bind!(ins_stmt, 1, j)
             SQLite.bind!(ins_stmt, 2, factor)
             SQLite.bind!(ins_stmt, 3, W[idx, j])
-            SQLite.bind!(ins_stmt, 4, lower_credible[idx, j])
-            SQLite.bind!(ins_stmt, 5, upper_credible[idx, j])
-            SQLite.bind!(ins_stmt, 6, error_sigma[j])
+            SQLite.bind!(ins_stmt, 4, w_sigma[idx, j])
+            SQLite.bind!(ins_stmt, 5, lower_credible[idx, j])
+            SQLite.bind!(ins_stmt, 6, upper_credible[idx, j])
+            SQLite.bind!(ins_stmt, 7, error_sigma[j])
             SQLite.execute!(ins_stmt)
         end
     end

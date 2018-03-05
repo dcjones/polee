@@ -106,7 +106,7 @@ class InvHSBOp : public OpKernel {
                         double u_right = u_data[right_index_i[j]];
                         u_data[j] = u_left + u_right;
                         double y_ik = u_left / u_data[j];
-                        y_logit_i[k] = (float) (log(y_ik) - log(1.0 - y_ik));
+                        y_logit_i[k] = (float) log(y_ik / (1.0 - y_ik));
                         --k;
                     }
                 }
@@ -175,16 +175,38 @@ class InvHSBGradOp : public OpKernel {
         auto right_index = input_right_index.flat_inner_dims<int32>();
         auto leaf_index  = input_leaf_index.flat_inner_dims<int32>();
 
+        std::unordered_map<size_t, std::pair<std::vector<double>, std::vector<double>>> uvs_map;
+        mutex map_mutex;
+
         auto InvHSBGradBatch = [&, context](int start_batch, int limit_batch) {
             // intermediate values storing subtree sums
-            auto u_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
-            auto u = u_tens.flat<double>();
-            double* u_data = &u(0);
+            // auto u_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
+            // auto u = u_tens.flat<double>();
+            // double* u_data = &u(0);
 
             // intermediate values storing gradients wrt subtree sums
-            auto v_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
-            auto v = v_tens.flat<double>();
-            double* v_data = &v(0);
+            // auto v_tens = Tensor(DT_DOUBLE, TensorShape({2*n - 1}));
+            // auto v = v_tens.flat<double>();
+            // double* v_data = &v(0);
+
+            const std::thread::id thread_id = std::this_thread::get_id();
+            const size_t id_hash = std::hash<std::thread::id>()(thread_id);
+
+            map_mutex.lock();
+            const auto key_count = uvs_map.count(id_hash);
+            map_mutex.unlock();
+            if (!key_count) {
+                map_mutex.lock();
+                uvs_map.emplace(
+                    std::piecewise_construct, std::forward_as_tuple(id_hash),
+                    std::forward_as_tuple(
+                        std::vector<double>(2*n - 1), std::vector<double>(2*n - 1)));
+                map_mutex.unlock();
+            }
+            map_mutex.lock();
+            auto& u_data = uvs_map[id_hash].first;
+            auto& v_data = uvs_map[id_hash].second;
+            map_mutex.unlock();
 
             for (int i = start_batch; i < limit_batch; ++i) {
                 const float* gradients_i = &gradients(i, 0);

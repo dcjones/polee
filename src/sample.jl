@@ -60,12 +60,12 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
-                                  effective_lengths[t.metadata.id])
+                                  effective_lengths[Int(t.metadata.id)])
             if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
                 i_ = alnpr.metadata.mate1_idx > 0 ?
                         rs.alignments[alnpr.metadata.mate1_idx].id :
                         rs.alignments[alnpr.metadata.mate2_idx].id
-                i = aln_idx_map[i_]
+                i = aln_idx_map[Int(i_)]
 
                 thrid = Threads.threadid()
                 push!(Is[thrid], i)
@@ -75,8 +75,45 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
         end
     end
 
-    return (vcat(Is...), vcat(Js...), vcat(Vs...))
+    N = 0
+    for Ii in Is
+        N += length(Ii)
+    end
+
+    I = Array{UInt32}(N)
+    J = Array{UInt32}(N)
+    V = Array{Float32}(N)
+    j = 1
+    for i in 1:length(Is)
+        copy!(I, j, Is[i])
+        copy!(J, j, Js[i])
+        copy!(V, j, Vs[i])
+        j += length(Is[i])
+    end
+
+    return (I, J, V)
 end
+
+
+# reassign indexes to remove any zero rows, which would lead to a
+# -Inf log likelihood
+function compact_indexes!(I)
+    if isempty(I)
+        warn("No compatible reads found.")
+    else
+        last_i = I[1]
+        I[1] = 1
+        for k in 2:length(I)
+            if I[k] == last_i
+                I[k] = I[k-1]
+            else
+                last_i = I[k]
+                I[k] = I[k-1] + 1
+            end
+        end
+    end
+end
+
 
 
 """
@@ -89,28 +126,28 @@ function RNASeqSample(transcripts_filename::String,
                       excluded_transcripts::Set{String},
                       output=Nullable{String}())
 
-    @time ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
+    ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     read_transcript_sequences!(ts, genome_filename)
-    @time rs = Reads(reads_filename, excluded_seqs)
+    rs = Reads(reads_filename, excluded_seqs)
     fm = FragModel(rs, ts)
 
     println("intersecting reads and transcripts...")
 
     # reassign indexes to alignments to group by position
-    aln_idx_map = zeros(Int, length(rs.alignments))
+    aln_idx_map = zeros(UInt32, length(rs.alignments))
     nextidx = 1
     # for alnpr in rs.alignment_pairs
     # for alnpr in rs.alignment_pairs
     for tree in values(rs.alignment_pairs.trees)
         for alnpr in tree
             if alnpr.metadata.mate1_idx > 0
-                id = rs.alignments[alnpr.metadata.mate1_idx].id
+                id = Int(rs.alignments[alnpr.metadata.mate1_idx].id)
                 if aln_idx_map[id] == 0
                     aln_idx_map[id] = nextidx
                     nextidx += 1
                 end
             else
-                id = rs.alignments[alnpr.metadata.mate2_idx].id
+                id = Int(rs.alignments[alnpr.metadata.mate2_idx].id)
                 if aln_idx_map[id] == 0
                     aln_idx_map[id] = nextidx
                     nextidx += 1
@@ -119,36 +156,18 @@ function RNASeqSample(transcripts_filename::String,
         end
     end
 
-    tic()
-
     effective_lengths = Float32[effective_length(fm, t) for t in ts]
-    I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
+    @time I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 
-    toc()
-
-    # reassign indexes to remove any zero rows, which would lead to a
-    # -Inf log likelihood
+    gc()
     p = sortperm(I)
     I = I[p]
     J = J[p]
     V = V[p]
+    gc()
 
-    if isempty(I)
-        warn("No compatible reads found.")
-        m = 0
-    else
-        last_i = I[1]
-        I[1] = 1
-        for k in 2:length(I)
-            if I[k] == last_i
-                I[k] = I[k-1]
-            else
-                last_i = I[k]
-                I[k] = I[k-1] + 1
-            end
-        end
-        m = maximum(I)
-    end
+    compact_indexes!(I) # 0.000 GB
+    m = isempty(I) ? 0 : Int(maximum(I))
 
     n = length(ts)
     M = sparse(I, J, V, m, n)

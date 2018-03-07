@@ -1,6 +1,15 @@
 
 # various parameters than are generally fixed
 
+# mask of flags we care about
+const USED_BAM_FLAGS =
+    0x001 | # paired-end
+    0x002 | # all pairs aligned
+    0x004 | # unmapped
+    0x010 | # reverse complement
+    0x040 | # read 1
+    0x080   # read 2
+
 # Disallow fragments longer than this
 const MAX_FRAG_LEN = 1500
 

@@ -3,7 +3,7 @@
 # Don't consider read pairs more than this far apart
 const MAX_PAIR_DISTANCE = 500000
 
-immutable Alignment
+struct Alignment
     id::UInt32
     refidx::Int32
     leftpos::Int32
@@ -51,7 +51,7 @@ function _rightposition(rec::BAM.Record)
 end
 
 
-immutable AlignmentPairMetadata
+struct AlignmentPairMetadata
     mate1_idx::UInt32
     mate2_idx::UInt32
 end
@@ -136,7 +136,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
                excluded_seqs::Set{String})
     prog_step = 1000
     entry = eltype(reader)()
-    readnames = HATTrie()
+    readnames = Dict{UInt64, UInt32}()
     alignments = Alignment[]
     cigardata = UInt32[]
 
@@ -176,29 +176,57 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
         cigarlen = BAM.n_cigar_op(entry)
 
         N = UInt32(length(cigardata))
-        cigaridx = N+1:N
+        cigaridx = UInt32(N+1):UInt32(N)
         if cigarlen > 1 || cigar_from_ptr(cigarptr, 1)[1] != OP_MATCH
-            cigaridx = N+1:N+1+cigarlen-1
-            resize!(cigardata, N + cigarlen)
-            unsafe_copy!(pointer(cigardata, N + 1),
-                         cigarptr, cigarlen)
+            # if the last alignment had the same cigar, just use that
+
+            # check if we have the same cigar string as the last alignment
+            prev_identical = false
+            if length(cigardata) >= cigarlen
+                c = ccall(:memcmp, Cint, (Ptr{Void}, Ptr{Void}, Csize_t),
+                          pointer(cigardata, N-cigarlen+1),
+                          cigarptr, 4*cigarlen)
+                prev_identical = c == 0
+            end
+
+            if prev_identical
+                cigaridx = UInt32(N-cigarlen+1):UInt32(N)
+            else
+                cigaridx = UInt32(N+1):UInt32(N+1+cigarlen-1)
+                resize!(cigardata, N + cigarlen)
+                unsafe_copy!(pointer(cigardata, N + 1),
+                             cigarptr, cigarlen)
+            end
         end
 
-        id = get!(readnames, BioAlignments.seqname(entry), length(readnames) + 1)
-        push!(alignments, Alignment(id, entry.refid + 1,
-                                    _leftposition(entry), _rightposition(entry),
-                                    BAM.flag(entry), cigaridx))
+        id = get!(readnames, hash(BioAlignments.seqname(entry)), length(readnames) + 1)
+        lp = _leftposition(entry)
+        rp = _rightposition(entry)
+        flg = BAM.flag(entry) & USED_BAM_FLAGS
+
+        # skip if the last alignment was identical
+        if !isempty(alignments)
+            last_aln = alignments[end]
+            if last_aln.id       == id &&
+               last_aln.refidx   == entry.refid + 1 &&
+               last_aln.leftpos  == lp &&
+               last_aln.rightpos == rp &&
+               last_aln.flag     == flg &&
+               last_aln.cigaridx == cigaridx
+                continue
+            end
+        end
+
+        push!(alignments, Alignment(id, entry.refid + 1, lp, rp, flg, cigaridx))
     end
     finish!(prog)
 
     @printf("Read %9d reads\nwith %9d alignments\n",
             length(readnames), length(alignments))
-    finalize(readnames)
 
     # group alignments into alignment pair intervals
     sort!(alignments, lt=group_alignments_isless)
 
-    tic()
     # first partition alignments by reference sequence
     blocks = Array{UnitRange{Int}}(0)
     i = 1
@@ -214,7 +242,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     end
 
     trees = Array{GenomicFeatures.ICTree{AlignmentPairMetadata}}(length(blocks))
-    @time alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees, cigardata)
+    alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees, cigardata)
 
     return Reads(alignments, alignment_pairs, cigardata)
 end

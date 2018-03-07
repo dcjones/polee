@@ -3,7 +3,7 @@
 type FragModel
     fraglen_pmf::Vector{Float32}
     fraglen_cdf::Vector{Float32}
-    fallback_fraglen_dist::Normal
+    fallback_fraglen_dist::Normal{Float64}
     use_fallback_fraglen_dist::Bool
     strand_specificity::Float32
     bm::BiasModel

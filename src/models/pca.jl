@@ -80,16 +80,16 @@ function estimate_pca(input::ModelInput; num_components::Int=2,
     x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
 
     qmu_bias_loc = tf.Variable(tf.reduce_mean(x0_log, 0))
-    qmu_bias_softplus_scale = tf.Variable(tf.fill([1, n], -1.0))
+    qmu_bias_softplus_scale = tf.Variable(tf.fill([1, n], -1.0f0))
     qmu_bias = edmodels.NormalWithSoftplusScale(loc=qmu_bias_loc,
                                                 scale=qmu_bias_softplus_scale)
 
-    qw_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([n, num_components])))
-    qw_softplus_scale = tf.Variable(tf.fill([n, num_components], -2.0))
+    qw_loc = tf.Variable(tf.multiply(0.001f0, tf.random_normal([n, num_components])))
+    qw_softplus_scale = tf.Variable(tf.fill([n, num_components], -2.0f0))
     qw = edmodels.NormalWithSoftplusScale(loc=qw_loc, scale=qw_softplus_scale)
 
-    qz_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_samples, num_components])))
-    qz_softplus_scale = tf.Variable(tf.fill([num_samples, num_components], -2.0))
+    qz_loc = tf.Variable(tf.multiply(0.001f0, tf.random_normal([num_samples, num_components])))
+    qz_softplus_scale = tf.Variable(tf.fill([num_samples, num_components], -2.0f0))
     qz = edmodels.NormalWithSoftplusScale(loc=qz_loc, scale=qz_softplus_scale)
 
     qx_sigma_sq_mu_param    = tf.Variable(tf.fill([n], -2.0f0), name="qx_sigma_sq_mu_param")
@@ -104,7 +104,7 @@ function estimate_pca(input::ModelInput; num_components::Int=2,
 
     if correct_batch_effects
         qw_batch_loc = tf.Variable(fill(0.0f0, (num_factors, n)))
-        qw_batch_softplus_scale = tf.Variable(tf.fill([num_factors, n], -1.0))
+        qw_batch_softplus_scale = tf.Variable(tf.fill([num_factors, n], -1.0f0))
         qw_batch = edmodels.NormalWithSoftplusScale(loc=qw_batch_loc, scale=qw_batch_softplus_scale)
 
         vars[w_batch] = qw_batch

@@ -59,7 +59,7 @@ function estimate_gplvm(input::ModelInput; num_components::Int=2,
 
 
     # x_mu_gp_scale = tf.cholesky(edutil.rbf(tf.transpose(z)))
-    rbfz = edutil.rbf(z) + tf.diag(tf.fill([num_samples], 1.0))
+    rbfz = edutil.rbf(z) + tf.diag(tf.fill([num_samples], 1.0f0))
     rbfz = tf_print_span(rbfz, "rbfz span")
     x_mu_gp_scale = tf.cholesky(rbfz)
     # @show sess[:run](x_mu_gp_scale)
@@ -89,13 +89,13 @@ function estimate_gplvm(input::ModelInput; num_components::Int=2,
     x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
 
     qmu_bias_loc = tf.Variable(tf.reduce_mean(x0_log, 0))
-    qmu_bias_softplus_scale = tf.Variable(tf.fill([1, n], -1.0))
+    qmu_bias_softplus_scale = tf.Variable(tf.fill([1, n], -1.0f0))
     qmu_bias = edmodels.NormalWithSoftplusScale(loc=qmu_bias_loc,
                                                 scale=qmu_bias_softplus_scale)
 
     qz_loc = tf.Variable(tf.random_normal([num_samples, num_components]))
     qz_loc = tf_print_span(qz_loc, "qz_loc span")
-    qz_softplus_scale = tf.Variable(tf.fill([num_samples, num_components], 0.0))
+    qz_softplus_scale = tf.Variable(tf.fill([num_samples, num_components], 0.0f0))
     qz = edmodels.NormalWithSoftplusScale(loc=qz_loc, scale=qz_softplus_scale)
 
     qx_mu_gp_loc = tf.Variable(tf.random_normal([n, num_samples]))

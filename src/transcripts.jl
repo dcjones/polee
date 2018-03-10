@@ -112,7 +112,7 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
     reader = open(GFF3.Reader, filename)
     entry = eltype(reader)()
 
-    transcript_id_by_name = HATTrie()
+    transcript_id_by_name = Dict{String, Int}()
     transcript_by_id = Transcript[]
     metadata = TranscriptsMetadata()
     interned_seqnames = Dict{String, String}()

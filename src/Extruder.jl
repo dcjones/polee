@@ -8,7 +8,6 @@ using BioAlignments
 using BioSequences
 using DataStructures
 using Distributions
-using HATTries
 using HDF5
 using ProgressMeter
 using PyCall

@@ -45,7 +45,7 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
 
     inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu, x_sigma_sq => qx_sigma_sq),
                         data=Dict(likapprox => Float32[]))
-    optimizer = tf.train[:AdamOptimizer](1e-2)
+    optimizer = tf.train[:AdamOptimizer](0.5)
     run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
@@ -75,7 +75,7 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
     # TODO: this should be a temporary measure until we decide exactly how
     # results should be reported. Probably in sqlite or something.
     if write_results
-        write_transcript_expression_csv("estimates.csv",
+        write_transcript_expression_csv("transcript-expression-estimates.csv",
                                         input.loaded_samples.sample_names,
                                         mean_est, lower_credible, upper_credible)
     end

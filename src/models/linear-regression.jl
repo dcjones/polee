@@ -44,9 +44,9 @@ function estimate_transcript_linear_regression(input::ModelInput)
     # -------------------
 
     w_mu0 = 0.0f0
-    w_sigma0 = 1.0f0
+    w_sigma0 = 2.0f0
     w_bias_mu0 = log(1f0/n)
-    w_bias_sigma0 = 2.5f0
+    w_bias_sigma0 = 4.0f0
 
     w_sigma = tf.concat(
                   [tf.constant(w_bias_sigma0, shape=[1, n]),
@@ -63,7 +63,8 @@ function estimate_transcript_linear_regression(input::ModelInput)
     x_sigma_sq     = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
     x_sigma        = tf.sqrt(x_sigma_sq)
 
-    x = edmodels.StudentT(df=10.0f0, loc=x_mu, scale=x_sigma)
+    # x = edmodels.StudentT(df=10.0f0, loc=x_mu, scale=x_sigma)
+    x = edmodels.Normal(loc=x_mu, scale=x_sigma)
 
     likapprox = RNASeqApproxLikelihood(input, x)
 
@@ -117,6 +118,7 @@ function estimate_transcript_linear_regression(input::ModelInput)
 
         write_effects(output_filename, factoridx,
                     mean_est,
+                    sigma_est,
                     lower_credible,
                     upper_credible,
                     error_sigma,
@@ -148,6 +150,7 @@ function estimate_transcript_linear_regression(input::ModelInput)
 
         write_effects(output_filename, factoridx,
                     mean_est,
+                    sigma_est,
                     lower_credible,
                     upper_credible,
                     error_sigma,
@@ -183,7 +186,6 @@ function estimate_splicing_linear_regression(input::ModelInput)
     w = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
 
     x_feature = tf.matmul(X, w)
-
 
     vars, var_approximations, data =
         model_nondisjoint_feature_expression(input, num_features,

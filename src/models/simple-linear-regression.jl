@@ -116,6 +116,7 @@ function estimate_simple_transcript_linear_regression(input)
 
         write_effects(output_filename, factoridx,
                     mean_est,
+                    sigma_est,
                     lower_credible,
                     upper_credible,
                     error_sigma,
@@ -146,6 +147,7 @@ function estimate_simple_transcript_linear_regression(input)
 
         write_effects(output_filename, factoridx,
                     mean_est,
+                    sigma_est,
                     lower_credible,
                     upper_credible,
                     error_sigma,

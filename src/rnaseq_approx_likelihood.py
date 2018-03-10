@@ -23,7 +23,6 @@ def _inv_hsb_grad(op, grad):
     return [x_grad, None, None, None]
 
 
-
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
     def __init__(self, x, efflens, la_params, invhsb_params,
                  validate_args=False,

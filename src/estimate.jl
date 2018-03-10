@@ -6,6 +6,7 @@ unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Extruder", "src"))
 @pyimport tensorflow.python.util.all_util as tfutil
 @pyimport edward as ed
 @pyimport edward.models as edmodels
+@pyimport edward.util as edutil
 tfutil.reveal_undocumented("edward.util.graphs")
 # @pyimport edward.util.graphs as edgraphs
 @pyimport rnaseq_approx_likelihood
@@ -272,16 +273,16 @@ function run_inference(input, inference, n_iter, optimizer)
 
     # timeline profiler
     # -----------------
-    run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
-    run_metadata = tf.RunMetadata()
-    sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
-               options=run_options, run_metadata=run_metadata)
+    # run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    # run_metadata = tf.RunMetadata()
+    # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
+    #            options=run_options, run_metadata=run_metadata)
 
-    tl = tftl.Timeline(run_metadata[:step_stats])
-    ctf = tl[:generate_chrome_trace_format]()
-    trace_out = pybuiltin(:open)("timeline.json", "w")
-    trace_out[:write](ctf)
-    trace_out[:close]()
+    # tl = tftl.Timeline(run_metadata[:step_stats])
+    # ctf = tl[:generate_chrome_trace_format]()
+    # trace_out = pybuiltin(:open)("timeline.json", "w")
+    # trace_out[:write](ctf)
+    # trace_out[:close]()
 
     inference[:finalize]()
 end

@@ -18,8 +18,6 @@ import IntervalTrees
 import SHA
 import YAML
 
-# import TensorFlow
-
 include("constants.jl")
 include("sparse.jl")
 include("transcripts.jl")
@@ -49,6 +47,7 @@ include("models/logistic-regression.jl")
 include("models/simple-logistic-regression.jl")
 include("models/quantification.jl")
 include("models/pca.jl")
+include("models/gplvm.jl")
 
 
 function print_usage()

@@ -1,6 +1,9 @@
 
 # various parameters than are generally fixed
 
+const PREPARED_SAMPLE_FORMAT_VERSION = 1
+
+
 # mask of flags we care about
 const USED_BAM_FLAGS =
     0x001 | # paired-end

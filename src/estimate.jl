@@ -1,15 +1,3 @@
-unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Extruder", "src"))
-@pyimport tensorflow as tf
-@pyimport tensorflow.contrib.distributions as tfdist
-@pyimport tensorflow.contrib.tfprof as tfprof
-@pyimport tensorflow.python.client.timeline as tftl
-@pyimport tensorflow.python.util.all_util as tfutil
-@pyimport edward as ed
-@pyimport edward.models as edmodels
-@pyimport edward.util as edutil
-tfutil.reveal_undocumented("edward.util.graphs")
-# @pyimport edward.util.graphs as edgraphs
-@pyimport rnaseq_approx_likelihood
 
 
 mutable struct LoadedSamples
@@ -70,6 +58,11 @@ Input:
     * ts_metadata: transcript metadata
 """
 function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
+    return load_samples_flatbuffer(filenames, ts, ts_metadata)
+end
+
+
+function load_samples_flatbuffer(filenames, ts, ts_metadata::TranscriptsMetadata)
     num_samples = length(filenames)
     n = length(ts)
 
@@ -79,12 +72,111 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
     # likelihood approximation base distribution parameters
     la_param_values = Array{Float32}(num_samples, 3, n-1)
 
-    # index parameters used to compute inverse heirarchical stick breaking transform
-    # leaf_indexes_values                = Array{Int32}(num_samples, n, 2)
-    # left_child_rightmost_index  = Array{Int32}(num_samples, n-1, 2)
-    # left_child_leftmost_index   = Array{Int32}(num_samples, n-1, 2)
-    # right_child_rightmost_index = Array{Int32}(num_samples, n-1, 2)
-    # right_child_leftmost_index  = Array{Int32}(num_samples, n-1, 2)
+    left_index_values  = Array{Int32}(num_samples, 2*n-1)
+    right_index_values = Array{Int32}(num_samples, 2*n-1)
+    leaf_index_values  = Array{Int32}(num_samples, 2*n-1)
+
+    mut = Threads.Mutex()
+
+    prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
+
+    Threads.@threads for i in 1:length(filenames)
+    # for i in 1:length(filenames)
+        filename = filenames[i]
+        data = read_approximated_likelihood_data(filename)
+
+        if length(data.mu) + 1 != n
+            error("Prepared sample has a different number of transcripts than provided GFF3 file.")
+        end
+
+        if data.gff_hash != ts_metadata.gffhash
+            error(
+                """
+                $(filename):
+                GFF3 file is not the same as the one used for sample preparation.
+                Filename of original GFF3 file: $(data.gff_filename)
+                """)
+        end
+
+        # TODO: record and check transcript blacklist hash.
+
+        sigma = exp.(data.omega)
+
+        left_index, right_index, leaf_index =
+            make_inverse_hsb_params(data.parent_idxs, data.leaf_idxs)
+
+        # find reasonable initial valuse by taking the mean of the base normal
+        # distribution and transforming it
+        y0 = Array{Float64}(n-1)
+        x0 = Array{Float32}(n)
+        for j in 1:n-1
+            y0[j] = clamp(logistic(sinh(data.alpha[j]) + data.mu[j]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
+        end
+        t = HSBTransform(data.parent_idxs, data.leaf_idxs)
+        hsb_transform!(t, y0, x0, Val{true})
+
+        lock(mut)
+        la_param_values[i, 1, :] = data.mu
+        la_param_values[i, 2, :] = sigma
+        la_param_values[i, 3, :] = data.alpha
+
+        efflen_values[i, :] = data.efflens
+
+        left_index_values[i, :]  = left_index
+        right_index_values[i, :] = right_index
+        leaf_index_values[i, :]  = leaf_index
+
+        x0_values[i, :] = x0
+        next!(prog)
+        unlock(mut)
+    end
+
+    # this allocates a great deal very quickly which may not be dealt with in time
+    gc()
+
+    var_names = [:la_param,
+                 :efflen,
+                 :left_index,
+                 :right_index,
+                 :leaf_index]
+    var_values = Any[la_param_values,
+                     efflen_values,
+                     left_index_values,
+                     right_index_values,
+                     leaf_index_values]
+
+    variables = Dict{Symbol, PyObject}()
+    init_feed_dict = Dict{Any, Any}()
+    for (name, val) in zip(var_names, var_values)
+        typ = eltype(val) == Float32 ? tf.float32 : tf.int32
+        var_init = tf.placeholder(typ, shape=size(val))
+        var      = tf.Variable(var_init)
+        variables[name] = var
+        init_feed_dict[var_init] = val
+    end
+
+    return LoadedSamples(
+        efflen_values,
+        x0_values,
+        la_param_values,
+        left_index_values,
+        right_index_values,
+        leaf_index_values,
+        variables,
+        init_feed_dict,
+        Vector{String}[], String[])
+end
+
+
+function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
+    num_samples = length(filenames)
+    n = length(ts)
+
+    efflen_values = Array{Float32}(num_samples, n)
+    x0_values     = Array{Float32}(num_samples, n)
+
+    # likelihood approximation base distribution parameters
+    la_param_values = Array{Float32}(num_samples, 3, n-1)
 
     left_index_values  = Array{Int32}(num_samples, 2*n-1)
     right_index_values = Array{Int32}(num_samples, 2*n-1)
@@ -125,26 +217,6 @@ function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
 
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
-
-        # invhsb_params = make_inverse_hsb_params(node_parent_idxs, node_js)
-        # (leafindex, internal_node_left_indexes, internal_node_right_indexes,
-        #  leftmost, rightmost) = invhsb_params
-
-        # # make 0-based for python/tensorflow
-        # leafindex .-= Int32(1)
-
-        # # make 1-based exclusive
-        # leftmost .-= Int32(1)
-
-        # idxs = fill(Int32(i-1), n)
-        # leaf_indexes_values[i, :, :] = hcat(idxs, leafindex)
-
-        # idxs = fill(Int32(i-1), n-1)
-        # left_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_left_indexes])
-        # left_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_left_indexes])
-
-        # right_child_rightmost_index[i, :, :] = hcat(idxs, rightmost[internal_node_right_indexes])
-        # right_child_leftmost_index[i, :, :]  = hcat(idxs, leftmost[internal_node_right_indexes])
 
         left_index, right_index, leaf_index =
             make_inverse_hsb_params(node_parent_idxs, node_js)

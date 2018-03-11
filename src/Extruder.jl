@@ -2,15 +2,32 @@
 
 module Extruder
 
+using PyCall
+
+unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Extruder", "src"))
+@pyimport tensorflow as tf
+@pyimport tensorflow.contrib.distributions as tfdist
+@pyimport tensorflow.contrib.tfprof as tfprof
+@pyimport tensorflow.python.client.timeline as tftl
+@pyimport tensorflow.python.util.all_util as tfutil
+@pyimport edward as ed
+@pyimport edward.models as edmodels
+@pyimport edward.util as edutil
+tfutil.reveal_undocumented("edward.util.graphs")
+# @pyimport edward.util.graphs as edgraphs
+@pyimport rnaseq_approx_likelihood
+
+
 using ArgParse
 using GenomicFeatures
 using BioAlignments
 using BioSequences
 using DataStructures
 using Distributions
-using HDF5
+using FlatBuffers
+# using HDF5
+using Libz
 using ProgressMeter
-using PyCall
 using SQLite
 using StatsBase
 import IntervalTrees
@@ -175,6 +192,8 @@ function main()
                 default = "logit_skew_normal_hsb"
             "--tree-method"
                 default = "cluster"
+            "--output-format"
+                default = "flatbuffer"
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
 
@@ -207,7 +226,8 @@ function main()
                               parsed_args["likelihood-matrix"] == nothing ?
                                 Nullable{String}() :
                                 Nullable(parsed_args["likelihood-matrix"]))
-        approximate_likelihood(approx, sample, parsed_args["output"])
+        approximate_likelihood(approx, sample, parsed_args["output"],
+                               parsed_args["output-format"])
         return
 
     elseif subcmd == "estimate" || subcmd == "est"

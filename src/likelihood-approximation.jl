@@ -57,35 +57,93 @@ end
 NormalALRApprox() = NormalALRApprox(-1)
 
 
+"""
+Structure used for serializing likelihood approximation data and metadata.
+"""
+mutable struct ApproximatedLikelihoodData
+    mu::Vector{Float32}
+    omega::Vector{Float32}
+    alpha::Vector{Float32}
+    efflens::Vector{Float32}
+
+    parent_idxs::Vector{Int32}
+    leaf_idxs::Vector{Int32}
+
+    approx_type::String
+    gff_hash::Vector{UInt8}
+    gff_filename::String
+    gff_size::Int32
+end
+
+
+function Base.write(output::IO, data::ApproximatedLikelihoodData, format_version)
+    zlib_output = ZlibDeflateOutputStream(output)
+    write(zlib_output, Int32(format_version))
+    fb = FlatBuffers.build!(data)
+    write(zlib_output, view(fb.bytes, (fb.head + 1):length(fb.bytes)))
+end
+
+
+function read_approximated_likelihood_data(input_filename)
+    zlib_input = ZlibInflateInputStream(open(input_filename))
+    format_version = read(zlib_input, Int32)
+    bytes = read(zlib_input)
+    root_pos = read(IOBuffer(bytes[1:4]), Int32)
+    return FlatBuffers.read(ApproximatedLikelihoodData, bytes, root_pos)
+end
+
+
 # Other approximations we could implement, but would require a different
 # optimization method.
 #   - Dirichlet
 #   - HSB with Beta distributed balances
 
 function approximate_likelihood(approximation::LikelihoodApproximation,
-                                input_filename::String, output_filename::String)
+                                input_filename::String, output_filename::String,
+                                output_format::String)
     sample = read(input_filename, RNASeqSample)
     approximate_likelihood(approximation, sample, output_filename)
 end
 
 
 function approximate_likelihood(approximation::LikelihoodApproximation,
-                                sample::RNASeqSample, output_filename::String)
+                                sample::RNASeqSample, output_filename::String,
+                                output_format::String)
     params = approximate_likelihood(approximation, sample.X)
-    h5open(output_filename, "w") do out
-        n = sample.n
-        out["n"] = sample.n
-        out["effective_lengths", "compress", 1] = sample.effective_lengths
 
-        for (key, val) in params
-            out[key, "compress", 1] = val
+    if output_format == "hdf5"
+        h5open(output_filename, "w") do out
+            n = sample.n
+            out["n"] = sample.n
+            out["effective_lengths", "compress", 1] = sample.effective_lengths
+
+            for (key, val) in params
+                out[key, "compress", 1] = val
+            end
+
+            g = g_create(out, "metadata")
+            attrs(g)["approximation"] = string(typeof(approximation))
+            attrs(g)["gfffilename"] = sample.transcript_metadata.filename
+            attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
+            attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
         end
+    elseif output_format == "flatbuffer"
+        data = ApproximatedLikelihoodData(
+            params["mu"],
+            params["omega"],
+            params["alpha"],
+            params["node_parent_idxs"],
+            params["node_js"],
+            string(typeof(approximation)),
+            sample.transcript_metadata.gffhash,
+            sample.transcript_metadata.filename,
+            sample.transcript_metadata.gffsize)
 
-        g = g_create(out, "metadata")
-        attrs(g)["approximation"] = string(typeof(approximation))
-        attrs(g)["gfffilename"] = sample.transcript_metadata.filename
-        attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
-        attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
+        open(output_filename, "w") do output
+            write(output, data, PREPARED_SAMPLE_FORMAT_VERSION)
+        end
+    else
+        error("$(output_format) is not a supported output format")
     end
 end
 

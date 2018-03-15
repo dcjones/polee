@@ -65,6 +65,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         sigma = tf.identity(self.la_params[...,1,:], name="sigma")
         alpha = tf.identity(self.la_params[...,2,:], name="alpha")
 
+        # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "x scale")
         x = tf.nn.softmax(self.x)
 
         # effective length transform

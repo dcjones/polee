@@ -320,7 +320,8 @@ function run_inference(input, inference, n_iter, optimizer)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession(config=config)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+    # inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
     # inference[:initialize](n_iter=n_iter)
 
     sess[:run](tf.global_variables_initializer(),

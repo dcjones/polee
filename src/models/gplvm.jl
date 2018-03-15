@@ -80,6 +80,7 @@ function estimate_gplvm(input::ModelInput; num_components::Int=2,
     end
 
     x = edmodels.Normal(loc=x_mu, scale=x_sigma)
+    # x = edmodels.StudentT(loc=x_mu, scale=x_sigma)
 
     likapprox = RNASeqApproxLikelihood(input, x)
 
@@ -87,6 +88,10 @@ function estimate_gplvm(input::ModelInput; num_components::Int=2,
     # ---------
 
     x0_log = tf.log(tf.constant(input.loaded_samples.x0_values))
+
+    qx_loc = tf.Variable(x0_log)
+    qx_softplus_scale = tf.Variable(tf.fill([num_samples, n], -2.0))
+    qx = edmodels.NormalWithSoftplusScale(loc = qx_loc, scale = qx_softplus_scale)
 
     qmu_bias_loc = tf.Variable(tf.reduce_mean(x0_log, 0))
     qmu_bias_softplus_scale = tf.Variable(tf.fill([1, n], -1.0f0))
@@ -109,7 +114,7 @@ function estimate_gplvm(input::ModelInput; num_components::Int=2,
         bijector=tfdist.bijectors[:Exp](),
         name="LogNormalTransformedDistribution")
 
-    vars = Dict(z => qz, x_mu_gp => qx_mu_gp, x_mu_bias => qmu_bias,
+    vars = Dict(z => qz, x => qx, x_mu_gp => qx_mu_gp, x_mu_bias => qmu_bias,
                 x_sigma_sq => qx_sigma_sq)
 
     if correct_batch_effects
@@ -123,7 +128,7 @@ function estimate_gplvm(input::ModelInput; num_components::Int=2,
     inference = ed.KLqp(vars, data=Dict(likapprox => Float32[]))
 
     optimizer = tf.train[:AdamOptimizer](0.05)
-    run_inference(input, inference, 1500, optimizer)
+    run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
     qz_loc_values = @show sess[:run](qz_loc)

@@ -44,7 +44,7 @@ function estimate_transcript_linear_regression(input::ModelInput)
     # -------------------
 
     w_mu0 = 0.0f0
-    w_sigma0 = 2.0f0
+    w_sigma0 = 0.5f0
     w_bias_mu0 = log(1f0/n)
     w_bias_sigma0 = 4.0f0
 
@@ -79,23 +79,30 @@ function estimate_transcript_linear_regression(input::ModelInput)
         fill(0.0f0, (num_factors - 1, n)))
 
     if input.inference == :variational
+        qx_loc = tf.Variable(x0_log)
+        qx_softplus_scale = tf.Variable(tf.fill([num_samples, n], -2.0))
+        qx = edmodels.NormalWithSoftplusScale(loc = qx_loc, scale = qx_softplus_scale)
 
         qw_loc = tf.Variable(qw_loc_init)
-        qw_softplus_scale = tf.Variable(tf.fill([num_factors, n], -1.0))
+        qw_softplus_scale = tf.Variable(tf.fill([num_factors, n], -2.0f0))
         qw = edmodels.NormalWithSoftplusScale(loc=qw_loc, scale=qw_softplus_scale)
 
         qx_sigma_sq_mu_param    = tf.Variable(tf.fill([n], -2.0f0), name="qx_sigma_sq_mu_param")
         qx_sigma_sq_sigma_param = tf.Variable(tf.fill([n], -1.0f0), name="qx_sigma_sq_sigma_param")
+
+        qx_sigma_sq_mu_param =  tf_print_span(qx_sigma_sq_mu_param, "qx_sigma_sq_mu_param")
+        qx_sigma_sq_sigma_param =  tf_print_span(qx_sigma_sq_sigma_param, "qx_sigma_sq_sigma_param")
+
         qx_sigma_sq = edmodels.TransformedDistribution(
             distribution=edmodels.NormalWithSoftplusScale(qx_sigma_sq_mu_param, qx_sigma_sq_sigma_param),
             bijector=tfdist.bijectors[:Exp](),
             name="LogNormalTransformedDistribution")
 
-        inference = ed.KLqp(Dict(w => qw, x_sigma_sq => qx_sigma_sq),
+        inference = ed.KLqp(Dict(x => qx, w => qw, x_sigma_sq => qx_sigma_sq),
                             data=Dict(likapprox => Float32[]))
 
         optimizer = tf.train[:AdamOptimizer](0.05)
-        run_inference(input, inference, 1500, optimizer)
+        run_inference(input, inference, 500, optimizer)
 
         sess = ed.get_session()
 
@@ -104,7 +111,12 @@ function estimate_transcript_linear_regression(input::ModelInput)
 
         mean_est = sess[:run](qw_loc)
         sigma_est = sess[:run](tf.nn[:softplus](qw_softplus_scale))
-        error_sigma = sqrt.(exp.(sess[:run](qx_sigma_sq_mu_param)))
+
+        # log-normal distribution mean
+        error_sigma = sqrt.(exp.(sess[:run](
+            tf.add(qx_sigma_sq_mu_param,
+                   tf.div(tf.square(tf.nn[:softplus](qx_sigma_sq_sigma_param)), 2.0f0)))))
+
         lower_credible = similar(mean_est)
         upper_credible = similar(mean_est)
         for i in 1:size(mean_est, 1)
@@ -172,9 +184,9 @@ function estimate_splicing_linear_regression(input::ModelInput)
     # Model relative feature expression with linear regression
 
     w_mu0 = 0.0
-    w_sigma0 = 1.0
+    w_sigma0 = 0.5
     w_bias_mu0 = log(1/num_features)
-    w_bias_sigma0 = 5.0
+    w_bias_sigma0 = 4.0
 
     w_sigma = tf.concat(
                   [tf.constant(w_bias_sigma0, shape=[1, num_features]),
@@ -193,22 +205,22 @@ function estimate_splicing_linear_regression(input::ModelInput)
                                             antifeature_idxs, antifeature_transcript_idxs,
                                             x_feature)
 
-    qw_loc = tf.Variable(tf.multiply(0.001, tf.random_normal([num_factors, num_features])))
-    qw_scale = tf.nn[:softplus](tf.Variable(tf.zeros([num_factors, num_features])))
-    qw = edmodels.Normal(loc=qw_loc, scale=qw_scale)
+    qw_loc = tf.Variable(tf.zeros([num_factors, num_features]))
+    qw_softplus_scale = tf.Variable(tf.zeros([num_factors, num_features]))
+    qw = edmodels.NormalWithSoftplusScale(loc=qw_loc, scale=qw_softplus_scale)
 
     vars[:w] = w
     var_approximations[w] = qw
 
     inference = ed.KLqp(latent_vars=var_approximations, data=data)
 
-    optimizer = tf.train[:AdamOptimizer](5e-2)
-    run_inference(input, inference, 2000, optimizer)
+    optimizer = tf.train[:AdamOptimizer](0.05)
+    run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
 
     output_filename = isnull(input.output_filename) ?
-        "effects.db" : get(input.output_filename)
+        "splicing-linear-regression-estimates.db" : get(input.output_filename)
 
     # TODO: need a way to output the features and such
     @time write_effects(output_filename, factoridx,

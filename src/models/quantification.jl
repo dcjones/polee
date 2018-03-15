@@ -31,7 +31,7 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
     qx_softplus_sigma_param = tf.Variable(tf.fill([num_samples, n], -1.0f0))
     qx = edmodels.NormalWithSoftplusScale(loc=qx_mu_param, scale=qx_softplus_sigma_param)
 
-    qx_mu_mu_param = tf.Variable(mean(x0_log, 1))
+    qx_mu_mu_param = tf.Variable(mean(x0_log, 1)[1,:])
     qx_mu_softplus_sigma_param = tf.Variable(tf.fill([n], -1.0f0))
     qx_mu = edmodels.NormalWithSoftplusScale(loc=qx_mu_mu_param, scale=qx_mu_softplus_sigma_param)
 
@@ -44,7 +44,7 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
 
     inference = ed.KLqp(Dict(x => qx, x_mu => qx_mu, x_sigma_sq => qx_sigma_sq),
                         data=Dict(likapprox => Float32[]))
-    optimizer = tf.train[:AdamOptimizer](0.5)
+    optimizer = tf.train[:AdamOptimizer](0.02)
     run_inference(input, inference, 500, optimizer)
 
     sess = ed.get_session()
@@ -864,27 +864,25 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
     # component expression
     # --------------------
 
-    x_component_mu_mu0 = tf.constant(log(0.01 * 1/num_components), shape=[num_components])
+    x_component_mu_mu0 = tf.constant(log(1/num_components), shape=[num_components])
     x_component_mu_sigma0 = tf.constant(5.0, shape=[num_components])
-    x_component_mu = edmodels.MultivariateNormalDiag(x_component_mu_mu0,
-                                                     x_component_mu_sigma0)
+    x_component_mu = edmodels.Normal(loc=x_component_mu_mu0,
+                                     scale=x_component_mu_sigma0)
     # x_component_mu_ = tf_print_span(x_component_mu, "x_component_mu span")
 
-    x_component_sigma_mu0 = tf.constant(0.0, shape=[num_components])
-    x_component_sigma_sigma0 = tf.constant(1.0, shape=[num_components])
-    x_component_log_sigma = edmodels.MultivariateNormalDiag(x_component_sigma_mu0,
-                                                            x_component_sigma_sigma0)
-    x_component_sigma = tf.exp(x_component_log_sigma)
+    x_component_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[num_components])
+    x_component_sigma_beta0  = tf.constant(SIGMA_BETA0, shape=[num_components])
+    x_component_sigma_sq = edmodels.InverseGamma(x_component_sigma_alpha0,
+                                                 x_component_sigma_beta0)
+    x_component_sigma = tf.sqrt(x_component_sigma_sq)
     # x_component_sigma_ = tf_print_span(x_component_sigma, "x_component_sigma span")
+
 
     x_component_mu_param = tf.matmul(tf.ones([num_samples, 1]),
                                      tf.expand_dims(x_component_mu, 0))
 
-    x_component_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
-                                        tf.expand_dims(x_component_sigma, 0))
-
-    x_component = edmodels.MultivariateNormalDiag(x_component_mu_param,
-                                                  x_component_sigma_param)
+    x_component = edmodels.Normal(loc=x_component_mu_param,
+                                  scale=x_component_sigma)
 
     # x_component_ = tf_print_span(x_component, "x_component span")
 
@@ -893,7 +891,9 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
 
     # x_feature_ = tf_print_span(x_feature, "x_feature span")
 
-    x_feature_proportions = tf.clip_by_value(tf.sigmoid(x_feature), 1f-7, 1.0f0 - 1f-7)
+    # x_feature_proportions = tf.clip_by_value(tf.sigmoid(x_feature), 1f-7, 1.0f0 - 1f-7)
+    x_feature_proportions = tf.sigmoid(x_feature)
+    # x_feature_proportions = tf_print_span(x_feature_proportions, "x_feature_proportions span")
     x_antifeature_proportions = tf.ones([num_samples, num_features]) - x_feature_proportions
 
     x_feature_log_proportions = tf.log(x_feature_proportions)
@@ -925,13 +925,6 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
         component_matrix_indices[k, 1] = i - 1
         component_matrix_indices[k, 2] = j - 1
     end
-    # @show extrema(component_transcript_idxs)
-    # @show extrema(component_idxs)
-    # @show extrema(component_matrix_indices[:,1])
-    # @show extrema(component_matrix_indices[:,2])
-    # @show (n, num_components)
-    # @show (length(component_transcript_idxs), length(component_idxs))
-    # exit()
     components = tf.SparseTensor(indices=component_matrix_indices,
                                  values=tf.ones(length(component_transcript_idxs)),
                                  dense_shape=[n, num_components])
@@ -981,36 +974,40 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
         push!(xs, x_i)
     end
 
-    x = tf.squeeze(tf.stack(xs), axis=-1)
+    x_mu = tf.squeeze(tf.stack(xs), axis=-1)
 
-    # TODO: variance should be a parameter here I'm afraid
-    # a separate paremetr for every transcript. No I think it should
-    # be pooled across samples.
+    x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n])
+    x_sigma_beta0  = tf.constant(SIGMA_BETA0, shape=[n])
+    x_sigma_sq = edmodels.InverseGamma(x_sigma_alpha0,
+                                       x_sigma_beta0)
+    x_sigma = tf.sqrt(x_sigma_sq)
 
-    # x_err_sigma = tf.fill([num_samples, n], 0.5)
+    # x_sigma = tf_print_span(x_sigma, "x_sigma span")
 
-    x_err_log_sigma_mu0 = tf.constant(-4.0, shape=[n])
-    x_err_log_sigma_sigma0 = tf.constant(0.2, shape=[n])
-    x_err_log_sigma = edmodels.MultivariateNormalDiag(x_err_log_sigma_mu0,
-                                                      x_err_log_sigma_sigma0)
-    x_err_sigma = tf.exp(x_err_log_sigma)
-    x_err_sigma = tf_print_span(x_err_sigma, "x_err_sigma span")
-    # @show x_err_log_sigma_mu0
-    # @show x_err_log_sigma_sigma0
-    # @show x_err_log_sigma
-    # @show x_err_sigma
-    # @show tf.expand_dims(x_err_sigma, 0)
-    x_err_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
-                                  tf.expand_dims(x_err_sigma, 0))
-    # @show x_err_sigma_param
-    # exit()
+    x = edmodels.Normal(loc=x_mu, scale=x_sigma)
+    # x = edmodels.Normal(loc=x_mu, scale=[0.1f0])
+    # x_ = tf.Print(x, [tf.nn[:moments](x, axes=Any[0])], "x moments")
 
-    x_err = edmodels.MultivariateNormalDiag(x, x_err_sigma_param)
+    x_ = x
+    # x_ = tf.Print(x_, [tf.reduce_min(x_, axis=1)], "x min 1")
+    # x_ = tf.Print(x_, [tf.reduce_max(x_, axis=1)], "x max 1")
 
-    likapprox = RNASeqApproxLikelihood(input, x)
+    x_ = tf.Print(x_, [tf.reduce_min(x_, axis=0)], "x min 0", summarize=10)
+    x_ = tf.Print(x_, [tf.reduce_max(x_, axis=0)], "x max 0", summarize=10)
+    x_ = tf.Print(x_, [tf.reduce_mean(x_, axis=0)], "x mean 0", summarize=10)
+
+    likapprox = RNASeqApproxLikelihood(input, x_)
 
     # Inference
     # ---------
+
+    # variables:
+    # - x_component_mu (normal)
+    # - x_component_sigma_sq (log normal)
+    # - x_component (normal)
+    # - x_sigma_sq (log normal)
+    # - x (normal)
+
 
     x_component_mu_initial, x_feature_mu_initial =
         nondisjoint_feature_initialization(input.loaded_samples.x0_values,
@@ -1022,41 +1019,57 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
     x_component_mu_initial_mean = reshape(mean(x_component_mu_initial, 1), (num_components,))
 
     qx_component_mu_mu_param = tf.Variable(x_component_mu_initial_mean, name="qx_component_mu_mu_param")
-    qx_component_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_components], -1.0f0), name="qx_component_mu_sigma_param"))
-    qx_component_mu = edmodels.MultivariateNormalDiag(qx_component_mu_mu_param, qx_component_mu_sigma_param)
+    qx_component_mu_softplus_sigma_param = tf.Variable(tf.fill([num_components], -1.0f0), name="qx_component_mu_sigma_param")
+    qx_component_mu = edmodels.NormalWithSoftplusScale(
+        loc=qx_component_mu_mu_param, scale=qx_component_mu_softplus_sigma_param,
+        name="qx_component_mu")
 
-    qx_component_log_sigma_mu_param = tf.Variable(tf.fill([num_components], 0.0f0), name="qx_component_log_sigma_mu_param")
-    qx_component_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_components], -1.0f0), name="qx_component_log_sigma_sigma_param"))
-    qx_component_log_sigma = edmodels.MultivariateNormalDiag(qx_component_log_sigma_mu_param,
-                                                             qx_component_log_sigma_sigma_param)
+    qx_component_sigma_sq_mu_param =
+        tf.Variable(tf.fill([num_components], -2.0f0),
+                    name="qx_component_sigma_sq_mu_param")
+    qx_component_sigma_sq_sigma_param =
+        tf.Variable(tf.fill([num_components], -1.0f0),
+                    name="qx_component_sigma_sq_sigma_param")
+    qx_component_sigma_sq = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(
+            qx_component_sigma_sq_mu_param, qx_component_sigma_sq_sigma_param),
+        bijector=tfdist.bijectors[:Exp](),
+        name="qx_component_sigma_sq")
 
     qx_component_mu_param = tf.Variable(x_component_mu_initial, name="qx_component_mu_param")
-    qx_component_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_components], -1.0f0), name="qx_component_sigma_param"))
-    qx_component = edmodels.MultivariateNormalDiag(qx_component_mu_param, qx_component_sigma_param)
+    qx_component_softplus_sigma_param =
+        tf.Variable(tf.fill([num_samples, num_components], -1.0f0), name="qx_component_softplus_sigma_param")
+    qx_component = edmodels.NormalWithSoftplusScale(
+        loc=qx_component_mu_param, scale=qx_component_softplus_sigma_param,
+        name="qx_component")
 
-    qx_err_log_sigma_mu_param = tf.Variable(tf.fill([n], 0.0f0), name="qx_err_log_sigma_mu_param")
-    qx_err_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([n], -1.0f0), name="qx_err_log_sigma_sigma_param"))
-    qx_err_log_sigma = edmodels.MultivariateNormalDiag(qx_err_log_sigma_mu_param,
-                                                       qx_err_log_sigma_sigma_param)
+    qx_sigma_sq_mu_param = tf.Variable(tf.fill([n], -3.0f0), name="qx_err_sigma_sq_mu_param")
+    qx_sigma_sq_sigma_param = tf.Variable(tf.fill([n], -4.0f0), name="qx_err_sigma_sq_sigma_param")
+    qx_sigma_sq = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(
+            qx_sigma_sq_mu_param, qx_sigma_sq_sigma_param),
+        bijector=tfdist.bijectors[:Exp](),
+        name="qx_sigma_sq")
 
-    # x0_log = tf.log(tf.constant(input.x0))
-    qx_err_mu_param = tf.Variable(tf.fill([num_samples, n], log(0.1)), name="qx_err_mu_param")
-    qx_err_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_err_sigma_param"))
-    qx_err = edmodels.MultivariateNormalDiag(qx_err_mu_param, qx_err_sigma_param)
+    # x0_log = log.(input.loaded_samples.x0_values)
+    # qx_mu_param = tf.Variable(x0_log, name="qx_mu_param")
+    qx_mu_param = tf.Variable(tf.fill([num_samples, n], log(1.0f0/n)), name="qx_mu_param")
+    qx_sigma_param = tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_sigma_param")
+    qx = edmodels.NormalWithSoftplusScale(loc=qx_mu_param, scale=qx_sigma_param, name="qx")
 
     vars = Dict(
-        :x_component           => x_component,
+        :x                     => x,
+        :x_sigma_sq            => x_sigma_sq,
         :x_component_mu        => x_component_mu,
-        :x_component_log_sigma => x_component_log_sigma,
-        :x_err_log_sigma       => x_err_log_sigma,
-        :x_err                 => x_err)
+        :x_component_sigma_sq  => x_component_sigma_sq,
+        :x_component           => x_component)
 
     var_approximations = Dict(
-        x_component           => qx_component,
+        x                     => qx,
+        x_sigma_sq            => qx_sigma_sq,
         x_component_mu        => qx_component_mu,
-        x_component_log_sigma => qx_component_log_sigma,
-        x_err_log_sigma       => qx_err_log_sigma,
-        x_err                 => qx_err)
+        x_component_sigma_sq  => qx_component_sigma_sq,
+        x_component           => qx_component)
 
     data = Dict(likapprox => Float32[])
 
@@ -1066,4 +1079,3 @@ end
 
 EXTRUDER_MODELS["expression"] = estimate_expression
 EXTRUDER_MODELS["splicing"]   = estimate_splicing_log_ratio
-

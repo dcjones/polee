@@ -178,8 +178,23 @@ function estimate_gene_expression(input::ModelInput)
         gene_feature_matrix(input.ts, input.ts_metadata)
     num_aux_features = regularize_disjoint_feature_matrix!(gene_idxs, transcript_idxs, n)
 
-    est = estimate_disjoint_feature_expression(input, gene_idxs, transcript_idxs,
-                                               num_features + num_aux_features)
+    prior_vars, prior_var_approximations =
+        model_disjoint_feature_prior(input, gene_idxs, transcript_idxs)
+
+    vars, var_approximations, data =
+        model_disjoint_feature_expression(input, gene_idxs, transcript_idxs,
+                                          num_features + num_aux_features,
+                                          prior_vars[:x_feature])
+
+    merge!(var_approximations, prior_var_approximations)
+    merge!(vars, prior_vars)
+
+    inference = ed.KLqp(latent_vars=var_approximations, data=data)
+    optimizer = tf.train[:AdamOptimizer](5e-2)
+    run_inference(input, inference, 1000, optimizer)
+
+    sess = ed.get_session()
+    est  = sess[:run](tf.nn[:softmax](var_approximations[vars[:x_feature]][:mean]()))
 
     if input.output_format == :csv
         output_filename = isnull(input.output_filename) ? "gene-expression.csv" : get(input.output_filename)
@@ -498,14 +513,20 @@ function transcript_quantification_model(input::ModelInput, pooled_means::Bool=t
     likapprox = RNASeqApproxLikelihood(input, x)
 
     return x, x_sigma_sq, x_mu_param, x_mu, likapprox
+
+
+
 end
 
 
-function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
-                                              transcript_idxs, num_features)
+"""
+Set up prior on feature expression for simple quantification.
+"""
+function model_disjoint_feature_prior(input::ModelInput, feature_idxs, transcript_idxs)
+    num_features = maximum(feature_idxs)
+
     num_samples, n = size(input.loaded_samples.x0_values)
 
-    # feature expression
     x_feature_mu_mu0 = tf.constant(log(1/num_features), shape=[num_features])
     x_feature_mu_sigma0 = tf.constant(4.0, shape=[num_features])
     x_feature_mu = edmodels.Normal(loc=x_feature_mu_mu0, scale=x_feature_mu_sigma0)
@@ -524,6 +545,59 @@ function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
 
     x_feature = edmodels.Normal(loc=x_feature_mu_param,
                                 scale=x_feature_sigma_param)
+
+    # approximations
+    # --------------
+
+    # figure out some reasonable initial values
+    feature_mu_initial = zeros(Float32, (num_samples, num_features))
+    for i in 1:num_samples
+        for (j, k) in zip(feature_idxs, transcript_idxs)
+            feature_mu_initial[i, j] += input.loaded_samples.x0_values[i, k]
+        end
+    end
+    map!(log, feature_mu_initial, feature_mu_initial)
+    feature_mu_initial_mean = reshape(mean(feature_mu_initial, 1), (num_features,))
+
+    qx_feature_mu_mu_param = tf.Variable(feature_mu_initial_mean)
+    qx_feature_mu_softplus_sigma_param = tf.Variable(tf.fill([num_features], -1.0f0))
+    qx_feature_mu = edmodels.NormalWithSoftplusScale(loc=qx_feature_mu_mu_param,
+                                                     scale=qx_feature_mu_softplus_sigma_param)
+
+    qx_feature_sigma_sq_mu_param    = tf.Variable(tf.fill([num_features], 0.0f0), name="qx_sigma_sq_mu_param")
+    qx_feature_sigma_sq_sigma_param = tf.Variable(tf.fill([num_features], 1.0f0), name="qx_sigma_sq_sigma_param")
+    qx_feature_sigma_sq = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(loc=qx_feature_sigma_sq_mu_param,
+                                                      scale=qx_feature_sigma_sq_sigma_param),
+        bijector=tfdist.bijectors[:Exp](),
+        name="LogNormalTransformedDistribution")
+
+    qx_feature_mu_param = tf.Variable(feature_mu_initial)
+    qx_feature_softplus_sigma_param = tf.Variable(tf.fill([num_samples, num_features], -1.0f0))
+    qx_feature = edmodels.NormalWithSoftplusScale(loc=qx_feature_mu_param,
+                                                  scale=qx_feature_softplus_sigma_param)
+
+    prior_var_approximations = Dict(
+        x_feature             => qx_feature,
+        x_feature_mu          => qx_feature_mu,
+        x_feature_sigma_sq    => qx_feature_sigma_sq,
+    )
+
+    prior_vars = Dict(
+        :x_feature           => x_feature,
+        :x_feature_mu        => x_feature_mu,
+        :x_feature_sigma_sq  => x_feature_sigma_sq
+    )
+
+    return prior_vars, prior_var_approximations
+end
+
+
+function model_disjoint_feature_expression(input::ModelInput, feature_idxs,
+                                           transcript_idxs, num_features,
+                                           x_feature)
+
+    num_samples, n = size(input.loaded_samples.x0_values)
 
     # within feature relative expression of feature constituents
     x_constituent_mu_mu0 = tf.constant(0.0, shape=[n])
@@ -589,28 +663,11 @@ function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
             constituent_mu_initial[i, k] /= feature_mu_initial[i, j]
         end
     end
+
     map!(log, feature_mu_initial, feature_mu_initial)
     map!(log, constituent_mu_initial, constituent_mu_initial)
     feature_mu_initial_mean = reshape(mean(feature_mu_initial, 1), (num_features,))
     constituent_mu_initial_mean = reshape(mean(constituent_mu_initial, 1), (n,))
-
-    qx_feature_mu_mu_param = tf.Variable(feature_mu_initial_mean)
-    qx_feature_mu_softplus_sigma_param = tf.Variable(tf.fill([num_features], -1.0f0))
-    qx_feature_mu = edmodels.NormalWithSoftplusScale(loc=qx_feature_mu_mu_param,
-                                                     scale=qx_feature_mu_softplus_sigma_param)
-
-    qx_feature_sigma_sq_mu_param    = tf.Variable(tf.fill([num_features], 0.0f0), name="qx_sigma_sq_mu_param")
-    qx_feature_sigma_sq_sigma_param = tf.Variable(tf.fill([num_features], 1.0f0), name="qx_sigma_sq_sigma_param")
-    qx_feature_sigma_sq = edmodels.TransformedDistribution(
-        distribution=edmodels.NormalWithSoftplusScale(loc=qx_feature_sigma_sq_mu_param,
-                                                      scale=qx_feature_sigma_sq_sigma_param),
-        bijector=tfdist.bijectors[:Exp](),
-        name="LogNormalTransformedDistribution")
-
-    qx_feature_mu_param = tf.Variable(feature_mu_initial)
-    qx_feature_softplus_sigma_param = tf.Variable(tf.fill([num_samples, num_features], -1.0f0))
-    qx_feature = edmodels.NormalWithSoftplusScale(loc=qx_feature_mu_param,
-                                                  scale=qx_feature_softplus_sigma_param)
 
     qx_constituent_mu_mu_param = tf.Variable(constituent_mu_initial_mean)
     qx_constituent_mu_softplus_sigma_param = tf.Variable(tf.fill([n], -1.0f0))
@@ -630,25 +687,21 @@ function estimate_disjoint_feature_expression(input::ModelInput, feature_idxs,
     qx_constituent = edmodels.NormalWithSoftplusScale(loc=qx_constituent_mu_param,
                                                       scale=qx_constituent_softplus_sigma_param)
 
-    inference = ed.KLqp(Dict(x_feature              => qx_feature,
-                             x_feature_mu           => qx_feature_mu,
-                             x_feature_sigma_sq     => qx_feature_sigma_sq,
-                             x_constituent          => qx_constituent,
-                             x_constituent_mu       => qx_constituent_mu,
-                             x_constituent_sigma_sq => qx_constituent_sigma_sq),
-                        data=Dict(likapprox => Float32[]))
+    vars = Dict(
+        :x_constituent => x_constituent,
+        :x_constituent_mu => x_constituent_mu,
+        :x_constituent_sigma_sq => x_constituent_sigma_sq
+    )
 
-    optimizer = tf.train[:AdamOptimizer](0.05)
-    run_inference(input, inference, 500, optimizer)
+    var_approximations = Dict(
+        x_constituent          => qx_constituent,
+        x_constituent_mu       => qx_constituent_mu,
+        x_constituent_sigma_sq => qx_constituent_sigma_sq
+    )
 
-    # output some estimates
-    sess = ed.get_session()
-    qx_mu_value    = sess[:run](qx_feature_mu_param)
-    qx_sigma_value = sess[:run](tf.nn[:softplus](qx_feature_softplus_sigma_param))
+    data = Dict(likapprox => Float32[])
 
-    est = sess[:run](tf.nn[:softmax](qx_feature_mu_param, dim=-1))
-
-    return est
+    return vars, var_approximations, data
 end
 
 

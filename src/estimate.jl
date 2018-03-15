@@ -218,7 +218,7 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
 
-        left_index, right_index, leaf_index =
+        left_index,uright_index, leaf_index =
             make_inverse_hsb_params(node_parent_idxs, node_js)
 
         left_index_values[i, :]  = left_index
@@ -320,8 +320,8 @@ function run_inference(input, inference, n_iter, optimizer)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession(config=config)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    # inference[:initialize](n_iter=n_iter, optimizer=optimizer)
-    inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+    # inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
     # inference[:initialize](n_iter=n_iter)
 
     sess[:run](tf.global_variables_initializer(),

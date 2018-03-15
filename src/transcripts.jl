@@ -469,9 +469,18 @@ is the number of transcripts, such that givin transcript expression y, Fy
 gives gene expression.
 """
 function gene_feature_matrix(ts::Transcripts, ts_metadata::TranscriptsMetadata)
+    # it's possible that there are genes in the metadata that have no
+    # transcripts, if transcripts are being blacklisted
+    used_genes = Set{String}()
+    for t in ts
+        push!(used_genes, ts_metadata.gene_id[t.metadata.name])
+    end
+
     gene_nums = Dict{String, Int}()
     for (transcript_id, gene_id) in ts_metadata.gene_id
-        get!(gene_nums, gene_id, length(gene_nums) + 1)
+        if gene_id ∈ used_genes
+            get!(gene_nums, gene_id, length(gene_nums) + 1)
+        end
     end
 
     I = Int[]

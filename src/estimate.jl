@@ -58,7 +58,7 @@ Input:
     * ts_metadata: transcript metadata
 """
 function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
-    return load_samples_flatbuffer(filenames, ts, ts_metadata)
+    return load_samples_hdf5(filenames, ts, ts_metadata)
 end
 
 
@@ -218,7 +218,9 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js = read(input["node_js"])
 
-        left_index,uright_index, leaf_index =
+        close(input)
+
+        left_index, right_index, leaf_index =
             make_inverse_hsb_params(node_parent_idxs, node_js)
 
         left_index_values[i, :]  = left_index
@@ -236,7 +238,6 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
         hsb_transform!(t, y0, x0, Val{true})
         x0_values[i, :] = x0
 
-        close(input)
         next!(prog)
     end
 
@@ -274,7 +275,7 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
 end
 
 
-struct ModelInput
+mutable struct ModelInput
     loaded_samples::LoadedSamples
     inference::Symbol
     feature::Symbol
@@ -358,6 +359,14 @@ function run_inference(input, inference, n_iter, optimizer)
     # trace_out[:close]()
 
     inference[:finalize]()
+end
+
+
+function reset_graph()
+    tf.reset_default_graph()
+    old_sess = ed.get_session()
+    old_sess[:close]()
+    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 end
 
 

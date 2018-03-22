@@ -184,22 +184,20 @@ function RNASeqSample(transcripts_filename::String,
     @show extrema(V[J .== 133569])
     @show extrema(V[J .== 133570])
 
-    # TODO: decide what to do about this
     if !isnull(output)
-        warn("Outputing likelihood matrix currently disabled.")
-    #     h5open(get(output), "w") do out
-    #         out["m"] = M.m
-    #         out["n"] = M.n
-    #         out["colptr", "compress", 1] = M.colptr
-    #         out["rowval", "compress", 1] = M.rowval
-    #         out["nzval", "compress", 1] = M.nzval
-    #         out["effective_lengths", "compress", 1] = effective_lengths
-    #         g = g_create(out, "metadata")
-    #         attrs(g)["gfffilename"] = ts_metadata.filename
-    #         attrs(g)["gffhash"]     = ts_metadata.gffhash
-    #         attrs(g)["gffsize"]     = ts_metadata.gffsize
-    #         attrs(g)["excluded_transcripts_hash"]     = ts_metadata.excluded_transcripts_hash
-    #     end
+        h5open(get(output), "w") do out
+            out["m"] = M.m
+            out["n"] = M.n
+            out["colptr", "compress", 1] = M.colptr
+            out["rowval", "compress", 1] = M.rowval
+            out["nzval", "compress", 1] = M.nzval
+            out["effective_lengths", "compress", 1] = effective_lengths
+            g = g_create(out, "metadata")
+            attrs(g)["gfffilename"] = ts_metadata.filename
+            attrs(g)["gffhash"]     = ts_metadata.gffhash
+            attrs(g)["gffsize"]     = ts_metadata.gffsize
+            attrs(g)["excluded_transcripts_hash"]     = ts_metadata.excluded_transcripts_hash
+        end
     end
 
     return RNASeqSample(m, n, M, effective_lengths, ts_metadata)

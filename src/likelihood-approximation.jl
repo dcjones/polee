@@ -132,6 +132,7 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
             params["mu"],
             params["omega"],
             params["alpha"],
+            sample.effective_lengths,
             params["node_parent_idxs"],
             params["node_js"],
             string(typeof(approximation)),
@@ -139,6 +140,7 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
             sample.transcript_metadata.filename,
             sample.transcript_metadata.gffsize)
 
+        @show sum(data.mu .== 0.0)
         open(output_filename, "w") do output
             write(output, data, PREPARED_SAMPLE_FORMAT_VERSION)
         end
@@ -584,7 +586,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
 
     toc()
 
-    return union(flattened_tree(t),
+    return merge(flattened_tree(t),
                  Dict{String, Vector}("mu" => mu, "omega" => omega))
 end
 
@@ -687,6 +689,15 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY}) # 0.023 seconds
             xs = clamp!(xs, eps, 1 - eps)
 
+            # @show mu[1:10]
+            # @show sigma[1:10]
+            # @show alpha[1:10]
+            # @show sum(xs)
+            # @show xs[[133568, 133569, 133570]]
+            # @show xs[1:10]
+            # @show xs[133560:133570]
+
+
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
                                 X, Xt, xs, x_grad, Val{GRADONLY}) # 0.047 seconds
 
@@ -726,7 +737,7 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
 
     toc()
 
-    return union(flattened_tree(t),
+    return merge(flattened_tree(t),
                  Dict{String, Vector}("mu" => mu, "omega" => omega, "alpha" => alpha))
 end
 
@@ -884,7 +895,7 @@ function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
 
     toc()
 
-    return union(flattened_tree(t),
+    return merge(flattened_tree(t),
                  Dict{String, Vector}("alpha" => αs, "beta" => βs))
 end
 
@@ -1004,7 +1015,7 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
 
     toc()
 
-    return union(flattened_tree(t),
+    return merge(flattened_tree(t),
                  Dict{String, Vector}("mu" => mu, "omega" => omega))
 end
 

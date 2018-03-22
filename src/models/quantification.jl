@@ -18,6 +18,19 @@ end
 
 
 function estimate_transcript_expression(input::ModelInput, write_results::Bool=true)
+
+    idx = 0
+    for (i, t) in enumerate(input.ts)
+        if t.metadata.name == "transcript:ENST00000396251"
+            idx = i
+            break
+        end
+    end
+    @show idx
+    @show input.loaded_samples.efflen_values[:, idx]
+    @show input.loaded_samples.x0_values[:, idx]
+    exit()
+
     num_samples, n = size(input.loaded_samples.x0_values)
 
     x0_log = log.(input.loaded_samples.x0_values)
@@ -67,7 +80,7 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
     # results should be reported. Probably in sqlite or something.
     if write_results
         write_transcript_expression_csv("transcript-expression-estimates.csv",
-                                        input.loaded_samples.sample_names,
+                                        input.ts, input.loaded_samples.sample_names,
                                         mean_est, lower_credible, upper_credible)
     end
 
@@ -134,14 +147,14 @@ function estimate_simple_transcript_expression(input::ModelInput, write_results:
 end
 
 
-function write_transcript_expression_csv(output_filename, sample_names,
+function write_transcript_expression_csv(output_filename, ts, sample_names,
                                          est, lower_credible, upper_credible)
     num_samples, n = size(est)
     open(output_filename, "w") do output
-        println(output, "sample_name,transcript_num,expression,lower_credible,upper_credible")
+        println(output, "sample_name,transcript_id,expression,lower_credible,upper_credible")
         for (i, sample_name) in enumerate(sample_names)
-            for j in 1:n
-                @printf(output, "%s,%d,%e,%e,%e\n", sample_name, j,
+            for (j, t) in enumerate(ts)
+                @printf(output, "%s,%s,%e,%e,%e\n", sample_name, t.metadata.name,
                         est[i, j], lower_credible[i, j], upper_credible[i, j])
             end
         end
@@ -223,7 +236,9 @@ function write_gene_expression_csv(output_filename, sample_names,
 end
 
 
-function estimate_splicing_expression(input::ModelInput)
+function estimate_splicing_expression(input::ModelInput; write_results::Bool=true)
+
+    num_samples, n = size(input.loaded_samples.x0_values)
 
     (num_features,
      feature_idxs, feature_transcript_idxs,
@@ -238,38 +253,72 @@ function estimate_splicing_expression(input::ModelInput)
     merge!(var_approximations, prior_var_approximations)
     merge!(vars, prior_vars)
 
-    inference = ed.KLqp(latent_vars=PyDict(var_approximations),
-                        data=PyDict(data))
+    if input.inference == :variational
+        inference = ed.KLqp(var_approximations, data=data)
 
-    optimizer = tf.train[:AdamOptimizer](5e-2)
-    # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
-    inference[:run](n_iter=2000, optimizer=optimizer)
+        optimizer = tf.train[:AdamOptimizer](5e-2)
+        # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
+        run_inference(input, inference, 2000, optimizer)
 
-    sess = ed.get_session()
-    # est  = sess[:run](tf.sigmoid(qx_feature_mu_param))
-    # mean_est  = sess[:run](qx_feature_mu_param)
-    # sigma_est = sess[:run](qx_feature_sigma_param)
-    est  = sess[:run](tf.sigmoid(var_approximations[vars[:x_feature]][:mean]()))
-    mean_est  = sess[:run](var_approximations[vars[:x_feature]][:mean]())
-    sigma_est  = sess[:run](var_approximations[vars[:x_feature]][:variance]())
+        sess = ed.get_session()
+        mean_est  = sess[:run](var_approximations[vars[:x_feature]][:mean]())
+        sigma_est  = sess[:run](var_approximations[vars[:x_feature]][:variance]())
 
-    # TODO: make this a command line parameter
-    credible_interval = (0.01, 0.99)
-
-    lower_credible = similar(mean_est)
-    upper_credible = similar(mean_est)
-    for i in 1:size(mean_est, 1)
-        for j in 1:size(mean_est, 2)
-            dist = Normal(mean_est[i, j], sigma_est[i, j])
-            lower_credible[i, j] = logistic(quantile(dist, credible_interval[1]))
-            upper_credible[i, j] = logistic(quantile(dist, credible_interval[2]))
+        est = similar(mean_est)
+        lower_credible = similar(mean_est)
+        upper_credible = similar(mean_est)
+        for i in 1:size(mean_est, 1)
+            for j in 1:size(mean_est, 2)
+                dist = Normal(mean_est[i, j], sigma_est[i, j])
+                est[i,j ] = logistic(mean_est[i, j])
+                lower_credible[i, j] = logistic(quantile(dist, input.credible_interval[1]))
+                upper_credible[i, j] = logistic(quantile(dist, input.credible_interval[2]))
+            end
         end
+
+        output_filename = isnull(input.output_filename) ?
+            "splicing-proportion-estimates.csv" : get(input.output_filename)
+        write_splicing_proportions_csv(output_filename, input.loaded_samples.sample_names,
+                                       num_features, est,
+                                       lower_credible, upper_credible)
+
+        return mean_est
+    elseif input.inference == :map
+
+        qx_feature_param = tf.Variable(tf.zeros([num_samples, num_features]))
+        qx_feature = edmodels.PointMass(params=qx_feature_param)
+
+        var_maps = Dict(
+            vars[:x_feature_mu] =>
+                edmodels.PointMass(tf.Variable(tf.zeros([num_features]))),
+            vars[:x_feature_log_sigma] =>
+                edmodels.PointMass(tf.Variable(tf.zeros([num_features]))),
+            vars[:x_feature] => qx_feature,
+            vars[:x] =>
+                edmodels.PointMass(tf.Variable(tf.fill([num_samples, n], log(1.0f0/n)))),
+            vars[:x_sigma_sq] =>
+                edmodels.PointMass(tf.Variable(tf.fill([n], 0.1))),
+            vars[:x_component_mu] =>
+                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component_mu]][:mean]())),
+            vars[:x_component] =>
+                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component]][:mean]()))
+        )
+
+        inference = ed.MAP(var_maps, data=data)
+        optimizer = tf.train[:AdamOptimizer](5e-2)
+        # TODO: really neeed a way to set this
+        # run_inference(input, inference, 250, optimizer)
+        run_inference(input, inference, 50, optimizer)
+        sess = ed.get_session()
+
+        est = sess[:run](qx_feature_param)
+
+        # TODO: optionally write results
+
+        # reset_graph()
+        return est
     end
 
-    tf.reset_default_graph()
-    old_sess = ed.get_session()
-    old_sess[:close]()
-    ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 end
 
 
@@ -712,6 +761,7 @@ they share a feature, or one has a feature and another an antifeature.
 function connected_components_from_features(n, num_features, feature_idxs, feature_transcript_idxs,
                                             antifeature_idxs, antifeature_transcript_idxs)
     components = IntDisjointSets(n + num_features)
+
     @assert length(feature_idxs) == length(feature_transcript_idxs)
     for (i, j) in zip(feature_transcript_idxs, feature_idxs)
         union!(components, i, n + j)
@@ -763,9 +813,6 @@ function connected_components_from_features(n, num_features, feature_idxs, featu
     end
 
     num_components = aux_components + length(component_idx_map)
-
-    # TODO: no this too is wrong. There should be duplicate components. just
-    # not duplicate transcripts.
 
     return num_components, component_idxs,
            component_transcript_idxs, transcripts_without_features
@@ -832,16 +879,14 @@ function model_nondisjoint_feature_prior(input::ModelInput, num_features)
 
     x_feature_mu_mu0 = tf.constant(0.0, shape=[num_features])
     x_feature_mu_sigma0 = tf.constant(5.0, shape=[num_features])
-    x_feature_mu = edmodels.MultivariateNormalDiag(x_feature_mu_mu0,
-                                                   x_feature_mu_sigma0)
-    # x_feature_mu_ = tf_print_span(x_feature_mu, "x_feature_mu span")
+    x_feature_mu = edmodels.Normal(loc=x_feature_mu_mu0,
+                                   scale=x_feature_mu_sigma0)
 
-    x_feature_sigma_mu0 = tf.constant(0.0, shape=[num_features])
-    x_feature_sigma_sigma0 = tf.constant(1.0, shape=[num_features])
-    x_feature_log_sigma = edmodels.MultivariateNormalDiag(x_feature_sigma_mu0,
-                                                          x_feature_sigma_sigma0)
-    x_feature_sigma = tf.exp(x_feature_log_sigma)
-    # x_feature_sigma_ = tf_print_span(x_feature_sigma, "x_feature_sigma span")
+    x_feature_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[num_features])
+    x_feature_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[num_features])
+    x_feature_sigma_sq = edmodels.InverseGamma(
+        x_feature_sigma_alpha0, x_feature_sigma_beta0)
+    x_feature_sigma = tf.sqrt(x_feature_sigma_sq)
 
     x_feature_mu_param = tf.matmul(tf.ones([num_samples, 1]),
                                    tf.expand_dims(x_feature_mu, 0))
@@ -849,36 +894,39 @@ function model_nondisjoint_feature_prior(input::ModelInput, num_features)
     x_feature_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
                                       tf.expand_dims(x_feature_sigma, 0))
 
-    x_feature = edmodels.MultivariateNormalDiag(x_feature_mu_param,
-                                                x_feature_sigma_param)
+    x_feature = edmodels.Normal(loc=x_feature_mu_param,
+                                scale=x_feature_sigma_param)
 
     # TODO: more informed initization
     x_feature_mu_initial = zeros(Float32, (num_samples, num_features))
     x_feature_mu_initial_mean = reshape(mean(x_feature_mu_initial, 1), (num_features,))
 
-    qx_feature_mu_mu_param = tf.Variable(x_feature_mu_initial_mean, name="qx_feature_mu_mu_param")
-    qx_feature_mu_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0), name="qx_feature_mu_sigma_param"))
-    qx_feature_mu = edmodels.MultivariateNormalDiag(qx_feature_mu_mu_param, qx_feature_mu_sigma_param)
+    qx_feature_mu_mu_param = tf.Variable(x_feature_mu_initial_mean, name="qx_feature_mu_mu")
+    qx_feature_mu_softplus_sigma_param = tf.Variable(tf.fill([num_features], -1.0f0), name="qx_feature_mu_softplus_sigma")
+    qx_feature_mu = edmodels.NormalWithSoftplusScale(qx_feature_mu_mu_param, qx_feature_mu_softplus_sigma_param)
 
-    qx_feature_log_sigma_mu_param = tf.Variable(tf.fill([num_features], 0.0f0), name="qx_feature_log_sigma_mu_param")
-    qx_feature_log_sigma_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_features], -1.0f0), name="qx_feature_log_sigma_sigma_param"))
-    qx_feature_log_sigma = edmodels.MultivariateNormalDiag(qx_feature_log_sigma_mu_param,
-                                                           qx_feature_log_sigma_sigma_param)
+    qx_feature_sigma_sq_mu_param    = tf.Variable(tf.fill([num_features], 0.0f0), name="qx_sigma_sq_mu_param")
+    qx_feature_sigma_sq_sigma_param = tf.Variable(tf.fill([num_features], 1.0f0), name="qx_sigma_sq_sigma_param")
+    qx_feature_sigma_sq = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(loc=qx_feature_sigma_sq_mu_param,
+                                                      scale=qx_feature_sigma_sq_sigma_param),
+        bijector=tfdist.bijectors[:Exp](),
+        name="LogNormalTransformedDistribution")
 
-    qx_feature_mu_param = tf.Variable(x_feature_mu_initial, name="qx_feature_mu_param")
-    qx_feature_sigma_param = tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], -1.0f0), name="qx_feature_sigma_param"))
-    qx_feature = edmodels.MultivariateNormalDiag(qx_feature_mu_param, qx_feature_sigma_param)
+    qx_feature_mu_param = tf.Variable(x_feature_mu_initial, name="qx_feature_mu")
+    qx_feature_softplus_sigma_param = tf.Variable(tf.fill([num_samples, num_features], -1.0f0), name="qx_feature_sigma")
+    qx_feature = edmodels.NormalWithSoftplusScale(qx_feature_mu_param, qx_feature_softplus_sigma_param)
 
     prior_var_approximations = Dict(
         x_feature             => qx_feature,
         x_feature_mu          => qx_feature_mu,
-        x_feature_log_sigma   => qx_feature_log_sigma,
+        x_feature_sigma_sq    => qx_feature_sigma_sq,
     )
 
     prior_vars = Dict(
         :x_feature           => x_feature,
         :x_feature_mu        => x_feature_mu,
-        :x_feature_log_sigma => x_feature_log_sigma
+        :x_feature_sigma_sq  => x_feature_sigma_sq
     )
 
     return prior_vars, prior_var_approximations
@@ -909,10 +957,10 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
     permute!(component_transcript_idxs, p)
     permute!(component_idxs, p)
 
-    transcripts_without_features_props = zeros(Float32, n)
-    transcripts_without_features_props[transcripts_without_features] = 1.0f0
-    transcripts_without_features_props_tensor =
-        tf.expand_dims(tf.constant(transcripts_without_features_props), -1)
+    # transcripts_without_features_props = zeros(Float32, n)
+    # transcripts_without_features_props[transcripts_without_features] = 1.0f0
+    # transcripts_without_features_props_tensor =
+    #     tf.expand_dims(tf.constant(transcripts_without_features_props), -1)
 
     # component expression
     # --------------------
@@ -944,8 +992,8 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
 
     # x_feature_ = tf_print_span(x_feature, "x_feature span")
 
-    # x_feature_proportions = tf.clip_by_value(tf.sigmoid(x_feature), 1f-7, 1.0f0 - 1f-7)
     x_feature_proportions = tf.sigmoid(x_feature)
+    x_feature_proportions = tf.clip_by_value(tf.sigmoid(x_feature), 1f-7, 1.0f0 - 1f-7)
     # x_feature_proportions = tf_print_span(x_feature_proportions, "x_feature_proportions span")
     x_antifeature_proportions = tf.ones([num_samples, num_features]) - x_feature_proportions
 
@@ -954,6 +1002,7 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
 
     # x_feature_proportions = tf_print_span(x_feature_proportions, "x_feature_proportions span")
     # x_antifeature_proportions = tf_print_span(x_antifeature_proportions, "x_antifeature_proportions span")
+
 
     features_matrix_indices = Array{Int32}((length(feature_idxs), 2))
     for (k, (i, j)) in enumerate(zip(feature_transcript_idxs, feature_idxs))
@@ -981,6 +1030,17 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
     components = tf.SparseTensor(indices=component_matrix_indices,
                                  values=tf.ones(length(component_transcript_idxs)),
                                  dense_shape=[n, num_components])
+
+    # @show length(feature_transcript_idxs)
+    # @show length(feature_idxs)
+    # @show length(antifeature_transcript_idxs)
+    # @show length(antifeature_idxs)
+    # @show length(component_transcript_idxs)
+    # @show length(component_idxs)
+    # @show x_feature_log_proportions
+    # @show x_antifeature_log_proportions
+    # @show x_component
+    # exit()
 
     xs = []
     for (x_feature_log_proportions_i, x_antifeature_log_proportions_i, x_component_i) in
@@ -1045,9 +1105,9 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
     # x_ = tf.Print(x_, [tf.reduce_min(x_, axis=1)], "x min 1")
     # x_ = tf.Print(x_, [tf.reduce_max(x_, axis=1)], "x max 1")
 
-    x_ = tf.Print(x_, [tf.reduce_min(x_, axis=0)], "x min 0", summarize=10)
-    x_ = tf.Print(x_, [tf.reduce_max(x_, axis=0)], "x max 0", summarize=10)
-    x_ = tf.Print(x_, [tf.reduce_mean(x_, axis=0)], "x mean 0", summarize=10)
+    # x_ = tf.Print(x_, [tf.reduce_min(x_, axis=0)], "x min 0", summarize=10)
+    # x_ = tf.Print(x_, [tf.reduce_max(x_, axis=0)], "x max 0", summarize=10)
+    # x_ = tf.Print(x_, [tf.reduce_mean(x_, axis=0)], "x mean 0", summarize=10)
 
     likapprox = RNASeqApproxLikelihood(input, x_)
 

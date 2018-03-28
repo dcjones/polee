@@ -24,9 +24,7 @@ using BioAlignments
 using BioSequences
 using DataStructures
 using Distributions
-using FlatBuffers
-# using HDF5
-using Libz
+using HDF5
 using ProgressMeter
 using SQLite
 using StatsBase
@@ -192,8 +190,6 @@ function main()
                 default = "logit_skew_normal_hsb"
             "--tree-method"
                 default = "cluster"
-            "--output-format"
-                default = "flatbuffer"
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
 
@@ -226,8 +222,7 @@ function main()
                               parsed_args["likelihood-matrix"] == nothing ?
                                 Nullable{String}() :
                                 Nullable(parsed_args["likelihood-matrix"]))
-        approximate_likelihood(approx, sample, parsed_args["output"],
-                               parsed_args["output-format"])
+        approximate_likelihood(approx, sample, parsed_args["output"])
         return
 
     elseif subcmd == "estimate" || subcmd == "est"

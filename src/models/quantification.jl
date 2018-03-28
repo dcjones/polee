@@ -254,11 +254,14 @@ function estimate_splicing_expression(input::ModelInput; write_results::Bool=tru
     merge!(vars, prior_vars)
 
     if input.inference == :variational
-        inference = ed.KLqp(var_approximations, data=data)
-
         optimizer = tf.train[:AdamOptimizer](5e-2)
-        # inference[:run](n_iter=5000, optimizer=optimizer, logdir="log")
-        run_inference(input, inference, 2000, optimizer)
+
+        run_two_stage_klqp_inference(
+            input, var_approximations, [vars[:x_sigma_sq]], [0.01f0],
+            data, 500, 1000, optimizer)
+
+        # inference = ed.KLqp(var_approximations, data=data)
+        # run_inference(input, inference, 1000, optimizer)
 
         sess = ed.get_session()
         mean_est  = sess[:run](var_approximations[vars[:x_feature]][:mean]())
@@ -290,25 +293,25 @@ function estimate_splicing_expression(input::ModelInput; write_results::Bool=tru
 
         var_maps = Dict(
             vars[:x_feature_mu] =>
-                edmodels.PointMass(tf.Variable(tf.zeros([num_features]))),
-            vars[:x_feature_log_sigma] =>
-                edmodels.PointMass(tf.Variable(tf.zeros([num_features]))),
+                edmodels.PointMass(tf.Variable(tf.zeros([num_features]), name="qx_feature_mu")),
+            vars[:x_feature_sigma_sq] =>
+                edmodels.PointMass(tf.nn[:softplus](tf.Variable(tf.fill([num_features], 0.1f0), name="qx_feature_sigma_sq"))),
             vars[:x_feature] => qx_feature,
             vars[:x] =>
-                edmodels.PointMass(tf.Variable(tf.fill([num_samples, n], log(1.0f0/n)))),
+                edmodels.PointMass(tf.Variable(tf.fill([num_samples, n], log(1.0f0/n), name="qx"))),
             vars[:x_sigma_sq] =>
-                edmodels.PointMass(tf.Variable(tf.fill([n], 0.1))),
+                edmodels.PointMass(tf.nn[:softplus](tf.Variable(tf.fill([n], 0.1f0), name="qx_sigma_sq"))),
             vars[:x_component_mu] =>
-                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component_mu]][:mean]())),
+                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component_mu]][:mean](), name="qx_component_mu")),
             vars[:x_component] =>
-                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component]][:mean]()))
+                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component]][:mean](), name="qx_component"))
         )
 
         inference = ed.MAP(var_maps, data=data)
         optimizer = tf.train[:AdamOptimizer](5e-2)
         # TODO: really neeed a way to set this
         # run_inference(input, inference, 250, optimizer)
-        run_inference(input, inference, 50, optimizer)
+        run_inference(input, inference, 1000, optimizer)
         sess = ed.get_session()
 
         est = sess[:run](qx_feature_param)
@@ -317,6 +320,8 @@ function estimate_splicing_expression(input::ModelInput; write_results::Bool=tru
 
         # reset_graph()
         return est
+    else
+        error("Inference type $(input.inference) is not supported.")
     end
 
 end
@@ -905,8 +910,8 @@ function model_nondisjoint_feature_prior(input::ModelInput, num_features)
     qx_feature_mu_softplus_sigma_param = tf.Variable(tf.fill([num_features], -1.0f0), name="qx_feature_mu_softplus_sigma")
     qx_feature_mu = edmodels.NormalWithSoftplusScale(qx_feature_mu_mu_param, qx_feature_mu_softplus_sigma_param)
 
-    qx_feature_sigma_sq_mu_param    = tf.Variable(tf.fill([num_features], 0.0f0), name="qx_sigma_sq_mu_param")
-    qx_feature_sigma_sq_sigma_param = tf.Variable(tf.fill([num_features], 1.0f0), name="qx_sigma_sq_sigma_param")
+    qx_feature_sigma_sq_mu_param    = tf.Variable(tf.fill([num_features], -1.0f0), name="qx_sigma_sq_mu_param")
+    qx_feature_sigma_sq_sigma_param = tf.Variable(tf.fill([num_features], -2.0f0), name="qx_sigma_sq_sigma_param")
     qx_feature_sigma_sq = edmodels.TransformedDistribution(
         distribution=edmodels.NormalWithSoftplusScale(loc=qx_feature_sigma_sq_mu_param,
                                                       scale=qx_feature_sigma_sq_sigma_param),
@@ -1031,17 +1036,6 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
                                  values=tf.ones(length(component_transcript_idxs)),
                                  dense_shape=[n, num_components])
 
-    # @show length(feature_transcript_idxs)
-    # @show length(feature_idxs)
-    # @show length(antifeature_transcript_idxs)
-    # @show length(antifeature_idxs)
-    # @show length(component_transcript_idxs)
-    # @show length(component_idxs)
-    # @show x_feature_log_proportions
-    # @show x_antifeature_log_proportions
-    # @show x_component
-    # exit()
-
     xs = []
     for (x_feature_log_proportions_i, x_antifeature_log_proportions_i, x_component_i) in
             zip(tf.unstack(x_feature_log_proportions),
@@ -1052,32 +1046,13 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
             tf.sparse_tensor_dense_matmul(features,
                                           tf.expand_dims(x_feature_log_proportions_i, -1))
 
-        # transcript_feature_proportions_i =
-        #     tf.Print(transcript_feature_proportions_i,
-        #         [tf.gather(tf.squeeze(transcript_feature_proportions_i, axis=-1), idxs_oi)], "FEAT PROP", summarize=4)
-
         transcript_antifeature_proportions_i =
             tf.sparse_tensor_dense_matmul(antifeatures,
                                           tf.expand_dims(x_antifeature_log_proportions_i, -1))
 
-        # transcript_antifeature_proportions_i =
-        #     tf.Print(transcript_antifeature_proportions_i,
-        #         [tf.gather(tf.squeeze(transcript_antifeature_proportions_i, axis=-1), idxs_oi)], "ANTIFEAT PROP", summarize=4)
-
         transcript_component_expression_i =
             tf.sparse_tensor_dense_matmul(components,
                                           tf.expand_dims(x_component_i, -1))
-        # transcript_component_expression_i =
-        #     tf.sparse_tensor_dense_matmul(components,
-        #                                   tf.expand_dims(tf.ones(num_components), -1))
-
-        # transcript_component_expression_i =
-        #     tf.Print(transcript_component_expression_i,
-        #         [tf.gather(tf.squeeze(transcript_component_expression_i, axis=-1), idxs_oi)], "COMPONENT EX", summarize=4)
-
-        # transcripts_without_features_props_tensor =
-        #     tf.Print(transcripts_without_features_props_tensor,
-        #         [tf.gather(tf.squeeze(transcripts_without_features_props_tensor, axis=-1), idxs_oi)], "NON FEATURE EX", summarize=4)
 
         x_i =
             transcript_component_expression_i +
@@ -1092,35 +1067,20 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
     x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n])
     x_sigma_beta0  = tf.constant(SIGMA_BETA0, shape=[n])
     x_sigma_sq = edmodels.InverseGamma(x_sigma_alpha0,
-                                       x_sigma_beta0)
-    x_sigma = tf.sqrt(x_sigma_sq)
+                                       x_sigma_beta0, name="x_sigma_sq")
 
-    # x_sigma = tf_print_span(x_sigma, "x_sigma span")
+    x_sigma_sq_ = tf_print_span(x_sigma_sq, "x_sigma_sq span")
+    x_sigma = tf.sqrt(x_sigma_sq_)
+    x_sigma = tf_print_span(x_sigma, "x_sigma span")
 
     x = edmodels.Normal(loc=x_mu, scale=x_sigma)
     # x = edmodels.Normal(loc=x_mu, scale=[0.1f0])
     # x_ = tf.Print(x, [tf.nn[:moments](x, axes=Any[0])], "x moments")
 
-    x_ = x
-    # x_ = tf.Print(x_, [tf.reduce_min(x_, axis=1)], "x min 1")
-    # x_ = tf.Print(x_, [tf.reduce_max(x_, axis=1)], "x max 1")
-
-    # x_ = tf.Print(x_, [tf.reduce_min(x_, axis=0)], "x min 0", summarize=10)
-    # x_ = tf.Print(x_, [tf.reduce_max(x_, axis=0)], "x max 0", summarize=10)
-    # x_ = tf.Print(x_, [tf.reduce_mean(x_, axis=0)], "x mean 0", summarize=10)
-
-    likapprox = RNASeqApproxLikelihood(input, x_)
+    likapprox = RNASeqApproxLikelihood(input, x)
 
     # Inference
     # ---------
-
-    # variables:
-    # - x_component_mu (normal)
-    # - x_component_sigma_sq (log normal)
-    # - x_component (normal)
-    # - x_sigma_sq (log normal)
-    # - x (normal)
-
 
     x_component_mu_initial, x_feature_mu_initial =
         nondisjoint_feature_initialization(input.loaded_samples.x0_values,
@@ -1129,7 +1089,7 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
                                            feature_idxs, feature_transcript_idxs,
                                            antifeature_idxs, antifeature_transcript_idxs)
 
-    x_component_mu_initial_mean = reshape(mean(x_component_mu_initial, 1), (num_components,))
+   x_component_mu_initial_mean = reshape(mean(x_component_mu_initial, 1), (num_components,))
 
     qx_component_mu_mu_param = tf.Variable(x_component_mu_initial_mean, name="qx_component_mu_mu_param")
     qx_component_mu_softplus_sigma_param = tf.Variable(tf.fill([num_components], -1.0f0), name="qx_component_mu_sigma_param")
@@ -1138,10 +1098,10 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
         name="qx_component_mu")
 
     qx_component_sigma_sq_mu_param =
-        tf.Variable(tf.fill([num_components], -2.0f0),
+        tf.Variable(tf.fill([num_components], -1.0f0),
                     name="qx_component_sigma_sq_mu_param")
     qx_component_sigma_sq_sigma_param =
-        tf.Variable(tf.fill([num_components], -1.0f0),
+        tf.Variable(tf.fill([num_components], -2.0f0),
                     name="qx_component_sigma_sq_sigma_param")
     qx_component_sigma_sq = edmodels.TransformedDistribution(
         distribution=edmodels.NormalWithSoftplusScale(
@@ -1156,17 +1116,24 @@ function model_nondisjoint_feature_expression(input::ModelInput, num_features,
         loc=qx_component_mu_param, scale=qx_component_softplus_sigma_param,
         name="qx_component")
 
-    qx_sigma_sq_mu_param = tf.Variable(tf.fill([n], -3.0f0), name="qx_err_sigma_sq_mu_param")
-    qx_sigma_sq_sigma_param = tf.Variable(tf.fill([n], -4.0f0), name="qx_err_sigma_sq_sigma_param")
+    qx_sigma_sq_mu_param = tf.Variable(tf.fill([n], -1.0f0), name="qx_err_sigma_sq_mu_param")
+    qx_sigma_sq_sigma_param = tf.Variable(tf.fill([n], -2.0f0), name="qx_err_sigma_sq_sigma_param")
+    qx_sigma_sq_mu_param = tf_print_span(qx_sigma_sq_mu_param, "qx_sigma_sq_mu_parama span")
     qx_sigma_sq = edmodels.TransformedDistribution(
         distribution=edmodels.NormalWithSoftplusScale(
             qx_sigma_sq_mu_param, qx_sigma_sq_sigma_param),
         bijector=tfdist.bijectors[:Exp](),
         name="qx_sigma_sq")
 
-    # x0_log = log.(input.loaded_samples.x0_values)
-    # qx_mu_param = tf.Variable(x0_log, name="qx_mu_param")
-    qx_mu_param = tf.Variable(tf.fill([num_samples, n], log(1.0f0/n)), name="qx_mu_param")
+    #qx_sigma_sq_alpha_param = tf.nn[:softplus](tf.Variable(tf.fill([n], 2.0f0), name="qx_sigma_sq_alpha_param"))
+    #qx_sigma_sq_alpha_param = tf_print_span(qx_sigma_sq_alpha_param, "qx_sigma_sq_alpha span")
+    #qx_sigma_sq_beta_param  = tf.nn[:softplus](tf.Variable(tf.fill([n], 2.0f0), name="qx_sigma_sq_beta_param"))
+    #qx_sigma_sq_beta_param = tf_print_span(qx_sigma_sq_beta_param, "qx_sigma_sq_beta span")
+    #qx_sigma_sq = edmodels.InverseGamma(qx_sigma_sq_alpha_param, qx_sigma_sq_beta_param)
+
+    x0_log = log.(input.loaded_samples.x0_values)
+    qx_mu_param = tf.Variable(x0_log, name="qx_mu_param")
+    #qx_mu_param = tf.Variable(tf.fill([num_samples, n], log(1.0f0/n)), name="qx_mu_param")
     qx_sigma_param = tf.Variable(tf.fill([num_samples, n], -1.0f0), name="qx_sigma_param")
     qx = edmodels.NormalWithSoftplusScale(loc=qx_mu_param, scale=qx_sigma_param, name="qx")
 

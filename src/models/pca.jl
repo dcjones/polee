@@ -138,7 +138,7 @@ function estimate_transcript_pca(input::ModelInput; num_components::Int=8,
     sess = ed.get_session()
     qz_loc_values = sess[:run](qz_loc)
 
-    open("estimates.csv", "w") do out
+    open("transcript-pca-estimates.csv", "w") do out
         print(out, "sample,")
         println(out, join([string("pc", j) for j in 1:num_components], ','))
         for i in 1:num_samples
@@ -148,7 +148,7 @@ function estimate_transcript_pca(input::ModelInput; num_components::Int=8,
     end
 
     qw_loc_values = sess[:run](qw_loc)
-    open("pca-coefficients.csv", "w") do out
+    open("transcript-pca-coefficients.csv", "w") do out
         println(out, "component,id,transcript_id,coeff")
         for t in input.ts
             i = t.metadata.id
@@ -255,15 +255,20 @@ function estimate_gene_pca(input::ModelInput; num_components::Int=2,
 end
 
 
-function estimate_splicing_pca(input::ModelInput; num_components::Int=2,
+function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
                                correct_batch_effects::Bool=false)
+
+    # find a good initialization for qx_feature
+    # inference = input.inference
+    # input.inference = :map
+    # qx_feature_init = estimate_splicing_expression(input, write_results=false)
+    # input.inference= inference
+
     num_samples, n = size(input.loaded_samples.x0_values)
 
     (num_features,
      feature_idxs, feature_transcript_idxs,
      antifeature_idxs, antifeature_transcript_idxs) = splicing_features(input)
-
-    @show num_features
 
     # build design matrix
     # -------------------
@@ -304,6 +309,10 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=2,
 
     w = edmodels.Normal(loc=tf.zeros([num_features, num_components]),
                         scale=tf.fill([num_features, num_components], 1.0f0))
+    # w_ = zeros(Float32, (num_features, num_components))
+    # w_[19838,:] = 1.0
+    # w = tf.constant(w_)
+
     z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
                         scale=tf.fill([num_samples, num_components], 1.0f0))
 
@@ -314,79 +323,130 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=2,
 
     mu_pca = tf_print_span(mu_pca, "mu_pca span")
 
-    # mu_bias_ = tf_print_span(mu_bias, "mu_bias span")
+    #  mu_bias_ = tf_print_span(mu_bias, "mu_bias span")
+
+    @show mu_bias
+    @show mu_pca
 
     x_mu = tf.add(mu_bias, mu_pca)
     # x_mu = tf_print_span(x_mu, "x_mu span")
+
+    x_mu = tf.Print(x_mu, [x_mu[1, 19838], x_mu[2, 19838]], "x_mu vals")
 
     # TODO:
     # if correct_batch_effects
     #     x_mu = tf.add(mu_batch, x_mu)
     # end
 
-    x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[num_features])
-    x_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[num_features])
-    x_sigma_sq = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
-    x_sigma = tf.sqrt(x_sigma_sq)
-    x = edmodels.Normal(loc=x_mu, scale=x_sigma)
+    x_feature_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[num_features])
+    x_feature_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[num_features])
+    x_feature_sigma_sq = edmodels.InverseGamma(x_feature_sigma_alpha0, x_feature_sigma_beta0)
+    x_feature_sigma = tf.sqrt(x_feature_sigma_sq)
+    x_feature = edmodels.Normal(loc=x_mu, scale=x_feature_sigma)
+    x_feature_ = tf.Print(x_feature, [x_feature])
+
+    x_feature_ = x_feature
+    # x_feature_ = tf.Print(x_feature_, [x_feature_[1, 19838], x_feature_[2, 19838]], "x_feature vals")
 
     vars, var_approximations, data =
         model_nondisjoint_feature_expression(
             input, num_features, feature_idxs, feature_transcript_idxs,
-            antifeature_idxs, antifeature_transcript_idxs, x)
-
+            antifeature_idxs, antifeature_transcript_idxs, x_mu)
 
     # inference
     # ---------
 
-    qx_loc = tf.Variable(tf.zeros([num_samples, num_features]), name="qx_loc")
-    qx_softplus_scale = tf.Variable(tf.fill([num_samples, num_features], -2.0), name="qx_softplus_scale")
-    qx = edmodels.NormalWithSoftplusScale(loc=qx_loc, scale=qx_softplus_scale,
-                                          name="qx")
+    if input.inference == :variational
+        qx_feature_loc = tf.Variable(tf.zeros([num_samples, num_features]), name="qx_feature_loc")
+        qx_feature_softplus_scale = tf.Variable(tf.fill([num_samples, num_features], -2.0), name="qx_feature_softplus_scale")
+        qx_feature = edmodels.NormalWithSoftplusScale(loc=qx_feature_loc, scale=qx_feature_softplus_scale,
+                                                    name="qx_feature")
 
-    qmu_bias_loc = tf.Variable(tf.zeros([1, num_features]), name="qmu_bias_loc")
-    qmu_bias_softplus_scale = tf.Variable(tf.fill([1, num_features], -1.0f0), name="qmu_bias_softplus_scale")
-    qmu_bias = edmodels.NormalWithSoftplusScale(loc=qmu_bias_loc,
-                                                scale=qmu_bias_softplus_scale,
-                                                name="qmu_bias")
+        qmu_bias_loc = tf.Variable(tf.zeros([1, num_features]), name="qmu_bias_loc")
+        qmu_bias_softplus_scale = tf.Variable(tf.fill([1, num_features], -1.0f0), name="qmu_bias_softplus_scale")
+        qmu_bias = edmodels.NormalWithSoftplusScale(loc=qmu_bias_loc,
+                                                    scale=qmu_bias_softplus_scale,
+                                                    name="qmu_bias")
 
-    qx_sigma_sq_mu_param    = tf.Variable(tf.fill([num_features], -3.0f0), name="qx_sigma_sq_mu_param")
-    qx_sigma_sq_sigma_param = tf.Variable(tf.fill([num_features], -4.0f0), name="qx_sigma_sq_sigma_param")
-    qx_sigma_sq = edmodels.TransformedDistribution(
-        distribution=edmodels.NormalWithSoftplusScale(qx_sigma_sq_mu_param, qx_sigma_sq_sigma_param),
-        bijector=tfdist.bijectors[:Exp](),
-        name="qx_sigma_sq")
+        qx_feature_sigma_sq_mu_param =
+            tf.Variable(tf.fill([num_features], -3.0f0), name="qx_sigma_sq_mu_param")
+        qx_feature_sigma_sq_sigma_param =
+            tf.Variable(tf.fill([num_features], -4.0f0), name="qx_sigma_sq_sigma_param")
+        qx_feature_sigma_sq = edmodels.TransformedDistribution(
+            distribution=edmodels.NormalWithSoftplusScale(
+                qx_feature_sigma_sq_mu_param, qx_feature_sigma_sq_sigma_param),
+            bijector=tfdist.bijectors[:Exp](),
+            name="qx_feature_sigma_sq")
 
-    qw_loc = tf.Variable(tf.random_normal([num_features, num_components]), name="qw_loc")
-    qw_softplus_scale = tf.Variable(tf.fill([num_features, num_components], -2.0f0), name="qw_softplus_scale")
-    qw = edmodels.NormalWithSoftplusScale(loc=qw_loc, scale=qw_softplus_scale, name="qw")
+        qw_loc = tf.Variable(tf.random_normal([num_features, num_components]), name="qw_loc")
+        qw_loc = tf_print_span(qw_loc, "qw_loc")
+        qw_softplus_scale = tf.Variable(tf.fill([num_features, num_components], -5.0f0), name="qw_softplus_scale")
+        qw = edmodels.NormalWithSoftplusScale(loc=qw_loc, scale=qw_softplus_scale, name="qw")
 
-    qz_loc = tf.Variable(tf.random_normal([num_samples, num_components]), name="qz_loc")
-    qz_softplus_scale = tf.Variable(tf.fill([num_samples, num_components], -2.0f0), name="qz_softplus_scale")
-    qz = edmodels.NormalWithSoftplusScale(loc=qz_loc, scale=qz_softplus_scale, name="qz")
+        qz_loc = tf.Variable(tf.random_normal([num_samples, num_components]), name="qz_loc")
+        qz_loc = tf_print_span(qz_loc, "qz_loc")
+        qz_softplus_scale = tf.Variable(tf.fill([num_samples, num_components], -5.0f0), name="qz_softplus_scale")
+        qz = edmodels.NormalWithSoftplusScale(loc=qz_loc, scale=qz_softplus_scale, name="qz")
 
-    var_approximations[x] = qx
-    var_approximations[mu_bias] = qmu_bias
-    var_approximations[x_sigma_sq] = qx_sigma_sq
-    var_approximations[z] = qz
-    var_approximations[w] = qw
+        var_approximations[x_feature] = qx_feature
+        var_approximations[mu_bias] = qmu_bias
+        var_approximations[x_feature_sigma_sq] = qx_feature_sigma_sq
+        var_approximations[z] = qz
+        var_approximations[w] = qw
 
-    inference = ed.KLqp(latent_vars=PyDict(var_approximations),
-                        data=PyDict(data))
+        inference = ed.KLqp(var_approximations, data=data)
 
-    # optimizer = tf.train[:AdamOptimizer](0.05)
-    optimizer = tf.train[:AdamOptimizer](0.1)
-    run_inference(input, inference, 10000, optimizer)
+        optimizer = tf.train[:AdamOptimizer](0.05)
+        run_inference(input, inference, 1000, optimizer)
 
-    sess = ed.get_session()
-    qz_loc_values = sess[:run](qz_loc)
+        sess = ed.get_session()
+        z_est = sess[:run](qz_loc)
+
+    elseif input.inference == :map
+
+        qz_param = tf.Variable(tf.random_normal([num_samples, num_components]), name="qz")
+
+        var_maps = Dict(
+            x_feature => edmodels.PointMass(
+                tf.Variable(tf.zeros([num_samples, num_features]), name="qx_feature")),
+            mu_bias   => edmodels.PointMass(
+                tf.Variable(tf.zeros([1, num_features]), name="qmu_bias")),
+            x_feature_sigma_sq => edmodels.PointMass(
+                tf.nn[:softplus](tf.Variable(tf.fill([num_features], 0.1f0), name="qx_feature_sigma_sq"))),
+            w => edmodels.PointMass(
+                tf.Variable(tf.random_normal([num_features, num_components]), name="qw")),
+            z => edmodels.PointMass(qz_param),
+
+            vars[:x] =>
+                edmodels.PointMass(tf.Variable(tf.fill([num_samples, n], log(1.0f0/n)), name="qx")),
+            vars[:x_sigma_sq] =>
+                edmodels.PointMass(tf.nn[:softplus](tf.Variable(tf.fill([n], 0.1), name="qx_sigma_sq"))),
+            vars[:x_component_mu] =>
+                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component_mu]][:mean](), name="qx_component_mu")),
+            vars[:x_component_sigma_sq] =>
+                edmodels.PointMass(tf.nn[:softplus](tf.Variable(
+                    tf.fill(var_approximations[vars[:x_component_sigma_sq]][:get_shape](), 0.1f0), name="qx_component_sigma_sq"))),
+            vars[:x_component] =>
+                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component]][:mean](), name="qx_component"))
+        )
+
+        inference = ed.MAP(var_maps, data=data)
+        optimizer = tf.train[:AdamOptimizer](5e-2)
+        run_inference(input, inference, 1000, optimizer)
+
+        sess = ed.get_session()
+        z_est = sess[:run](qz_param)
+
+    else
+        error("Inference type $(input.inference) is not supported.")
+    end
 
     open("splicing-pca-estimates.csv", "w") do out
         print(out, "sample,")
         println(out, join([string("pc", j) for j in 1:num_components], ','))
         for i in 1:num_samples
             print(out, '"', input.loaded_samples.sample_names[i], '"', ',')
-            println(out, join(qz_loc_values[i,:], ','))
+            println(out, join(z_est[i,:], ','))
         end
     end
 

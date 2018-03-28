@@ -25,6 +25,7 @@ function sample_training_examples(rs::Reads, n::Int)
             push!(starts, alnpr.first)
         end
     end
+    n = min(n, length(starts))
 
     starts_subset = Set{Int}()
     starts_subset_idxs = Set{Int}(sample(1:length(starts), n, replace=false))

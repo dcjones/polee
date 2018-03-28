@@ -10,10 +10,14 @@ function estimate_linear_regression(input::ModelInput)
 end
 
 
-function build_linear_regression_design_matrix(input::ModelInput)
+function build_linear_regression_design_matrix(input::ModelInput, include_bias::Bool=true)
     num_samples, n = size(input.loaded_samples.x0_values)
     factoridx = Dict{String, Int}()
-    factoridx["bias"] = 1
+
+    if include_bias
+        factoridx["bias"] = 1
+    end
+
     for factors in input.loaded_samples.sample_factors
         for factor in factors
             get!(factoridx, factor, length(factoridx) + 1)
@@ -28,7 +32,9 @@ function build_linear_regression_design_matrix(input::ModelInput)
             X_[i, j] = 1
         end
     end
-    X_[:, factoridx["bias"]] = 1
+    if include_bias
+        X_[:, factoridx["bias"]] = 1
+    end
     X = tf.constant(X_)
 
     return num_factors, factoridx, X
@@ -175,58 +181,105 @@ end
 
 function estimate_splicing_linear_regression(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
-    num_factors, factoridx, X = build_linear_regression_design_matrix(input)
+    num_factors, factoridx, z = build_linear_regression_design_matrix(input, false)
 
     (num_features,
      feature_idxs, feature_transcript_idxs,
      antifeature_idxs, antifeature_transcript_idxs) = splicing_features(input)
 
-    # Model relative feature expression with linear regression
 
-    w_mu0 = 0.0
-    w_sigma0 = 0.5
-    w_bias_mu0 = log(1/num_features)
-    w_bias_sigma0 = 4.0
+    # bias
+    # ----
 
-    w_sigma = tf.concat(
-                  [tf.constant(w_bias_sigma0, shape=[1, num_features]),
-                   tf.constant(w_sigma0, shape=[num_factors-1, num_features])], 0)
-    w_mu = tf.concat(
-                  [tf.constant(w_bias_mu0, shape=[1, num_features]),
-                   tf.constant(w_mu0, shape=[num_factors-1, num_features])], 0)
+    w_bias_mu0 = 0.0f0
+    w_bias_sigma0 = 10.0f0
 
-    w = edmodels.MultivariateNormalDiag(name="W", w_mu, w_sigma)
+    mu_bias = edmodels.Normal(loc=tf.fill([1, num_features], w_bias_mu0),
+                              scale=tf.fill([1, num_features], w_bias_sigma0))
 
-    x_feature = tf.matmul(X, w)
+
+    # regression
+    # ----------
+
+    w = edmodels.Normal(loc=tf.zeros([num_factors, num_features]),
+                        scale=tf.fill([num_factors, num_features], 2.0f0))
+
+    mu_reg = tf.matmul(z, w)
+
+    x_mu = tf.add(mu_bias, mu_reg)
 
     vars, var_approximations, data =
         model_nondisjoint_feature_expression(input, num_features,
                                             feature_idxs, feature_transcript_idxs,
                                             antifeature_idxs, antifeature_transcript_idxs,
-                                            x_feature)
+                                            x_mu)
 
-    qw_loc = tf.Variable(tf.zeros([num_factors, num_features]))
-    qw_softplus_scale = tf.Variable(tf.zeros([num_factors, num_features]))
+    # inference
+    # ---------
+
+    qmu_bias_loc = tf.Variable(tf.zeros([1, num_features]), name="qmu_bias_loc")
+    qmu_bias_softplus_scale = tf.Variable(tf.fill([1, num_features], -1.0f0), name="qmu_bias_softplus_scale")
+    qmu_bias = edmodels.NormalWithSoftplusScale(loc=qmu_bias_loc, scale=qmu_bias_softplus_scale)
+
+    qw_loc = tf.Variable(tf.zeros([num_factors, num_features]), name="qw_loc")
+    qw_softplus_scale = tf.Variable(tf.fill([num_factors, num_features], -1.0f0), name="qw_softplus_scale")
     qw = edmodels.NormalWithSoftplusScale(loc=qw_loc, scale=qw_softplus_scale)
 
     vars[:w] = w
+    vars[:qmu_bias] = mu_bias
     var_approximations[w] = qw
+    var_approximations[mu_bias] = qmu_bias
 
     inference = ed.KLqp(latent_vars=var_approximations, data=data)
 
     optimizer = tf.train[:AdamOptimizer](0.05)
-    run_inference(input, inference, 500, optimizer)
+    run_inference(input, inference, 2000, optimizer)
 
     sess = ed.get_session()
 
     output_filename = isnull(input.output_filename) ?
         "splicing-linear-regression-estimates.db" : get(input.output_filename)
 
-    # TODO: need a way to output the features and such
+    mean_est = sess[:run](qw_loc)
+    sigma_est = sess[:run](tf.nn[:softplus](qw_softplus_scale))
+    bias_est = sess[:run](qmu_bias_loc)
+    lower_credible = similar(mean_est)
+    upper_credible = similar(mean_est)
+    est = similar(mean_est)
+
+    for i in 1:size(mean_est, 1)
+        for j in 1:size(mean_est, 2)
+            dist = Normal(mean_est[i, j], sigma_est[i, j])
+            logistic_bias_j = logistic(bias_est[j])
+
+            est[i, j] = logistic(bias_est[j] + mean_est[i, j]) - logistic_bias_j
+
+            lower_credible[i, j] =
+                logistic(bias_est[j] + quantile(dist, input.credible_interval[1])) - logistic_bias_j
+            upper_credible[i, j] =
+                logistic(bias_est[j] + quantile(dist, input.credible_interval[2])) - logistic_bias_j
+        end
+    end
+
+    # mean_est = sess[:run](qw_loc)
+    # sigma_est = sess[:run](tf.nn[:softplus](qw_softplus_scale))
+    # lower_credible = similar(mean_est)
+    # upper_credible = similar(mean_est)
+    # for i in 1:size(mean_est, 1)
+    #     for j in 1:size(mean_est, 2)
+    #         dist = Normal(mean_est[i, j], sigma_est[i, j])
+
+    #         lower_credible[i, j] = quantile(dist, input.credible_interval[1])
+    #         upper_credible[i, j] = quantile(dist, input.credible_interval[2])
+    #     end
+    # end
+
+    error_sigma = zeros(Float32, size(mean_est))
+
     @time write_effects(output_filename, factoridx,
-                        sess[:run](qw_loc),
-                        sess[:run](qw_scale),
-                        input.feature)
+                        est, sigma_est,
+                        lower_credible, upper_credible,
+                        error_sigma, input.feature)
 end
 
 

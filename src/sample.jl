@@ -180,9 +180,7 @@ function RNASeqSample(transcripts_filename::String,
     # @show effective_lengths[133569]
     # @show effective_lengths[133570]
 
-    @show extrema(V[J .== 133568])
-    @show extrema(V[J .== 133569])
-    @show extrema(V[J .== 133570])
+    @show length(V)
 
     if !isnull(output)
         h5open(get(output), "w") do out

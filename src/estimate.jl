@@ -308,6 +308,64 @@ end
 
 
 """
+Aide optimization by holding some variables fixed for some number initial of iterations.
+"""
+function run_two_stage_klqp_inference(input, latent_variables, frozen_variables,
+                                      frozen_variables_vals, data,
+                                      n_iter1, n_iter2, optimizer)
+    sess = ed.get_session()
+
+    # stage 1
+    pre_opt_latent_variables = copy(latent_variables)
+    for (var, val) in zip(frozen_variables, frozen_variables_vals)
+        pre_opt_latent_variables[var] =
+            edmodels.Normal(
+                loc=tf.fill(var[:get_shape](), val),
+                scale=tf.constant([0.0001f0]), name="Stage1SemiFixedNormal")
+            # edmodels.PointMass(tf.fill(var[:get_shape](), val))
+
+        # or, just exclude it...
+        # delete!(pre_opt_latent_variables, var)
+    end
+
+    pre_opt_inference = ed.KLqp(pre_opt_latent_variables, data=data)
+    pre_opt_inference[:initialize](n_iter=n_iter1, optimizer=optimizer,
+                                   auto_transform=false, logdir="log")
+    sess[:run](tf.global_variables_initializer(),
+            feed_dict=input.loaded_samples.init_feed_dict)
+
+    for iter in 1:n_iter1
+        info_dict = pre_opt_inference[:update]()
+        pre_opt_inference[:print_progress](info_dict)
+    end
+    pre_opt_inference[:finalize]()
+
+    # stage 2
+    inference = ed.KLqp(latent_variables, data=data)
+    inference[:initialize](n_iter=n_iter2, optimizer=optimizer,
+                           auto_transform=false, logdir="log")
+
+    uninitialized_vars = Any[]
+    for rv in frozen_variables
+        for var in latent_variables[rv][:get_variables]()
+            if pyisinstance(var, tf.Variable)
+                push!(uninitialized_vars, var)
+            end
+        end
+    end
+    sess[:run](tf.variables_initializer(uninitialized_vars),
+               feed_dict=input.loaded_samples.init_feed_dict)
+    sess[:run](inference[:reset])
+
+    for iter in 1:n_iter2
+        info_dict = inference[:update]()
+        inference[:print_progress](info_dict)
+    end
+    inference[:finalize]()
+end
+
+
+"""
 This is essentiall Inference.run from edward, but customized to avoid
 reinitializing variables on each iteration.
 """
@@ -326,7 +384,7 @@ function run_inference(input, inference, n_iter, optimizer)
     # inference[:initialize](n_iter=n_iter)
 
     sess[:run](tf.global_variables_initializer(),
-               feed_dict=input.loaded_samples.init_feed_dict)
+            feed_dict=input.loaded_samples.init_feed_dict)
 
     for iter in 1:n_iter
         info_dict = inference[:update]()

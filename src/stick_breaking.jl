@@ -637,7 +637,7 @@ function inverse_hsb_matrices(node_parent_idxs, node_js)
         push!(IJs, (I, J))
     end
 
-    # post-process, merging very small matrices
+    # post-process, merging very mall matrices
     As = PyObject[]
     k = length(IJs)
     while k > 0

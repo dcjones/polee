@@ -1,6 +1,9 @@
 
 # various parameters than are generally fixed
 
+
+# Increment this whenever we introduce a non-backward compatible change to
+# the approximated likelihood function or its serialization format.
 const PREPARED_SAMPLE_FORMAT_VERSION = 1
 
 

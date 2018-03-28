@@ -188,10 +188,13 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
 
         sample_n = read(input["n"])
         if sample_n != n
-            error("Prepared sample has a different number of transcripts than provided GFF3 file.")
+            error("Prepared sample $(filename) has a different number of transcripts than provided GFF3 file.")
         end
 
         input_metadata = g_open(input, "metadata")
+
+        check_prepared_sample_version(input_metadata)
+
         if base64decode(read(attrs(input_metadata)["gffhash"])) != ts_metadata.gffhash
             true_filename = read(attrs(input_metadata)["gfffilename"])
             error(

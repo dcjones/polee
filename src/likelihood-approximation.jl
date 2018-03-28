@@ -83,10 +83,25 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
         end
 
         g = g_create(out, "metadata")
+        # incremented whenever the format changes
+        attrs(g)["version"]       = PREPARED_SAMPLE_FORMAT_VERSION
         attrs(g)["approximation"] = string(typeof(approximation))
         attrs(g)["gfffilename"] = sample.transcript_metadata.filename
         attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
         attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
+    end
+end
+
+
+"""
+Throw an error if the prepared sample was generated using an incompatible version.
+"""
+function check_prepared_sample_version(metadata)
+    if !exists(attrs(metadata), "version") ||
+        read(attrs(metadata)["version"]) != PREPARED_SAMPLE_FORMAT_VERSION
+        error(string("Prepared sample $(filename) was generated using a ",
+                        read(attrs(metadata)["version"]) < PREPARED_SAMPLE_FORMAT_VERSION ? "older" : "newer",
+                        " version of the software."))
     end
 end
 

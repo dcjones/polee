@@ -330,6 +330,11 @@ function main()
         n = length(ts)
 
         input = h5open(parsed_args["prepared_sample"])
+
+        input_metadata = g_open(input, "metadata")
+        check_prepared_sample_version(input_metadata)
+        close(input_metadata)
+
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js          = read(input["node_js"])
         efflens          = read(input["effective_lengths"])

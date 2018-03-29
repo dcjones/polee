@@ -9,7 +9,7 @@ from queue import Queue
 import sys
 
 # TODO: compute this path
-inverse_hsb_op_module = tf.load_op_library("/home/dcjones/prj/extruder/src/tensorflow_ext/inverse_hsb_op.so")
+inverse_hsb_op_module = tf.load_op_library("/home/dcjones/prj/extruder/src/tensorflow_ext/hsb_ops.so")
 
 @ops.RegisterGradient("InvHSB")
 def _inv_hsb_grad(op, grad):
@@ -21,6 +21,34 @@ def _inv_hsb_grad(op, grad):
     x_grad = inverse_hsb_op_module.inv_hsb_grad(grad, y_logit, left_index,
                                                  right_index, leaf_index)
     return [x_grad, None, None, None]
+
+
+def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
+    mu    = tf.identity(la_params[...,0,:], name="mu")
+    sigma = tf.identity(la_params[...,1,:], name="sigma")
+    alpha = tf.identity(la_params[...,2,:], name="alpha")
+
+    left_index  = hsb_params[0]
+    right_index = hsb_params[1]
+    leaf_index  = hsb_params[2]
+
+    # sampling from likelihood distribution
+    z0 = edmodels.Normal(loc=tf.zeros(mu.get_shape()), scale=[1.0])
+
+    # sinh-asinh transform
+    z = tf.sinh(tf.asinh(z0) + alpha)
+
+    # non-standard-normal transform
+    y_logit = mu + sigma * z
+
+    # hsb transform
+    x_efflen = inverse_hsb_op_module.hsb(
+        y_logit, left_index, right_index, leaf_index)
+
+    # effective length transform
+    x_scaled = x_efflen / efflens
+    x = x_scaled / tf.reduce_sum(x_scaled, axis=1, keepdims=True)
+    return x
 
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
@@ -35,8 +63,15 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         parameters = locals()
 
         self.efflens = efflens
-        self.la_params = la_params
-        self.invhsb_params = invhsb_params
+
+        self.mu    = tf.identity(la_params[...,0,:], name="mu")
+        self.sigma = tf.identity(la_params[...,1,:], name="sigma")
+        self.alpha = tf.identity(la_params[...,2,:], name="alpha")
+
+        self.left_index  = invhsb_params[0]
+        self.right_index = invhsb_params[1]
+        self.leaf_index  = invhsb_params[2]
+
 
         super(RNASeqApproxLikelihoodDist, self).__init__(
               dtype=self.x.dtype,
@@ -61,9 +96,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         n           = int(self.x.get_shape()[-1])
         num_nodes   = 2*n - 1
 
-        mu    = tf.identity(self.la_params[...,0,:], name="mu")
-        sigma = tf.identity(self.la_params[...,1,:], name="sigma")
-        alpha = tf.identity(self.la_params[...,2,:], name="alpha")
+        mu    = self.mu
+        sigma = self.sigma
+        alpha = self.alpha
 
         # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "x scale")
         x = tf.nn.softmax(self.x)
@@ -105,11 +140,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         # y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
 
-        left_index  = self.invhsb_params[0]
-        right_index = self.invhsb_params[1]
-        leaf_index  = self.invhsb_params[2]
-
-        y_logit = inverse_hsb_op_module.inv_hsb(x_efflen, left_index, right_index, leaf_index)
+        y_logit = inverse_hsb_op_module.inv_hsb(
+            x_efflen, self.left_index, self.right_index, self.leaf_index)
 
         # normal standardization transform
         # --------------------------------

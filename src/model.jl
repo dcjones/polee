@@ -67,9 +67,6 @@ function effective_length_jacobian_adjustment!(efflens, xs, x_grad)
         x_scaled_sum += xs[i] / efflens[i]
     end
 
-    # @show extrema([n * efflens[i] / x_scaled_sum for i in 1:n])
-    # @show extrema(x_grad)
-
     for i in 1:n
         x_grad[i] -= n * (1/efflens[i]) / x_scaled_sum
     end

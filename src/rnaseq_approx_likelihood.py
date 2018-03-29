@@ -81,7 +81,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # the likelihood). To get that, we correct the approximate likelihood
         # using the log absolute determinant of the jacobian for the effective
         # length transformation.
-        efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
+        # efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
 
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
@@ -127,7 +127,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         lp = (-np.log(2.0*np.pi) -  tf.reduce_sum(tf.square(z), axis=1)) / 2.0
 
-        return lp - efflen_ladj
+        return lp
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):
     def __init__(self, *args, **kwargs):

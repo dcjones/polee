@@ -71,7 +71,7 @@ end
 
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String)
-    params = approximate_likelihood(approximation, sample.X)
+    params = approximate_likelihood(approximation, sample)
 
     h5open(output_filename, "w") do out
         n = sample.n
@@ -548,8 +548,11 @@ end
 
 
 function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
-                                          X::SparseMatrixCSC,
+                                          sample::RNASeqSample,
                                           ::Type{Val{GRADONLY}}=Val{true})
+    X = sample.X
+    efflens = sample.effective_lengths
+
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -645,17 +648,9 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
             hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY}) # 0.023 seconds
             xs = clamp!(xs, eps, 1 - eps)
 
-            # @show mu[1:10]
-            # @show sigma[1:10]
-            # @show alpha[1:10]
-            # @show sum(xs)
-            # @show xs[[133568, 133569, 133570]]
-            # @show xs[1:10]
-            # @show xs[133560:133570]
-
-
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
                                 X, Xt, xs, x_grad, Val{GRADONLY}) # 0.047 seconds
+            lp += effective_length_jacobian_adjustment!(efflens, xs, x_grad)
 
             elbo = lp + skew_ladj + ln_ladj + hsb_ladj
 

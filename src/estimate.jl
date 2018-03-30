@@ -310,6 +310,52 @@ function RNASeqApproxLikelihood(input::ModelInput, x)
 end
 
 
+function rnaseq_approx_likelihood_sampler(input::ModelInput)
+    hsb_params = [
+        input.loaded_samples.variables[:left_index],
+        input.loaded_samples.variables[:right_index],
+        input.loaded_samples.variables[:leaf_index]
+    ]
+
+    return rnaseq_approx_likelihood.rnaseq_approx_likelihood_sampler(
+        efflens=input.loaded_samples.variables[:efflen],
+        la_params=input.loaded_samples.variables[:la_param],
+        hsb_params=hsb_params)
+end
+
+
+"""
+Inference for implicit models. These models models can evaluate the likelihood of
+some (not necessarily bijective) transformation of the transcript expression
+P(T(x) | theta), but can't necessarily evaluate P(x | theta). Splicing ratios
+are the most notable model in this category.
+
+To deal with this, we do stochastic gradient descent by sampling x' from the
+likelihood function, computing T(x') and treating that as a new observation
+of T(x) at every iteration. This is less efficient mode of inference, but possibly
+better than introducing a ton of nusiance parameters to try to evaluate P(x|T(x)).
+"""
+function run_implicit_model_inference(input, Tx, T, inference, n_iter, optimizer)
+    sess = ed.get_session()
+
+    x_sample = rnaseq_approx_likelihood_sampler(input)
+    Tx_sample = T(x_sample)
+
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
+
+    sess[:run](tf.global_variables_initializer(),
+               feed_dict=input.loaded_samples.init_feed_dict)
+
+    for iter in 1:n_iter
+        data_dict = Dict(Tx => sess[:run](Tx_sample))
+        info_dict = inference[:update](data_dict)
+        inference[:print_progress](info_dict)
+    end
+
+    inference[:finalize]()
+end
+
+
 """
 Aide optimization by holding some variables fixed for some number initial of iterations.
 """

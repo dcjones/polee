@@ -28,7 +28,7 @@ REGISTER_OP("HSB")
 
         shape_inference::DimensionHandle m = c->Dim(y_logit, 0);
         shape_inference::DimensionHandle n_minus_one = c->Dim(y_logit, 1);
-        shape_inference::DimensionHandle n = c->MakeDim(c->Value(n) + 1);
+        shape_inference::DimensionHandle n = c->MakeDim(c->Value(n_minus_one) + 1);
         c->set_output(0, c->MakeShape({m, n}));
         return Status::OK();
     });
@@ -88,6 +88,7 @@ class HSBOp : public OpKernel {
                 const int32* right_index_i = &right_index(i, 0);
                 const int32* leaf_index_i  = &leaf_index(i, 0);
 
+                u_data[0] = 1.0;
                 int k = 0;
                 for (int j = 0; j < 2*n-1; ++j) {
                     // leaf node

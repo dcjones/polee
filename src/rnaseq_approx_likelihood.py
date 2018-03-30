@@ -33,7 +33,7 @@ def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
     leaf_index  = hsb_params[2]
 
     # sampling from likelihood distribution
-    z0 = edmodels.Normal(loc=tf.zeros(mu.get_shape()), scale=[1.0])
+    z0 = edward.models.Normal(loc=tf.zeros(mu.get_shape()), scale=[1.0])
 
     # sinh-asinh transform
     z = tf.sinh(tf.asinh(z0) + alpha)
@@ -48,6 +48,7 @@ def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
     # effective length transform
     x_scaled = x_efflen / efflens
     x = x_scaled / tf.reduce_sum(x_scaled, axis=1, keepdims=True)
+    # x = tf.clip_by_value(x, 1e-7, 1.0)
     return x
 
 

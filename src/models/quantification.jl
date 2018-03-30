@@ -10,7 +10,7 @@ function estimate_expression(input::ModelInput)
     elseif input.feature == :gene
         return estimate_gene_expression(input)
     elseif input.feature == :splicing
-        return estimate_splicing_expression(input)
+        return estimate_splicing_log_ratios(input)
     else
         error("Expression estimates for $(input.feature) not supported")
     end
@@ -185,6 +185,55 @@ function write_simplified_transcript_expression_csv(output_filename,
 end
 
 
+"""
+Convert transcript expression vectors to feature (e.g. gene) expression
+vectors by suming.
+"""
+function transcript_to_feature_expression_transform(feature_idxs, transcript_idxs, x)
+    # I could do this with gather_nd more efficiently, but that would be
+    # relying on the unguranteed behavior of indexes into the same cell being
+    # summed. Sparse matrix multiply is safer.
+
+    feature_matrix = tf.SparseTensor(
+        indices=hcat(feature_idxs, transcript_idxs),
+        values=tf.ones(length(feature_idxs)),
+        dense_shape=[num_features, n])
+
+    feature_xs = Any[]
+    for x_i in tf.unstack(x)
+        push!(feature_xs, tf.sparse_tensor_dense_matmul(feature_matrix, x_i))
+
+        # TODO: should these then be normalized to sum to 1?
+    end
+
+    return tf.squeeze(tf.stack(xs), axis=-1)
+end
+
+
+function estimate_gene_expression2(input::ModelInput)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
+        gene_feature_matrix(input.ts, input.ts_metadata)
+
+    prior_vars, prior_var_approximations =
+        model_disjoint_feature_prior(input, gene_idxs, transcript_idxs)
+
+    x_feature = prior_vars[:x_feature]
+
+    # TODO: the big outstanding problem: expression sampled from the likelihood
+    # function will be on a simplex. Currently x_feature is a log-transformed
+    # unconstrained values. What do we do about that. Just log-transform
+    # the samples?
+
+    T = x -> transcript_to_feature_expression_transform(gene_idxs, transcript_idxs, x)
+
+    optimizer = tf.train[:AdamOptimizer](5e-2)
+    inference = ed.KLqp(latent_vars=var_approximations)
+
+    run_implicit_model_inference(input, x_feature, T, inference, 1000, optimizer)
+end
+
+
 function estimate_gene_expression(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
     num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
@@ -233,6 +282,69 @@ function write_gene_expression_csv(output_filename, sample_names,
             end
         end
     end
+end
+
+
+"""
+Convert transcript expression vectors to splicing log-ratios.
+"""
+function transcript_expression_to_splicing_log_ratios(
+                num_features, n,
+                feature_idxs, feature_transcript_idxs,
+                antifeature_idxs, antifeature_transcript_idxs, x)
+
+    @show extrema(feature_idxs)
+    @show length(Set(feature_idxs))
+    @show extrema(antifeature_idxs)
+    @show length(Set(antifeature_idxs))
+
+    @show feature_transcript_idxs[feature_idxs .== 1]
+    @show antifeature_transcript_idxs[antifeature_idxs .== 1]
+
+    feature_matrix = tf.SparseTensor(
+        indices=hcat(feature_idxs .- 1, feature_transcript_idxs .- 1),
+        values=tf.ones(length(feature_idxs)),
+        dense_shape=[num_features, n])
+
+    antifeature_matrix = tf.SparseTensor(
+        indices=hcat(antifeature_idxs .- 1, antifeature_transcript_idxs .- 1),
+        values=tf.ones(length(antifeature_idxs)),
+        dense_shape=[num_features, n])
+
+    splice_log_ratios = Any[]
+    for x_i in tf.unstack(x)
+        x_i_ = tf.expand_dims(x_i, -1)
+
+        feature_expr     = tf.sparse_tensor_dense_matmul(feature_matrix, x_i_)
+        # feature_expr = tf_print_span(feature_expr, "feature_expr")
+        antifeature_expr = tf.sparse_tensor_dense_matmul(antifeature_matrix, x_i_)
+        # antifeature_expr = tf_print_span(antifeature_expr, "antifeature_expr")
+
+        push!(splice_log_ratios, tf.log(feature_expr) - tf.log(antifeature_expr))
+    end
+
+    return tf.squeeze(tf.stack(splice_log_ratios), axis=-1)
+end
+
+
+function estimate_splicing_log_ratios(input::ModelInput; write_results::Bool=true)
+    num_samples, n = size(input.loaded_samples.x0_values)
+
+    (num_features,
+     feature_idxs, feature_transcript_idxs,
+     antifeature_idxs, antifeature_transcript_idxs) = splicing_features(input)
+
+    vars, var_approximations = model_nondisjoint_feature_prior(input, num_features)
+    x_feature = vars[:x_feature]
+
+    T = x -> transcript_expression_to_splicing_log_ratios(
+                num_features, n, feature_idxs, feature_transcript_idxs,
+                antifeature_idxs, antifeature_transcript_idxs, x)
+
+    optimizer = tf.train[:AdamOptimizer](5e-2)
+    inference = ed.KLqp(latent_vars=var_approximations)
+
+    run_implicit_model_inference(input, x_feature, T, inference, 10000, optimizer)
 end
 
 
@@ -472,54 +584,54 @@ end
 #         estimate_feature_expression(input.likapprox_data, input.y0, input.sample_factors, F)
 # end
 
-function estimate_splicing_log_ratio(input::ModelInput)
-    qy_mu_value, qy_sigma_value = estimate_splicing_expression(input)
-    num_samples, n = size(qy_mu_value)
+# function estimate_splicing_log_ratio(input::ModelInput)
+#     qy_mu_value, qy_sigma_value = estimate_splicing_expression(input)
+#     num_samples, n = size(qy_mu_value)
 
-    inc_indexes = [i for i in 1:2:n]
-    exc_indexes = [i for i in 2:2:n]
+#     inc_indexes = [i for i in 1:2:n]
+#     exc_indexes = [i for i in 2:2:n]
 
-    qy_mu_inc_value = qy_mu_value[:,inc_indexes]
-    qy_mu_exc_value = qy_mu_value[:,exc_indexes]
+#     qy_mu_inc_value = qy_mu_value[:,inc_indexes]
+#     qy_mu_exc_value = qy_mu_value[:,exc_indexes]
 
-    qy_sigma_inc_value = qy_sigma_value[:,inc_indexes]
-    qy_sigma_exc_value = qy_sigma_value[:,exc_indexes]
+#     qy_sigma_inc_value = qy_sigma_value[:,inc_indexes]
+#     qy_sigma_exc_value = qy_sigma_value[:,exc_indexes]
 
-    qy_mu_ratio_value    = qy_mu_inc_value .- qy_mu_exc_value
-    qy_sigma_ratio_value = qy_sigma_inc_value +- qy_sigma_exc_value
+#     qy_mu_ratio_value    = qy_mu_inc_value .- qy_mu_exc_value
+#     qy_sigma_ratio_value = qy_sigma_inc_value +- qy_sigma_exc_value
 
-    @show minimum(qy_mu_inc_value), median(qy_mu_inc_value), maximum(qy_mu_inc_value)
+#     @show minimum(qy_mu_inc_value), median(qy_mu_inc_value), maximum(qy_mu_inc_value)
 
-    cassette_exons = get_cassette_exons(input.ts)
+#     cassette_exons = get_cassette_exons(input.ts)
 
-    println("EXTREME INC VALUES")
-    for i in 1:length(qy_mu_inc_value)
-        if qy_mu_inc_value[i] < -500.0
-            @show (i, qy_mu_inc_value[i], qy_mu_exc_value[i], qy_sigma_inc_value[i], qy_sigma_exc_value[i])
-            @show (length(cassette_exons[i][1].metadata), length(cassette_exons[i][2].metadata[3]))
-        end
-    end
+#     println("EXTREME INC VALUES")
+#     for i in 1:length(qy_mu_inc_value)
+#         if qy_mu_inc_value[i] < -500.0
+#             @show (i, qy_mu_inc_value[i], qy_mu_exc_value[i], qy_sigma_inc_value[i], qy_sigma_exc_value[i])
+#             @show (length(cassette_exons[i][1].metadata), length(cassette_exons[i][2].metadata[3]))
+#         end
+#     end
 
-    println("EXTREME EXC VALUES")
-    for i in 1:length(qy_mu_exc_value)
-        if qy_mu_exc_value[i] < -500.0
-            @show (i, qy_mu_inc_value[i], qy_mu_exc_value[i], qy_sigma_inc_value[i], qy_sigma_exc_value[i])
-            @show (length(cassette_exons[i][1].metadata), length(cassette_exons[i][2].metadata[3]))
-        end
-    end
+#     println("EXTREME EXC VALUES")
+#     for i in 1:length(qy_mu_exc_value)
+#         if qy_mu_exc_value[i] < -500.0
+#             @show (i, qy_mu_inc_value[i], qy_mu_exc_value[i], qy_sigma_inc_value[i], qy_sigma_exc_value[i])
+#             @show (length(cassette_exons[i][1].metadata), length(cassette_exons[i][2].metadata[3]))
+#         end
+#     end
 
-    # tmp = sort(qy_mu_inc_value[2,:])
-    # @show tmp[1:10]
-    # @show tmp[end-10:end]
+#     # tmp = sort(qy_mu_inc_value[2,:])
+#     # @show tmp[1:10]
+#     # @show tmp[end-10:end]
 
-    exit()
+#     exit()
 
-    # @show minimum(qy_mu_exc_value), median(qy_mu_exc_value), maximum(qy_mu_exc_value)
-    # @show minimum(qy_mu_ratio_value), median(qy_mu_ratio_value), maximum(qy_mu_ratio_value)
-    # @show minimum(qy_sigma_ratio_value), median(qy_sigma_ratio_value), maximum(qy_sigma_ratio_value)
+#     # @show minimum(qy_mu_exc_value), median(qy_mu_exc_value), maximum(qy_mu_exc_value)
+#     # @show minimum(qy_mu_ratio_value), median(qy_mu_ratio_value), maximum(qy_mu_ratio_value)
+#     # @show minimum(qy_sigma_ratio_value), median(qy_sigma_ratio_value), maximum(qy_sigma_ratio_value)
 
-    return qy_mu_ratio_value, qy_sigma_ratio_value
-end
+#     return qy_mu_ratio_value, qy_sigma_ratio_value
+# end
 
 
 """
@@ -1158,4 +1270,4 @@ end
 
 
 EXTRUDER_MODELS["expression"] = estimate_expression
-EXTRUDER_MODELS["splicing"]   = estimate_splicing_log_ratio
+EXTRUDER_MODELS["splicing"]   = estimate_splicing_log_ratios

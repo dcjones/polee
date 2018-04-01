@@ -10,7 +10,7 @@ function estimate_expression(input::ModelInput)
     elseif input.feature == :gene
         return estimate_gene_expression(input)
     elseif input.feature == :splicing
-        return estimate_splicing_log_ratios(input)
+        return estimate_splicing_proportions(input)
     else
         error("Expression estimates for $(input.feature) not supported")
     end
@@ -288,18 +288,10 @@ end
 """
 Convert transcript expression vectors to splicing log-ratios.
 """
-function transcript_expression_to_splicing_log_ratios(
+function transcript_expression_to_splicing_proportions(
                 num_features, n,
                 feature_idxs, feature_transcript_idxs,
                 antifeature_idxs, antifeature_transcript_idxs, x)
-
-    @show extrema(feature_idxs)
-    @show length(Set(feature_idxs))
-    @show extrema(antifeature_idxs)
-    @show length(Set(antifeature_idxs))
-
-    @show feature_transcript_idxs[feature_idxs .== 1]
-    @show antifeature_transcript_idxs[antifeature_idxs .== 1]
 
     feature_matrix = tf.SparseTensor(
         indices=hcat(feature_idxs .- 1, feature_transcript_idxs .- 1),
@@ -311,7 +303,7 @@ function transcript_expression_to_splicing_log_ratios(
         values=tf.ones(length(antifeature_idxs)),
         dense_shape=[num_features, n])
 
-    splice_log_ratios = Any[]
+    splice_props = Any[]
     for x_i in tf.unstack(x)
         x_i_ = tf.expand_dims(x_i, -1)
 
@@ -320,31 +312,49 @@ function transcript_expression_to_splicing_log_ratios(
         antifeature_expr = tf.sparse_tensor_dense_matmul(antifeature_matrix, x_i_)
         # antifeature_expr = tf_print_span(antifeature_expr, "antifeature_expr")
 
-        push!(splice_log_ratios, tf.log(feature_expr) - tf.log(antifeature_expr))
+        push!(splice_props, feature_expr / (feature_expr + antifeature_expr))
     end
 
-    return tf.squeeze(tf.stack(splice_log_ratios), axis=-1)
+    splice_prop = tf.squeeze(tf.stack(splice_props), axis=-1)
+    splice_prop = tf.clip_by_value(splice_prop, 1f-7, 1.0f0 - 1f-7)
+    # splice_prop = tf.clip_by_value(splice_prop, 1f-4, 1.0f0 - 1f-4)
+    # splice_prop = tf.clip_by_value(splice_prop, 1f-2, 1.0f0 - 1f-2)
+    splice_prop = tf_print_span(splice_prop, "splice_prop")
+    return splice_prop
 end
 
 
-function estimate_splicing_log_ratios(input::ModelInput; write_results::Bool=true)
+function estimate_splicing_proportions(input::ModelInput; write_results::Bool=true)
     num_samples, n = size(input.loaded_samples.x0_values)
 
     (num_features,
      feature_idxs, feature_transcript_idxs,
      antifeature_idxs, antifeature_transcript_idxs) = splicing_features(input)
 
-    vars, var_approximations = model_nondisjoint_feature_prior(input, num_features)
+    vars, var_approximations = model_splicing_prior(input, num_features)
     x_feature = vars[:x_feature]
 
-    T = x -> transcript_expression_to_splicing_log_ratios(
+    T = x -> transcript_expression_to_splicing_proportions(
                 num_features, n, feature_idxs, feature_transcript_idxs,
                 antifeature_idxs, antifeature_transcript_idxs, x)
 
     optimizer = tf.train[:AdamOptimizer](5e-2)
-    inference = ed.KLqp(latent_vars=var_approximations)
+    run_implicit_model_klqp_inference(input, x_feature, T, var_approximations, 1000, optimizer)
 
-    run_implicit_model_inference(input, x_feature, T, inference, 10000, optimizer)
+    sess = ed.get_session()
+
+    qx_feature_mu = var_approximations[vars[:x_feature_mu]]
+
+    lower_credible = sess[:run](qx_feature_mu[:quantile](input.credible_interval[1]))
+    upper_credible = sess[:run](qx_feature_mu[:quantile](input.credible_interval[2]))
+    est = sess[:run](qx_feature_mu[:quantile](0.5))
+
+    output_filename = isnull(input.output_filename) ?
+        "splicing-proportion-estimates.csv" : get(input.output_filename)
+
+    write_splicing_proportions_csv(output_filename, input.loaded_samples.sample_names,
+                                   num_features, est,
+                                   lower_credible, upper_credible)
 end
 
 
@@ -514,7 +524,6 @@ function splicing_features(input::ModelInput)
         end
     end
     SQLite.execute!(db, "end transaction")
-
 
     feature_idxs = Int32[]
     feature_transcript_idxs = Int32[]
@@ -991,6 +1000,115 @@ function estimate_nondisjoint_feature_expression(vars, var_approximations, data)
 end
 
 
+function model_splicing_prior(input::ModelInput, num_features)
+    num_samples, n = size(input.loaded_samples.x0_values)
+
+    # per-sample, per-exon mean
+    x_feature_mu_alpha0 = 1.0f0
+    x_feature_mu_beta0 = 1.0f0
+
+    x_feature_mu_alpha0_param = tf.fill([num_samples, num_features], x_feature_mu_alpha0)
+    x_feature_mu_beta0_param = tf.fill([num_samples, num_features], x_feature_mu_beta0)
+
+    x_feature_mu = edmodels.Beta(x_feature_mu_alpha0_param, x_feature_mu_beta0_param)
+
+    # per-sample, per-exon precision
+    x_feature_precision_alpha0 = 1.0f0;
+    x_feature_precision_beta0 = 1000.0f0;
+
+    x_feature_precision_alpha0_param = tf.fill([num_samples, num_features], x_feature_precision_alpha0)
+    x_feature_precision_beta0_param = tf.fill([num_samples, num_features], x_feature_precision_beta0)
+
+    x_feature_precision = edmodels.Gamma(x_feature_mu_alpha0_param, x_feature_mu_beta0_param)
+
+    # x_feature_inv_precision = edmodels.InverseGamma(
+    #     x_feature_precision_alpha0_param, x_feature_precision_beta0_param)
+    # x_feature_precision = tf.reciprocal(x_feature_inv_precision)
+
+    x_feature_mu_ = tf_print_span(x_feature_mu, "x_feature_mu")
+    x_feature_alpha = x_feature_mu_ * x_feature_precision
+    x_feature_beta  = (1.0f0 - x_feature_mu_) * x_feature_precision
+
+    x_feature_alpha = tf_print_span(x_feature_alpha, "x_feature_alpha")
+    x_feature_beta  = tf_print_span(x_feature_beta, "x_feature_beta")
+
+    x_feature = edmodels.Beta(x_feature_alpha, x_feature_beta)
+
+    # inference
+    # ---------
+
+    qx_feature_mu_loc_param = tf.Variable(
+        tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_mu_loc_param")
+    qx_feature_mu_scale_param = tf.Variable(
+        tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_mu_scale_param")
+
+    qx_feature_mu = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(
+            loc=qx_feature_mu_loc_param,
+            scale=qx_feature_mu_scale_param),
+        bijector=tfdist.bijectors[:Sigmoid](),
+        name="qx_feature_mu")
+
+    qx_feature_precision_mu_param    = tf.Variable(
+        tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_precision_mu_param")
+    qx_feature_precision_sigma_param = tf.Variable(
+        tf.fill([num_samples, num_features], -2.0f0), name="qx_feature_precision_sigma_param")
+    qx_feature_precision = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(loc=qx_feature_precision_mu_param,
+                                                      scale=qx_feature_precision_sigma_param),
+        bijector=tfdist.bijectors[:Exp](),
+        name="qx_feature_precision")
+
+    var_approximations = Dict(
+        x_feature_mu              => qx_feature_mu,
+        # x_feature_inv_precision   => qx_feature_inv_precision,
+        x_feature_precision => qx_feature_precision
+    )
+
+    vars = Dict(
+        :x_feature_mu            => x_feature_mu,
+        # :x_feature_inv_precision => x_feature_inv_precision,
+        :x_feature_precision     => x_feature_precision,
+        :x_feature               => x_feature,
+    )
+
+    return vars, var_approximations
+
+
+    # ----------------------------
+
+
+
+    # x_feature_alpha0_param = tf.fill([num_samples, num_features], x_feature_alpha0)
+    # x_feature_beta0_param = tf.fill([num_samples, num_features], x_feature_beta0)
+
+    # x_feature = edmodels.Beta(x_feature_alpha0_param, x_feature_beta0_param)
+
+    # # inference
+    # qx_feature_alpha =
+    #     tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], 1.0f0),
+    #                                  name="qx_feature_alpha_softplus"))
+    # qx_feature_alpha = tf_print_span(qx_feature_alpha, "qx_feature_alpha")
+    # qx_feature_beta =
+    #     tf.nn[:softplus](tf.Variable(tf.fill([num_samples, num_features], 1.0f0),
+    #                                  name="qx_feature_beta_softplus"))
+    # qx_feature_beta = tf_print_span(qx_feature_beta, "qx_feature_beta")
+
+    # # qx_feature = edmodels.Beta(1.0f0 + qx_feature_alpha, 1.0f0 + qx_feature_beta)
+    # qx_feature = edmodels.Kumaraswamy(qx_feature_alpha, qx_feature_beta)
+
+    # var_approximations = Dict(
+    #     x_feature             => qx_feature,
+    # )
+
+    # vars = Dict(
+    #     :x_feature           => x_feature,
+    # )
+
+    # return vars, var_approximations
+end
+
+
 function model_nondisjoint_feature_prior(input::ModelInput, num_features)
     num_samples, n = size(input.loaded_samples.x0_values)
 
@@ -1270,4 +1388,4 @@ end
 
 
 EXTRUDER_MODELS["expression"] = estimate_expression
-EXTRUDER_MODELS["splicing"]   = estimate_splicing_log_ratios
+EXTRUDER_MODELS["splicing"]   = estimate_splicing_proportions

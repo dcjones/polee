@@ -48,7 +48,6 @@ def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
     # effective length transform
     x_scaled = x_efflen / efflens
     x = x_scaled / tf.reduce_sum(x_scaled, axis=1, keepdims=True)
-    # x = tf.clip_by_value(x, 1e-7, 1.0)
     return x
 
 
@@ -166,3 +165,49 @@ class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):
     def __init__(self, *args, **kwargs):
         super(RNASeqApproxLikelihood, self).__init__(*args, **kwargs)
 
+
+# Values for gate_gradients.
+GATE_NONE = 0
+GATE_OP = 1
+GATE_GRAPH = 2
+
+# Taken from: https://github.com/blei-lab/edward/issues/708
+class ClippedAdamOptimizer(tf.train.AdamOptimizer):
+    """
+    Clipped version adam optimizer, where its gradient is clipped by value
+    so that it cannot be too large.
+    """
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999,
+                 epsilon=1e-08, use_locking=False,
+                 clip_func=lambda x: tf.clip_by_value(x, 1.0e-4, 1.0e4),
+                 name='Adam'):
+        super(ClippedAdamOptimizer, self).__init__(
+            learning_rate, beta1, beta2, epsilon, use_locking, name)
+        self._clip_func = clip_func
+
+    def compute_gradients(self, loss, var_list=None, gate_gradients=GATE_OP,
+                          aggregation_method=None,
+                          colocate_gradients_with_ops=False, grad_loss=None):
+        print("ClippedAdamOptimizer compute_gradients")
+        sys.exit()
+        grad_and_vars = super(ClippedAdamOptimizer, self).compute_gradients(
+            loss, var_list, gate_gradients, aggregation_method,
+            colocate_gradients_with_ops, grad_loss)
+
+        for g in grad_and_vars.keys():
+            print(g)
+            v = grad_and_vars[v]
+            grad_and_vars[g] = tf.Print(v, [tf.reduce_min(v), tf.reduce_max(v)], "grad extrema")
+
+        # clip func
+        if self._clip_func is None:
+            return grad_and_vars
+        return [(self._clip_func(g, v) if g is not None else (g, v)
+                for g, v in grad_and_vars)]
+
+
+class ClippedKumaraswamy(edward.models.Kumaraswamy):
+    def __init__(self, alpha, beta, name="ClippedKumaraswamy"):
+        super(ClippedKumaraswamy, self).__init__(alpha, beta, name=name)
+        # self._value = tf.clip_by_value(self._value, 1e-7, 1 - 1e-7)
+        self._value = tf.clip_by_value(self._value, 1e-2, 1 - 1e-2)

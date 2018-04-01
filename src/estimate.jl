@@ -347,7 +347,7 @@ function run_implicit_model_klqp_inference(input, Tx, T, latent_vars, n_iter, op
     inference = ed.KLqp(latent_vars=latent_vars, data=data)
 
     # inference[:initialize](n_iter=n_iter, optimizer=optimizer, n_print=1, logdir="log")
-    inference[:initialize](n_iter=5*n_iter, optimizer=optimizer, logdir="log")
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
 
     sess[:run](tf.global_variables_initializer(),
                feed_dict=input.loaded_samples.init_feed_dict)
@@ -356,11 +356,9 @@ function run_implicit_model_klqp_inference(input, Tx, T, latent_vars, n_iter, op
         try
             feed_dict = Dict(data[Tx] =>
                 sess[:run](Tx_sample, feed_dict=input.loaded_samples.init_feed_dict))
-            for _ in 1:5
-                info_dict = inference[:update](merge(feed_dict, input.loaded_samples.init_feed_dict))
-                # info_dict = inference[:update](feed_dict)
-                inference[:print_progress](info_dict)
-            end
+            info_dict = inference[:update](merge(feed_dict, input.loaded_samples.init_feed_dict))
+            # info_dict = inference[:update](feed_dict)
+            inference[:print_progress](info_dict)
         catch ex
             @show ex
             @show ex.val[:message]

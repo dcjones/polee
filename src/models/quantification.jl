@@ -19,18 +19,6 @@ end
 
 function estimate_transcript_expression(input::ModelInput, write_results::Bool=true)
 
-    idx = 0
-    for (i, t) in enumerate(input.ts)
-        if t.metadata.name == "transcript:ENST00000396251"
-            idx = i
-            break
-        end
-    end
-    @show idx
-    @show input.loaded_samples.efflen_values[:, idx]
-    @show input.loaded_samples.x0_values[:, idx]
-    exit()
-
     num_samples, n = size(input.loaded_samples.x0_values)
 
     x0_log = log.(input.loaded_samples.x0_values)
@@ -339,7 +327,7 @@ function estimate_splicing_proportions(input::ModelInput; write_results::Bool=tr
                 antifeature_idxs, antifeature_transcript_idxs, x)
 
     optimizer = tf.train[:AdamOptimizer](5e-2)
-    run_implicit_model_klqp_inference(input, x_feature, T, var_approximations, 1000, optimizer)
+    run_implicit_model_klqp_inference(input, x_feature, T, var_approximations, 5000, optimizer)
 
     sess = ed.get_session()
 
@@ -1003,34 +991,42 @@ end
 function model_splicing_prior(input::ModelInput, num_features)
     num_samples, n = size(input.loaded_samples.x0_values)
 
-    # per-sample, per-exon mean
-    x_feature_mu_alpha0 = 1.0f0
-    x_feature_mu_beta0 = 1.0f0
+    # # per-sample, per-exon mean
+    # x_feature_mu_alpha0 = 1.0f0
+    # x_feature_mu_beta0 = 1.0f0
 
-    x_feature_mu_alpha0_param = tf.fill([num_samples, num_features], x_feature_mu_alpha0)
-    x_feature_mu_beta0_param = tf.fill([num_samples, num_features], x_feature_mu_beta0)
+    # x_feature_mu_alpha0_param = tf.fill([num_samples, num_features], x_feature_mu_alpha0)
+    # x_feature_mu_beta0_param = tf.fill([num_samples, num_features], x_feature_mu_beta0)
 
-    x_feature_mu = edmodels.Beta(x_feature_mu_alpha0_param, x_feature_mu_beta0_param)
+    x_feature_mu = rnaseq_approx_likelihood.ImproperPrior(
+        value=tf.zeros([num_samples, num_features]))
 
-    # per-sample, per-exon precision
-    x_feature_precision_alpha0 = 1.0f0;
-    x_feature_precision_beta0 = 1000.0f0;
+    # # per-sample, per-exon precision
+    # x_feature_precision_alpha0 = 1.0f0;
+    # x_feature_precision_beta0 = 1000.0f0;
 
-    x_feature_precision_alpha0_param = tf.fill([num_samples, num_features], x_feature_precision_alpha0)
-    x_feature_precision_beta0_param = tf.fill([num_samples, num_features], x_feature_precision_beta0)
+    # x_feature_precision_alpha0_param = tf.fill([num_samples, num_features], x_feature_precision_alpha0)
+    # x_feature_precision_beta0_param = tf.fill([num_samples, num_features], x_feature_precision_beta0)
 
-    x_feature_precision = edmodels.Gamma(x_feature_mu_alpha0_param, x_feature_mu_beta0_param)
+    # x_feature_precision = edmodels.Gamma(x_feature_mu_alpha0_param, x_feature_mu_beta0_param)
+    x_feature_precision = rnaseq_approx_likelihood.ImproperPrior(
+        value=tf.zeros([num_samples, num_features]))
 
-    # x_feature_inv_precision = edmodels.InverseGamma(
-    #     x_feature_precision_alpha0_param, x_feature_precision_beta0_param)
-    # x_feature_precision = tf.reciprocal(x_feature_inv_precision)
+    # # x_feature_inv_precision = edmodels.InverseGamma(
+    # #     x_feature_precision_alpha0_param, x_feature_precision_beta0_param)
+    # # x_feature_precision = tf.reciprocal(x_feature_inv_precision)
 
-    x_feature_mu_ = tf_print_span(x_feature_mu, "x_feature_mu")
-    x_feature_alpha = x_feature_mu_ * x_feature_precision
-    x_feature_beta  = (1.0f0 - x_feature_mu_) * x_feature_precision
+    # x_feature_mu_ = tf_print_span(x_feature_mu, "x_feature_mu")
+    x_feature_alpha = x_feature_mu * x_feature_precision
+    x_feature_beta  = (1.0f0 - x_feature_mu) * x_feature_precision
 
-    x_feature_alpha = tf_print_span(x_feature_alpha, "x_feature_alpha")
-    x_feature_beta  = tf_print_span(x_feature_beta, "x_feature_beta")
+    # x_feature_alpha = tf_print_span(x_feature_alpha, "x_feature_alpha")
+    # x_feature_beta  = tf_print_span(x_feature_beta, "x_feature_beta")
+
+    # x_feature_alpha = rnaseq_approx_likelihood.ImproperPrior(
+    #     value=tf.zeros([num_samples, num_features]))
+    # x_feature_beta  = rnaseq_approx_likelihood.ImproperPrior(
+    #     value=tf.zeros([num_samples, num_features]))
 
     x_feature = edmodels.Beta(x_feature_alpha, x_feature_beta)
 

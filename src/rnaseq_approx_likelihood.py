@@ -82,13 +82,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
               graph_parents=[self.x,])
 
     def _get_event_shape(self):
-        print("y.get_shape()")
-        print(self.x.get_shape())
         return tf.TensorShape([2, self.x.get_shape()[-1] - 1])
 
     def _get_batch_shape(self):
-        print("y.get_shape()")
-        print(self.x.get_shape())
         return self.x.get_shape()[:-1]
 
     def _log_prob(self, _):
@@ -211,3 +207,30 @@ class ClippedKumaraswamy(edward.models.Kumaraswamy):
         super(ClippedKumaraswamy, self).__init__(alpha, beta, name=name)
         # self._value = tf.clip_by_value(self._value, 1e-7, 1 - 1e-7)
         self._value = tf.clip_by_value(self._value, 1e-2, 1 - 1e-2)
+
+
+class ImproperPriorDist(distributions.Distribution):
+    def __init__(self, name="ImproperPrior"):
+        parameters = locals()
+
+        super(ImproperPriorDist, self).__init__(
+            dtype=tf.float32,
+            validate_args=False,
+            allow_nan_stats=False,
+            reparameterization_type=tf.contrib.distributions.FULLY_REPARAMETERIZED,
+            parameters=[],
+            graph_parents=[])
+
+    def _get_event_shape(self):
+        return tf.TensorShape([self._value.get_shape()[-1]])
+
+    def _get_batch_shape(self):
+        return self._value.get_shape()[:-1]
+
+    def _log_prob(self, _):
+        return tf.zeros([int(self._get_batch_shape()[0])])
+
+
+class ImproperPrior(edward.RandomVariable, ImproperPriorDist):
+    def __init__(self, *args, **kwargs):
+        super(ImproperPrior, self).__init__(*args, **kwargs)

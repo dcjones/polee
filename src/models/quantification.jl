@@ -327,15 +327,23 @@ function estimate_splicing_proportions(input::ModelInput; write_results::Bool=tr
                 antifeature_idxs, antifeature_transcript_idxs, x)
 
     optimizer = tf.train[:AdamOptimizer](5e-2)
-    run_implicit_model_klqp_inference(input, x_feature, T, var_approximations, 5000, optimizer)
+    run_implicit_model_map_inference(input, x_feature, T, var_approximations, 1000, optimizer)
 
     sess = ed.get_session()
 
-    qx_feature_mu = var_approximations[vars[:x_feature_mu]]
+    x_feature_alpha = vars[:x_feature_alpha]
+    x_feature_beta  = vars[:x_feature_beta]
 
-    lower_credible = sess[:run](qx_feature_mu[:quantile](input.credible_interval[1]))
-    upper_credible = sess[:run](qx_feature_mu[:quantile](input.credible_interval[2]))
-    est = sess[:run](qx_feature_mu[:quantile](0.5))
+    qx_feature = edmodels.Beta(var_approximations[x_feature_alpha],
+                               var_approximations[x_feature_beta])
+
+    # lower_credible = sess[:run](qx_feature[:quantile](input.credible_interval[1]))
+    # upper_credible = sess[:run](qx_feature[:quantile](input.credible_interval[2]))
+    # est = sess[:run](qx_feature[:quantile](0.5))
+
+    lower_credible = sess[:run](qx_feature[:mean]())
+    upper_credible = sess[:run](qx_feature[:mean]())
+    est = sess[:run](qx_feature[:mean]())
 
     output_filename = isnull(input.output_filename) ?
         "splicing-proportion-estimates.csv" : get(input.output_filename)
@@ -1017,8 +1025,14 @@ function model_splicing_prior(input::ModelInput, num_features)
     # # x_feature_precision = tf.reciprocal(x_feature_inv_precision)
 
     # x_feature_mu_ = tf_print_span(x_feature_mu, "x_feature_mu")
-    x_feature_alpha = x_feature_mu * x_feature_precision
-    x_feature_beta  = (1.0f0 - x_feature_mu) * x_feature_precision
+    # x_feature_alpha = x_feature_mu * x_feature_precision
+    # x_feature_beta  = (1.0f0 - x_feature_mu) * x_feature_precision
+
+    x_feature_alpha = rnaseq_approx_likelihood.ImproperPrior(
+        value=tf.zeros([num_samples, num_features]))
+
+    x_feature_beta = rnaseq_approx_likelihood.ImproperPrior(
+        value=tf.zeros([num_samples, num_features]))
 
     # x_feature_alpha = tf_print_span(x_feature_alpha, "x_feature_alpha")
     # x_feature_beta  = tf_print_span(x_feature_beta, "x_feature_beta")
@@ -1030,41 +1044,60 @@ function model_splicing_prior(input::ModelInput, num_features)
 
     x_feature = edmodels.Beta(x_feature_alpha, x_feature_beta)
 
+
     # inference
     # ---------
 
-    qx_feature_mu_loc_param = tf.Variable(
-        tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_mu_loc_param")
-    qx_feature_mu_scale_param = tf.Variable(
-        tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_mu_scale_param")
+    # qx_feature_mu_loc_param = tf.Variable(
+    #     tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_mu_loc_param")
+    # qx_feature_mu_scale_param = tf.Variable(
+    #     tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_mu_scale_param")
 
-    qx_feature_mu = edmodels.TransformedDistribution(
-        distribution=edmodels.NormalWithSoftplusScale(
-            loc=qx_feature_mu_loc_param,
-            scale=qx_feature_mu_scale_param),
-        bijector=tfdist.bijectors[:Sigmoid](),
-        name="qx_feature_mu")
+    # qx_feature_mu = edmodels.TransformedDistribution(
+    #     distribution=edmodels.NormalWithSoftplusScale(
+    #         loc=qx_feature_mu_loc_param,
+    #         scale=qx_feature_mu_scale_param),
+    #     bijector=tfdist.bijectors[:Sigmoid](),
+    #     name="qx_feature_mu")
 
-    qx_feature_precision_mu_param    = tf.Variable(
-        tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_precision_mu_param")
-    qx_feature_precision_sigma_param = tf.Variable(
-        tf.fill([num_samples, num_features], -2.0f0), name="qx_feature_precision_sigma_param")
-    qx_feature_precision = edmodels.TransformedDistribution(
-        distribution=edmodels.NormalWithSoftplusScale(loc=qx_feature_precision_mu_param,
-                                                      scale=qx_feature_precision_sigma_param),
-        bijector=tfdist.bijectors[:Exp](),
-        name="qx_feature_precision")
+    # qx_feature_precision_mu_param    = tf.Variable(
+    #     tf.fill([num_samples, num_features], 0.0f0), name="qx_feature_precision_mu_param")
+    # qx_feature_precision_sigma_param = tf.Variable(
+    #     tf.fill([num_samples, num_features], -2.0f0), name="qx_feature_precision_sigma_param")
+    # qx_feature_precision = edmodels.TransformedDistribution(
+    #     distribution=edmodels.NormalWithSoftplusScale(loc=qx_feature_precision_mu_param,
+    #                                                   scale=qx_feature_precision_sigma_param),
+    #     bijector=tfdist.bijectors[:Exp](),
+    #     name="qx_feature_precision")
+
+    # var_approximations = Dict(
+    #     x_feature_mu              => qx_feature_mu,
+    #     # x_feature_inv_precision   => qx_feature_inv_precision,
+    #     x_feature_precision => qx_feature_precision
+    # )
+
+    # vars = Dict(
+    #     :x_feature_mu            => x_feature_mu,
+    #     # :x_feature_inv_precision => x_feature_inv_precision,
+    #     :x_feature_precision     => x_feature_precision,
+    #     :x_feature               => x_feature,
+    # )
+
+    qx_feature_alpha = edmodels.PointMass(
+        tf.exp(tf.Variable(tf.zeros([num_samples, num_features]),
+                           name="qx_feature_alpha_param")))
+    qx_feature_beta = edmodels.PointMass(
+        tf.exp(tf.Variable(tf.zeros([num_samples, num_features]),
+                           name="qx_feature_beta_param")))
 
     var_approximations = Dict(
-        x_feature_mu              => qx_feature_mu,
-        # x_feature_inv_precision   => qx_feature_inv_precision,
-        x_feature_precision => qx_feature_precision
+        x_feature_alpha => qx_feature_alpha,
+        x_feature_beta  => qx_feature_beta
     )
 
     vars = Dict(
-        :x_feature_mu            => x_feature_mu,
-        # :x_feature_inv_precision => x_feature_inv_precision,
-        :x_feature_precision     => x_feature_precision,
+        :x_feature_alpha         => x_feature_alpha,
+        :x_feature_beta          => x_feature_beta,
         :x_feature               => x_feature,
     )
 

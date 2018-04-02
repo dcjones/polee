@@ -336,7 +336,7 @@ likelihood function, computing T(x') and treating that as a new observation
 of T(x) at every iteration. This is less efficient mode of inference, but possibly
 better than introducing a ton of nusiance parameters to try to evaluate P(x|T(x)).
 """
-function run_implicit_model_klqp_inference(input, Tx, T, latent_vars, n_iter, optimizer)
+function run_implicit_model_map_inference(input, Tx, T, latent_vars, n_iter, optimizer)
     sess = ed.get_session()
 
     x_sample = rnaseq_approx_likelihood_sampler(input)
@@ -344,7 +344,7 @@ function run_implicit_model_klqp_inference(input, Tx, T, latent_vars, n_iter, op
 
     data = Dict(Tx => tf.placeholder(tf.float32, shape=Tx[:get_shape]()))
 
-    inference = ed.KLqp(latent_vars=latent_vars, data=data)
+    inference = ed.MAP(latent_vars=latent_vars, data=data)
 
     # inference[:initialize](n_iter=n_iter, optimizer=optimizer, n_print=1, logdir="log")
     inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")

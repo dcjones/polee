@@ -54,6 +54,7 @@ include("evaluate.jl")
 
 # TODO: automate including everything under models
 EXTRUDER_MODELS = Dict{String, Function}()
+include("models/splicing.jl")
 include("models/linear-regression.jl")
 include("models/simple-linear-regression.jl")
 include("models/simple-mode.jl")

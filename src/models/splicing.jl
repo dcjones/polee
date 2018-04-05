@@ -89,7 +89,7 @@ function approximate_splicing_likelihood(input::ModelInput)
         x_feature_loc    => qx_feature_loc,
         x_feature_scale  => qx_feature_scale
     )
-    run_implicit_model_map_inference(input, x_feature, T, latent_vars, 1000, optimizer)
+    run_implicit_model_map_inference(input, x_feature, T, latent_vars, 500, optimizer)
 
     sess = ed.get_session()
     return (sess[:run](qx_feature_loc), sess[:run](qx_feature_scale))

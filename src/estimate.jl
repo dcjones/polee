@@ -259,6 +259,7 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
     init_feed_dict = Dict{Any, Any}()
     for (name, val) in zip(var_names, var_values)
         typ = eltype(val) == Float32 ? tf.float32 : tf.int32
+        @show (name, typ, size(val))
         var_init = tf.placeholder(typ, shape=size(val))
         var      = tf.Variable(var_init)
         variables[name] = var
@@ -345,17 +346,24 @@ function run_implicit_model_map_inference(input, Tx, T, latent_vars, n_iter, opt
 
     inference = ed.MAP(latent_vars=latent_vars, data=data)
 
+    # inference[:initialize](n_iter=n_iter, optimizer=optimizer, n_print=1, logdir="log")
     inference[:initialize](n_iter=n_iter, optimizer=optimizer)
 
     sess[:run](tf.global_variables_initializer(),
                feed_dict=input.loaded_samples.init_feed_dict)
 
     for iter in 1:n_iter
-        feed_dict = Dict(data[Tx] =>
-            sess[:run](Tx_sample, feed_dict=input.loaded_samples.init_feed_dict))
-        info_dict = inference[:update](merge(feed_dict, input.loaded_samples.init_feed_dict))
-        # info_dict = inference[:update](feed_dict)
-        inference[:print_progress](info_dict)
+        try
+            feed_dict = Dict(data[Tx] =>
+                sess[:run](Tx_sample, feed_dict=input.loaded_samples.init_feed_dict))
+            info_dict = inference[:update](merge(feed_dict, input.loaded_samples.init_feed_dict))
+            # info_dict = inference[:update](feed_dict)
+            inference[:print_progress](info_dict)
+        catch ex
+            @show ex
+            @show ex.val[:message]
+            rethrow(ex)
+        end
     end
 
     inference[:finalize]()
@@ -435,7 +443,7 @@ function run_inference(input, inference, n_iter, optimizer)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
     # inference[:initialize](n_iter=n_iter, optimizer=optimizer)
-    inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer, auto_transform=false, logdir="log")
     # inference[:initialize](n_iter=n_iter)
 
     sess[:run](tf.global_variables_initializer(),

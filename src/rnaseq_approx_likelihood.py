@@ -234,3 +234,34 @@ class ImproperPriorDist(distributions.Distribution):
 class ImproperPrior(edward.RandomVariable, ImproperPriorDist):
     def __init__(self, *args, **kwargs):
         super(ImproperPrior, self).__init__(*args, **kwargs)
+
+
+# A more general way (hack) of dealing with approximated likelihood functions.
+class ApproximatedLikelihoodDist(distributions.Distribution):
+    def __init__(self, dist, x, name="ApproximatedLikelihood"):
+        parameters = locals()
+        self._dist = dist
+        self._x = x
+
+        super(ApproximatedLikelihoodDist, self).__init__(
+            dtype=tf.float32,
+            validate_args=False,
+            allow_nan_stats=False,
+            reparameterization_type=tf.contrib.distributions.FULLY_REPARAMETERIZED,
+            parameters=[],
+            graph_parents=[])
+
+    def _get_event_shape(self):
+        return tf.TensorShape([0])
+
+    def _get_batch_shape(self):
+        return self._x.get_shape()[:-1]
+
+    def _log_prob(self, _):
+        return self._dist._log_prob(self._x)
+
+
+class ApproximatedLikelihood(edward.RandomVariable, ApproximatedLikelihoodDist):
+    def __init__(self, dist, x, *args, **kwargs):
+        kwargs["value"] = tf.zeros([x.get_shape()[0], 0])
+        super(ApproximatedLikelihood, self).__init__(dist, x, *args, **kwargs)

@@ -347,17 +347,32 @@ function run_implicit_model_map_inference(input, Tx, T, latent_vars, n_iter, opt
     inference = ed.MAP(latent_vars=latent_vars, data=data)
 
     # inference[:initialize](n_iter=n_iter, optimizer=optimizer, n_print=1, logdir="log")
-    inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
 
     sess[:run](tf.global_variables_initializer(),
                feed_dict=input.loaded_samples.init_feed_dict)
+
+    # run_options = tf.RunOptions(trace_level=tf.RunOptions[:FULL_TRACE])
+    # run_metadata = tf.RunMetadata()
+
+    # smpl = sess[:run](Tx_sample, feed_dict=input.loaded_samples.init_feed_dict)
+    # feed_dict = merge(input.loaded_samples.init_feed_dict, Dict(data[Tx] => smpl))
+    # sess[:run]([inference[:train], inference[:increment_t], inference[:loss]],
+    #            options=run_options, run_metadata=run_metadata,
+    #            feed_dict=feed_dict)
+    # tl = tftl.Timeline(run_metadata[:step_stats])
+    # ctf = tl[:generate_chrome_trace_format]()
+    # trace_out = pybuiltin(:open)("timeline.json", "w")
+    # trace_out[:write](ctf)
+    # trace_out[:close]()
+    # exit()
 
     for iter in 1:n_iter
         try
             feed_dict = Dict(data[Tx] =>
                 sess[:run](Tx_sample, feed_dict=input.loaded_samples.init_feed_dict))
-            info_dict = inference[:update](merge(feed_dict, input.loaded_samples.init_feed_dict))
-            # info_dict = inference[:update](feed_dict)
+            # info_dict = inference[:update](merge(feed_dict, input.loaded_samples.init_feed_dict))
+            info_dict = inference[:update](feed_dict)
             inference[:print_progress](info_dict)
         catch ex
             @show ex

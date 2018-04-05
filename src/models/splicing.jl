@@ -33,6 +33,7 @@ function transcript_expression_to_splicing_log_ratios(
     end
 
     splice_lr = tf.squeeze(tf.stack(splice_lrs), axis=-1)
+    splice_lr = tf_print_span(splice_lr, "splice_lr")
     return splice_lr
 end
 
@@ -69,22 +70,24 @@ function approximate_splicing_likelihood(input::ModelInput)
         value=tf.zeros([num_samples, num_features]))
 
     x_feature = edmodels.NormalWithSoftplusScale(
-        loc=x_feature_loc, scale=x_feature_scale)
+        loc=x_feature_loc, scale=x_feature_scale, name="x_feature")
 
     # Inference
+    qx_feature_loc_param = tf.Variable(
+        tf.zeros([num_samples, num_features]), name="qx_feature_loc_param")
+    # qx_feature_loc_param = tf_print_span(qx_feature_loc_param, "qx_feature_loc_param")
+    qx_feature_loc = edmodels.PointMass(qx_feature_loc_param)
 
-    qx_feature_loc = edmodels.PointMass(
-        tf.Variable(tf.zeros([num_samples, num_features]),
-                    name="qx_feature_loc_param"))
-    qx_feature_scale = edmodels.PointMass(
-        tf.Variable(tf.zeros([num_samples, num_features]),
-                    name="qx_feature_scale_param"))
+    qx_feature_scale_param = tf.Variable(
+        tf.zeros([num_samples, num_features]), name="qx_feature_scale_param")
+    # qx_feature_scale_param = tf_print_span(qx_feature_scale_param, "qx_feature_scale_param")
+    qx_feature_scale = edmodels.PointMass(qx_feature_scale_param)
 
     T = x -> transcript_expression_to_splicing_log_ratios(
                 num_features, n, feature_idxs, feature_transcript_idxs,
                 antifeature_idxs, antifeature_transcript_idxs, x)
 
-    optimizer = tf.train[:AdamOptimizer](5e-2)
+    optimizer = tf.train[:AdamOptimizer](1e-2)
     latent_vars = Dict(
         x_feature_loc    => qx_feature_loc,
         x_feature_scale  => qx_feature_scale

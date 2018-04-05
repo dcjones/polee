@@ -41,13 +41,18 @@ def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
     # non-standard-normal transform
     y_logit = mu + sigma * z
 
+    y_logit = tf.Print(y_logit, [tf.reduce_min(y_logit), tf.reduce_max(y_logit)], "y_logit")
+
     # hsb transform
     x_efflen = inverse_hsb_op_module.hsb(
         y_logit, left_index, right_index, leaf_index)
 
+    x_efflen = tf.Print(x_efflen, [tf.reduce_min(x_efflen), tf.reduce_max(x_efflen)], "x_efflen")
+
     # effective length transform
     x_scaled = x_efflen / efflens
     x = x_scaled / tf.reduce_sum(x_scaled, axis=1, keepdims=True)
+    x = tf.clip_by_value(x, 1.1920929e-7, 0.9999999e0)
     return x
 
 

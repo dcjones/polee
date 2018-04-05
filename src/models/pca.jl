@@ -385,8 +385,8 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
         inference = ed.KLqp(var_approximations, data=data)
 
         # optimizer = tf.train[:AdamOptimizer](0.001)
-        optimizer = tf.train[:AdamOptimizer](0.01)
-        run_inference(input, inference, 1000, optimizer)
+        optimizer = tf.train[:AdamOptimizer](0.05)
+        run_inference(input, inference, 2000, optimizer)
 
         sess = ed.get_session()
         z_est = sess[:run](qz_loc)

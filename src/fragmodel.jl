@@ -118,7 +118,7 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
                    fs_foreground, fs_background,
                    ss_foreground, ss_background,
                    fs_model, ss_model)
-    write_statistics(open("bias.csv", "w"), bm)
+    # write_statistics(open("bias.csv", "w"), bm)
 
     strand_specificity = strand_match_count /
         (strand_match_count + strand_mismatch_count)

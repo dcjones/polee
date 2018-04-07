@@ -1,10 +1,10 @@
 #!/usr/bin/env julia
 
-module Extruder
+module Polee
 
 using PyCall
 
-unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Extruder", "src"))
+unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Polee", "src"))
 @pyimport tensorflow as tf
 @pyimport tensorflow.contrib.distributions as tfdist
 @pyimport tensorflow.contrib.tfprof as tfprof
@@ -53,7 +53,7 @@ include("sequences.jl")
 include("evaluate.jl")
 
 # TODO: automate including everything under models
-EXTRUDER_MODELS = Dict{String, Function}()
+POLEE_MODELS = Dict{String, Function}()
 include("models/splicing.jl")
 include("models/linear-regression.jl")
 include("models/simple-linear-regression.jl")
@@ -66,7 +66,7 @@ include("models/gplvm.jl")
 
 
 function print_usage()
-    println("Usage: extruder <command>\n")
+    println("Usage: polee <command>\n")
     println("where command is one of:")
     println("  likelihood-matrix")
     println("  likelihood-approx")
@@ -286,7 +286,7 @@ function main()
             parsed_args["output"], output_format, gene_db,
             credible_interval)
 
-        EXTRUDER_MODELS[parsed_args["model"]](input)
+        POLEE_MODELS[parsed_args["model"]](input)
 
         # TODO: figure out what to do with `output`
 
@@ -389,4 +389,4 @@ function main()
     end
 end
 
-end # module Extruder
+end # module Polee

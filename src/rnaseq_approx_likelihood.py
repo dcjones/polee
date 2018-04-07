@@ -9,7 +9,7 @@ from queue import Queue
 import sys
 
 # TODO: compute this path
-inverse_hsb_op_module = tf.load_op_library("/home/dcjones/prj/extruder/src/tensorflow_ext/hsb_ops.so")
+inverse_hsb_op_module = tf.load_op_library("/home/dcjones/prj/polee/src/tensorflow_ext/hsb_ops.so")
 
 @ops.RegisterGradient("InvHSB")
 def _inv_hsb_grad(op, grad):

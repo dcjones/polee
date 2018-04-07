@@ -15,5 +15,5 @@ function estimate_simple_mode(experiment_spec_filename, output_filename,
     write_estimates(output_filename, names, est)
 end
 
-EXTRUDER_MODELS["simple-mode"] = estimate_simple_mode
+POLEE_MODELS["simple-mode"] = estimate_simple_mode
 

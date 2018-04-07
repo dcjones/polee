@@ -666,4 +666,4 @@ function model_disjoint_feature_expression(input::ModelInput, feature_idxs,
 end
 
 
-EXTRUDER_MODELS["expression"] = estimate_expression
+POLEE_MODELS["expression"] = estimate_expression

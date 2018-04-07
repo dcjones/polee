@@ -144,5 +144,5 @@ function estimate_gplvm(input::ModelInput; num_components::Int=2,
 end
 
 
-EXTRUDER_MODELS["gplvm"] = estimate_gplvm
-EXTRUDER_MODELS["batch-gplvm"] = input -> estimate_gplvm(input, correct_batch_effects=true)
+POLEE_MODELS["gplvm"] = estimate_gplvm
+POLEE_MODELS["batch-gplvm"] = input -> estimate_gplvm(input, correct_batch_effects=true)

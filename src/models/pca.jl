@@ -471,6 +471,6 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
 end
 
 
-EXTRUDER_MODELS["pca"] = estimate_pca
-EXTRUDER_MODELS["batch-pca"] = input -> estimate_pca(input, correct_batch_effects=true)
+POLEE_MODELS["pca"] = estimate_pca
+POLEE_MODELS["batch-pca"] = input -> estimate_pca(input, correct_batch_effects=true)
 

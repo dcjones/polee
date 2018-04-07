@@ -99,5 +99,5 @@ function estimate_simple_logistic_regression(experiment_spec_filename, output_fi
 end
 
 
-EXTRUDER_MODELS["simple-logistic-regression"] = estimate_simple_logistic_regression
+POLEE_MODELS["simple-logistic-regression"] = estimate_simple_logistic_regression
 

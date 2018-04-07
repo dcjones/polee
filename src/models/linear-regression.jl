@@ -283,6 +283,6 @@ function estimate_splicing_linear_regression(input::ModelInput)
 end
 
 
-EXTRUDER_MODELS["linear-regression"] = estimate_linear_regression
+POLEE_MODELS["linear-regression"] = estimate_linear_regression
 
 

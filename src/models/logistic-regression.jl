@@ -158,5 +158,5 @@ function estimate_logistic_regression(input::ModelInput)
 end
 
 
-EXTRUDER_MODELS["logistic-regression"] = estimate_logistic_regression
+POLEE_MODELS["logistic-regression"] = estimate_logistic_regression
 

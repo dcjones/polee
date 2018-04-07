@@ -157,4 +157,4 @@ function estimate_simple_transcript_linear_regression(input)
     end
 end
 
-EXTRUDER_MODELS["simple-linear-regression"] = estimate_simple_linear_regression
+POLEE_MODELS["simple-linear-regression"] = estimate_simple_linear_regression

@@ -1,6 +1,0 @@
-#!/usr/bin/env julia
-
-import Extruder
-Extruder.main()
-
-

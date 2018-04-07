@@ -1,0 +1,7 @@
+*.mem
+*.so
+tags
+notes/*
+!notes/*.tex
+junk/*
+testing/*

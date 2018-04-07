@@ -191,6 +191,8 @@ function main()
                 default = "logit_skew_normal_hsb"
             "--tree-method"
                 default = "cluster"
+            "--num-threads", "-t" # handled by the wrapper script
+            "--no-gpu"            # handled by the wrapper script
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
 
@@ -242,6 +244,8 @@ function main()
                 arg_type = Float64
             "--inference"
                 default = "variational"
+            "--num-threads", "-t" # handled by the wrapper script
+            "--no-gpu"            # handled by the wrapper script
             "feature"
                 required = true
             "model"

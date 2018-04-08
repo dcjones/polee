@@ -83,8 +83,7 @@ function estimate_transcript_pca(input::ModelInput; num_components::Int=8,
 
     x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n])
     x_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[n])
-    x_sigma_sq = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
-    x_sigma = tf.sqrt(x_sigma_sq)
+    x_sigma = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
     # x = edmodels.StudentT(df=10.0f0, loc=x_mu, scale=x_sigma)
     x = edmodels.Normal(loc=x_mu, scale=x_sigma)
 
@@ -112,15 +111,15 @@ function estimate_transcript_pca(input::ModelInput; num_components::Int=8,
     qz_softplus_scale = tf.Variable(tf.fill([num_samples, num_components], -2.0f0), name="qz_softplus_scale")
     qz = edmodels.NormalWithSoftplusScale(loc=qz_loc, scale=qz_softplus_scale)
 
-    qx_sigma_sq_mu_param    = tf.Variable(tf.fill([n], -2.0f0), name="qx_sigma_sq_mu_param")
-    qx_sigma_sq_sigma_param = tf.Variable(tf.fill([n], -1.0f0), name="qx_sigma_sq_sigma_param")
-    qx_sigma_sq = edmodels.TransformedDistribution(
-        distribution=edmodels.NormalWithSoftplusScale(qx_sigma_sq_mu_param, qx_sigma_sq_sigma_param),
+    qx_sigma_mu_param    = tf.Variable(tf.fill([n], -2.0f0), name="qx_sigma_mu_param")
+    qx_sigma_sigma_param = tf.Variable(tf.fill([n], -1.0f0), name="qx_sigma_sigma_param")
+    qx_sigma = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(qx_sigma_mu_param, qx_sigma_sigma_param),
         bijector=tfdist.bijectors[:Exp](),
         name="LogNormalTransformedDistribution")
 
     vars = Dict(x => qx, w => qw, z => qz, mu_bias => qmu_bias,
-                x_sigma_sq => qx_sigma_sq)
+                x_sigma => qx_sigma)
 
     if correct_batch_effects
         qw_batch_loc = tf.Variable(fill(0.0f0, (num_factors, n)), name="qw_batch_loc")
@@ -138,7 +137,10 @@ function estimate_transcript_pca(input::ModelInput; num_components::Int=8,
     sess = ed.get_session()
     qz_loc_values = sess[:run](qz_loc)
 
-    open("transcript-pca-estimates.csv", "w") do out
+    output_filename = isnull(input.output_filename) ?
+        "transcript-pca-estimates.csv" : get(input.output_filename)
+
+    open(output_filename, "w") do out
         print(out, "sample,")
         println(out, join([string("pc", j) for j in 1:num_components], ','))
         for i in 1:num_samples

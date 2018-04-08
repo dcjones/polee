@@ -135,43 +135,46 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
         count += 1
 
         typ = GFF3.featuretype(entry)
-        entry_id = getfirst_else_empty(entry, "ID")
-        if typ == "gene"
+
+        if typ == "exon"
+            parent_name = getfirst_else_empty(entry, "Parent")
+            if !isempty(excluded_transcripts) &&
+               (startswith(parent_name, "transcript:") &&
+                replace(parent_name, "transcript:", "") ∈ excluded_transcripts) ||
+               parent_name ∈ excluded_transcripts
+                continue
+            end
+
+            if parent_name == ""
+                error("Exon has no parent")
+            end
+
+            id = get!(transcript_id_by_name, parent_name,
+                    length(transcript_id_by_name) + 1)
+
+            if id > length(transcript_by_id)
+                seqname = GFF3.seqid(entry)
+                push!(transcript_by_id,
+                    Transcript(get!(interned_seqnames, seqname, seqname),
+                               GFF3.seqstart(entry), GFF3.seqend(entry),
+                               GFF3.strand(entry), TranscriptMetadata(parent_name, id)))
+            end
+            push!(transcript_by_id[id].metadata.exons,
+                Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
+        elseif typ == "gene"
+            # gene some gene metadata if it's available
+            entry_id = getfirst_else_empty(entry, "ID")
             metadata.gene_name[entry_id]        = getfirst_else_empty(entry, "Name")
             metadata.gene_biotype[entry_id]     = getfirst_else_empty(entry, "biotype")
             metadata.gene_description[entry_id] = getfirst_else_empty(entry, "description")
-            continue
-        end
-
-        parent_name = getfirst_else_empty(entry, "Parent")
-        if startswith(parent_name, "gene:")
+        else
+            # If this entry is neither a gene nor an exon, assume it's some
+            # sort of transcript entry
+            entry_id = getfirst_else_empty(entry, "ID")
+            parent_name = getfirst_else_empty(entry, "Parent")
             metadata.gene_id[entry_id] = parent_name
             metadata.transcript_kind[entry_id] = typ
         end
-
-        if typ != "exon"
-            continue
-        end
-
-        if startswith(parent_name, "transcript:") &&
-           replace(parent_name, "transcript:", "") ∈ excluded_transcripts
-            continue
-        end
-
-        if parent_name == ""
-            error("Exon has no parent")
-        end
-
-        id = get!(transcript_id_by_name, parent_name,
-                  length(transcript_id_by_name) + 1)
-        if id > length(transcript_by_id)
-            seqname = GFF3.seqid(entry)
-            push!(transcript_by_id,
-                  Transcript(get!(interned_seqnames, seqname, seqname),
-                             GFF3.seqstart(entry), GFF3.seqend(entry),
-                             GFF3.strand(entry), TranscriptMetadata(parent_name, id)))
-        end
-        push!(transcript_by_id[id].metadata.exons, Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))
     end
 
     for t in transcript_by_id
@@ -386,7 +389,7 @@ function write_transcripts(output_filename, transcripts, metadata)
     for t in transcripts
         SQLite.bind!(ins_stmt, 1, t.metadata.id)
         SQLite.bind!(ins_stmt, 2, String(t.metadata.name))
-        SQLite.bind!(ins_stmt, 3, metadata.transcript_kind[t.metadata.name])
+        SQLite.bind!(ins_stmt, 3, get(metadata.transcript_kind, t.metadata.name, ""))
         SQLite.bind!(ins_stmt, 4, String(t.seqname))
         SQLite.bind!(ins_stmt, 5,
             t.strand == STRAND_POS ? 1 :

@@ -4,7 +4,12 @@
 # use this shell script wrapper to extract those options and set the right
 # variables before running the real program.
 
-# TODO: set a reasonable number of threads by default
+# This trick taken from: https://stackoverflow.com/a/23378780
+ncpus=$([[ $(uname) = 'Darwin' ]] &&
+            sysctl -n hw.physicalcpu_max ||
+            lscpu -p | egrep -v '^#' | sort -u -t, -k 2,4 | wc -l)
+
+export JULIA_NUM_THREADS=$ncpus
 
 unused_args=()
 while [[ $# -gt 0 ]]; do

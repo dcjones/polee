@@ -4,6 +4,8 @@
 # use this shell script wrapper to extract those options and set the right
 # variables before running the real program.
 
+# TODO: set a reasonable number of threads by default
+
 unused_args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -23,6 +25,4 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-set -- ${unused_args[@]}
-
-julia -e 'import Polee; Polee.main()'
+julia -e 'import Polee; Polee.main()' ${unused_args[@]}

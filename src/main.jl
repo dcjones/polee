@@ -178,13 +178,13 @@ function main()
                 arg_type = Float64
             "--inference"
                 default = "variational"
+            "--transcripts"
+                required = false
             "--num-threads", "-t" # handled by the wrapper script
             "--no-gpu"            # handled by the wrapper script
             "feature"
                 required = true
             "model"
-                required = true
-            "transcripts"
                 required = true
             "experiment"
                 required = true
@@ -201,11 +201,24 @@ function main()
             end
         end
 
-        ts, ts_metadata = Transcripts(parsed_args["transcripts"], excluded_transcripts)
+        experiment_spec = YAML.load_file(parsed_args["experiment"])
+        if isempty(experiment_spec)
+            error("Experiment specification is empty.")
+        end
+
+        if "transcripts" ∈ keys(parsed_args) && parsed_args["transcripts"] != nothing
+            transcripts_filename = parsed_args["transcripts"]
+        else
+            transcripts_filename =
+                read_transcripts_filename_from_prepared(first(experiment_spec)["file"])
+            println("Using transcripts file: ", transcripts_filename)
+        end
+
+        ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
         loaded_samples =
-            load_samples_from_specification(parsed_args["experiment"], ts, ts_metadata)
+            load_samples_from_specification(experiment_spec, ts, ts_metadata)
 
         inference = Symbol(parsed_args["inference"])
         feature = Symbol(parsed_args["feature"])

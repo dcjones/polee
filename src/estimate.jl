@@ -32,8 +32,7 @@ Input:
     * experiment_spec_filename: filename of YAML experiment specification
     * ts_metadata: transcript metadata
 """
-function load_samples_from_specification(experiment_spec_filename, ts, ts_metadata)
-    experiment_spec = YAML.load_file(experiment_spec_filename)
+function load_samples_from_specification(experiment_spec, ts, ts_metadata)
     sample_names = [entry["name"] for entry in experiment_spec]
     filenames = [entry["file"] for entry in experiment_spec]
     sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
@@ -50,6 +49,16 @@ function load_samples_from_specification(experiment_spec_filename, ts, ts_metada
 end
 
 
+function read_transcripts_filename_from_prepared(filename)
+    input = h5open(filename)
+    input_metadata = g_open(input, "metadata")
+    transcripts_filename = read(attrs(input_metadata)["gfffilename"])
+    close(input_metadata)
+    close(input)
+    return transcripts_filename
+end
+
+
 """
 Load samples from a vector of filenames.
 
@@ -59,112 +68,6 @@ Input:
 """
 function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
     return load_samples_hdf5(filenames, ts, ts_metadata)
-end
-
-
-function load_samples_flatbuffer(filenames, ts, ts_metadata::TranscriptsMetadata)
-    num_samples = length(filenames)
-    n = length(ts)
-
-    efflen_values = Array{Float32}(num_samples, n)
-    x0_values     = Array{Float32}(num_samples, n)
-
-    # likelihood approximation base distribution parameters
-    la_param_values = Array{Float32}(num_samples, 3, n-1)
-
-    left_index_values  = Array{Int32}(num_samples, 2*n-1)
-    right_index_values = Array{Int32}(num_samples, 2*n-1)
-    leaf_index_values  = Array{Int32}(num_samples, 2*n-1)
-
-    mut = Threads.Mutex()
-
-    prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
-
-    Threads.@threads for i in 1:length(filenames)
-    # for i in 1:length(filenames)
-        filename = filenames[i]
-        data = read_approximated_likelihood_data(filename)
-
-        if length(data.mu) + 1 != n
-            error("Prepared sample has a different number of transcripts than provided GFF3 file.")
-        end
-
-        if data.gff_hash != ts_metadata.gffhash
-            error(
-                """
-                $(filename):
-                GFF3 file is not the same as the one used for sample preparation.
-                Filename of original GFF3 file: $(data.gff_filename)
-                """)
-        end
-
-        # TODO: record and check transcript blacklist hash.
-
-        sigma = exp.(data.omega)
-
-        left_index, right_index, leaf_index =
-            make_inverse_hsb_params(data.parent_idxs, data.leaf_idxs)
-
-        # find reasonable initial valuse by taking the mean of the base normal
-        # distribution and transforming it
-        y0 = Array{Float64}(n-1)
-        x0 = Array{Float32}(n)
-        for j in 1:n-1
-            y0[j] = clamp(logistic(sinh(data.alpha[j]) + data.mu[j]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
-        end
-        t = HSBTransform(data.parent_idxs, data.leaf_idxs)
-        hsb_transform!(t, y0, x0, Val{true})
-
-        lock(mut)
-        la_param_values[i, 1, :] = data.mu
-        la_param_values[i, 2, :] = sigma
-        la_param_values[i, 3, :] = data.alpha
-
-        efflen_values[i, :] = data.efflens
-
-        left_index_values[i, :]  = left_index
-        right_index_values[i, :] = right_index
-        leaf_index_values[i, :]  = leaf_index
-
-        x0_values[i, :] = x0
-        next!(prog)
-        unlock(mut)
-    end
-
-    # this allocates a great deal very quickly which may not be dealt with in time
-    gc()
-
-    var_names = [:la_param,
-                 :efflen,
-                 :left_index,
-                 :right_index,
-                 :leaf_index]
-    var_values = Any[la_param_values,
-                     efflen_values,
-                     left_index_values,
-                     right_index_values,
-                     leaf_index_values]
-
-    variables = Dict{Symbol, PyObject}()
-    init_feed_dict = Dict{Any, Any}()
-    for (name, val) in zip(var_names, var_values)
-        typ = eltype(val) == Float32 ? tf.float32 : tf.int32
-        var_init = tf.placeholder(typ, shape=size(val))
-        var      = tf.Variable(var_init)
-        variables[name] = var
-        init_feed_dict[var_init] = val
-    end
-
-    return LoadedSamples(
-        efflen_values,
-        x0_values,
-        la_param_values,
-        left_index_values,
-        right_index_values,
-        leaf_index_values,
-        variables,
-        init_feed_dict,
-        Vector{String}[], String[])
 end
 
 

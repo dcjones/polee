@@ -15,7 +15,7 @@ unshift!(PyVector(pyimport("sys")["path"]), Pkg.dir("Polee", "src"))
 @pyimport edward.util as edutil
 tfutil.reveal_undocumented("edward.util.graphs")
 # @pyimport edward.util.graphs as edgraphs
-@pyimport rnaseq_approx_likelihood
+@pyimport polee as polee_py
 
 
 using ArgParse

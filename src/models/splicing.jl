@@ -63,10 +63,10 @@ function approximate_splicing_likelihood(input::ModelInput)
 
     # Approximation
 
-    x_feature_loc = rnaseq_approx_likelihood.ImproperPrior(
+    x_feature_loc = polee_py.ImproperPrior(
         value=tf.zeros([num_samples, num_features]))
 
-    x_feature_scale = rnaseq_approx_likelihood.ImproperPrior(
+    x_feature_scale = polee_py.ImproperPrior(
         value=tf.zeros([num_samples, num_features]))
 
     x_feature = edmodels.NormalWithSoftplusScale(

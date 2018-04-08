@@ -305,11 +305,9 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
 
     w = edmodels.Normal(loc=tf.zeros([num_components, num_features]),
                         scale=tf.fill([num_components, num_features], 1.0f0))
-    # w = rnaseq_approx_likelihood.ImproperPrior(value=tf.zeros([num_components, num_features]))
 
     z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
                         scale=tf.fill([num_samples, num_components], 1.0f0))
-    # z = rnaseq_approx_likelihood.ImproperPrior(value=tf.zeros([num_samples, num_components]))
 
     mu_pca = tf.matmul(z, w)
     # mu_pca = tf_print_span(mu_pca, "mu_pca span")
@@ -332,7 +330,7 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
     # x_feature_ = tf.Print(x_feature, [x_feature])
     # x_feature_ = tf_print_span(x_feature, "x_feature")
 
-    approxlik = rnaseq_approx_likelihood.ApproximatedLikelihood(
+    approxlik = polee_py.ApproximatedLikelihood(
         edmodels.NormalWithSoftplusScale(
             loc=splice_loc_param, scale=splice_scale_param),
         x_mu + x_err)

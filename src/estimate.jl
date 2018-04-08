@@ -302,7 +302,7 @@ function RNASeqApproxLikelihood(input::ModelInput, x)
         input.loaded_samples.variables[:leaf_index]
     ]
 
-    return rnaseq_approx_likelihood.RNASeqApproxLikelihood(
+    return polee_py.RNASeqApproxLikelihood(
             x=x,
             efflens=input.loaded_samples.variables[:efflen],
             la_params=input.loaded_samples.variables[:la_param],
@@ -318,7 +318,7 @@ function rnaseq_approx_likelihood_sampler(input::ModelInput)
         input.loaded_samples.variables[:leaf_index]
     ]
 
-    return rnaseq_approx_likelihood.rnaseq_approx_likelihood_sampler(
+    return polee_py.rnaseq_approx_likelihood_sampler(
         efflens=input.loaded_samples.variables[:efflen],
         la_params=input.loaded_samples.variables[:la_param],
         hsb_params=hsb_params)

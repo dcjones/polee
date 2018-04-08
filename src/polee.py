@@ -1,6 +1,7 @@
 
 import numpy as np
 import tensorflow as tf
+import os
 from tensorflow.python.framework import ops
 from tensorflow.contrib import distributions
 from tensorflow.contrib import framework
@@ -8,8 +9,9 @@ import edward
 from queue import Queue
 import sys
 
-# TODO: compute this path
-inverse_hsb_op_module = tf.load_op_library("/home/dcjones/prj/polee/src/tensorflow_ext/hsb_ops.so")
+polee_src_path = os.path.dirname(os.path.realpath(__file__))
+ext_path = os.path.join(polee_src_path, "tensorflow_ext", "hsb_ops.so")
+inverse_hsb_op_module = tf.load_op_library(ext_path)
 
 @ops.RegisterGradient("InvHSB")
 def _inv_hsb_grad(op, grad):
@@ -112,34 +114,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keepdims=True)
         x_efflen = x_scaled / x_scaled_sum
 
-        # Approximated likelihood assumes a uniform prior over x * efflens. We
-        # want instead a uniform prior over x (i.e. a function proportional to
-        # the likelihood). To get that, we correct the approximate likelihood
-        # using the log absolute determinant of the jacobian for the effective
-        # length transformation.
-        # efflen_ladj = tf.reduce_sum(tf.log(self.efflens), axis=1) - n * tf.log(tf.squeeze(x_scaled_sum))
-
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
-
-        # leafindex = self.invhsb_params[0]
-        # left_child_rightmost_index  = self.invhsb_params[1]
-        # left_child_leftmost_index   = self.invhsb_params[2]
-        # right_child_rightmost_index = self.invhsb_params[3]
-        # right_child_leftmost_index  = self.invhsb_params[4]
-
-        # x_permed = tf.gather_nd(x_efflen, leafindex)
-        # x_permed = tf.to_double(x_permed)
-
-        # x_cumsum = tf.cumsum(x_permed, axis=1)
-        # x_cumsum = tf.concat([tf.zeros([num_samples, 1], tf.float64), x_cumsum], axis=1)
-
-        # left_node_values  = tf.log(tf.to_float(tf.gather_nd(x_cumsum, left_child_rightmost_index) -
-        #                                        tf.gather_nd(x_cumsum, left_child_leftmost_index)))
-        # right_node_values = tf.log(tf.to_float(tf.gather_nd(x_cumsum, right_child_rightmost_index) -
-        #                                        tf.gather_nd(x_cumsum, right_child_leftmost_index)))
-
-        # y_logit = tf.identity(left_node_values - right_node_values, name="y_logit")
 
         y_logit = inverse_hsb_op_module.inv_hsb(
             x_efflen, self.left_index, self.right_index, self.leaf_index)
@@ -165,53 +141,6 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):
     def __init__(self, *args, **kwargs):
         super(RNASeqApproxLikelihood, self).__init__(*args, **kwargs)
-
-
-# Values for gate_gradients.
-GATE_NONE = 0
-GATE_OP = 1
-GATE_GRAPH = 2
-
-# Taken from: https://github.com/blei-lab/edward/issues/708
-class ClippedAdamOptimizer(tf.train.AdamOptimizer):
-    """
-    Clipped version adam optimizer, where its gradient is clipped by value
-    so that it cannot be too large.
-    """
-    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999,
-                 epsilon=1e-08, use_locking=False,
-                 clip_func=lambda x: tf.clip_by_value(x, 1.0e-4, 1.0e4),
-                 name='Adam'):
-        super(ClippedAdamOptimizer, self).__init__(
-            learning_rate, beta1, beta2, epsilon, use_locking, name)
-        self._clip_func = clip_func
-
-    def compute_gradients(self, loss, var_list=None, gate_gradients=GATE_OP,
-                          aggregation_method=None,
-                          colocate_gradients_with_ops=False, grad_loss=None):
-        print("ClippedAdamOptimizer compute_gradients")
-        sys.exit()
-        grad_and_vars = super(ClippedAdamOptimizer, self).compute_gradients(
-            loss, var_list, gate_gradients, aggregation_method,
-            colocate_gradients_with_ops, grad_loss)
-
-        for g in grad_and_vars.keys():
-            print(g)
-            v = grad_and_vars[v]
-            grad_and_vars[g] = tf.Print(v, [tf.reduce_min(v), tf.reduce_max(v)], "grad extrema")
-
-        # clip func
-        if self._clip_func is None:
-            return grad_and_vars
-        return [(self._clip_func(g, v) if g is not None else (g, v)
-                for g, v in grad_and_vars)]
-
-
-class ClippedKumaraswamy(edward.models.Kumaraswamy):
-    def __init__(self, alpha, beta, name="ClippedKumaraswamy"):
-        super(ClippedKumaraswamy, self).__init__(alpha, beta, name=name)
-        # self._value = tf.clip_by_value(self._value, 1e-7, 1 - 1e-7)
-        self._value = tf.clip_by_value(self._value, 1e-2, 1 - 1e-2)
 
 
 class ImproperPriorDist(distributions.Distribution):

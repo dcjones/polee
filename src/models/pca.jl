@@ -415,27 +415,15 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
         qz_param = tf.Variable(tf.random_normal([num_samples, num_components]), name="qz")
 
         var_maps = Dict(
-            x_feature => edmodels.PointMass(
+            x_err => edmodels.PointMass(
                 tf.Variable(tf.zeros([num_samples, num_features]), name="qx_feature")),
             mu_bias   => edmodels.PointMass(
-                tf.Variable(tf.zeros([1, num_features]), name="qmu_bias")),
-            x_feature_sigma_sq => edmodels.PointMass(
-                tf.nn[:softplus](tf.Variable(tf.fill([num_features], 0.1f0), name="qx_feature_sigma_sq"))),
+                tf.Variable(tf.expand_dims(tf.reduce_mean(splice_loc_param, 0), 0), name="qmu_bias")),
+            x_err_sigma => edmodels.PointMass(
+                tf.nn[:softplus](tf.Variable(tf.fill([1, num_features], 0.0f0), name="qx_feature_sigma"))),
             w => edmodels.PointMass(
-                tf.Variable(tf.random_normal([num_features, num_components]), name="qw")),
+                tf.Variable(tf.random_normal([num_components, num_features]), name="qw")),
             z => edmodels.PointMass(qz_param),
-
-            vars[:x] =>
-                edmodels.PointMass(tf.Variable(tf.fill([num_samples, n], log(1.0f0/n)), name="qx")),
-            vars[:x_sigma_sq] =>
-                edmodels.PointMass(tf.nn[:softplus](tf.Variable(tf.fill([n], 0.1), name="qx_sigma_sq"))),
-            vars[:x_component_mu] =>
-                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component_mu]][:mean](), name="qx_component_mu")),
-            vars[:x_component_sigma_sq] =>
-                edmodels.PointMass(tf.nn[:softplus](tf.Variable(
-                    tf.fill(var_approximations[vars[:x_component_sigma_sq]][:get_shape](), 0.1f0), name="qx_component_sigma_sq"))),
-            vars[:x_component] =>
-                edmodels.PointMass(tf.Variable(var_approximations[vars[:x_component]][:mean](), name="qx_component"))
         )
 
         inference = ed.MAP(var_maps, data=data)

@@ -265,10 +265,13 @@ function genomic_to_transcriptomic(t::Transcript, position::Integer)
 end
 
 
-function get_cassette_exons(ts::Transcripts)
-    # build set of introns
+"""
+Return a new IntervalCollection containing introns, with metadata containing
+transcripts id for each transcript including that intron.
+"""
+function get_introns(ts::Transcripts)
     introns = IntervalCollection{Vector{Int}}()
-    @time for t in ts
+    for t in ts
         for i in 2:length(t.metadata.exons)
             first = t.metadata.exons[i-1].last + 1
             last  = t.metadata.exons[i].first - 1
@@ -285,6 +288,14 @@ function get_cassette_exons(ts::Transcripts)
         end
     end
 
+    return introns
+end
+
+function get_cassette_exons(ts::Transcripts)
+    get_cassette_exons(ts, get_introns(ts))
+end
+
+function get_cassette_exons(ts::Transcripts, introns::IntervalCollection{Vector{Int}})
     function match_strand_exon(a, b)
         return a.strand == b.strand &&
                a.metadata[1] == b.metadata[1] &&
@@ -293,7 +304,7 @@ function get_cassette_exons(ts::Transcripts)
 
     # build a set representing introns flanking internal exons
     flanking_introns = IntervalCollection{Tuple{Int, Int, Vector{Int}}}()
-    @time for t in ts
+    for t in ts
         i = 3
         while i <= length(t.metadata.exons)
             e1 = t.metadata.exons[i-2]
@@ -325,6 +336,113 @@ function get_cassette_exons(ts::Transcripts)
     end
 
     return cassette_exons
+end
+
+
+function get_alt_donor_acceptor_sites(ts::Transcripts)
+
+    function match_strand(a, b)
+        return a.strand == b.strand
+    end
+
+    # hold the exons transcript number along with intron flanks, if it has them.
+    const IntronFlanks = Tuple{Int, Nullable{Int}, Nullable{Int}}
+
+    exons = IntervalCollection{IntronFlanks}()
+    for t in ts
+        for i in 1:length(t.metadata.exons)
+            exon = Interval{IntronFlanks}(
+                t.seqname, t.metadata.exons[i].first, t.metadata.exons[i].last,
+                t.strand,
+                (t.metadata.id,
+                 i == 1 ?
+                     Nullable{Int}() : Nullable{Int}(t.metadata.exons[i-1].last+1),
+                 i == length(t.metadata.exons) ?
+                     Nullable{Int}() : Nullable{Int}(t.metadata.exons[i+1].first-1)))
+
+            push!(exons, exon)
+        end
+    end
+
+    int_count = 0
+    push_count = 0
+
+    # How do we store alt acc/don sites?
+    # IntervalCollection indexed by what? 
+
+    # interval contains the shorter intron. First two metadata fields contain
+    # the longer intron. Second two fields give the transcript numbers for those
+    # using the shorter and longer introns respectively.
+    const AltAccDonMetadata = Tuple{Int, Int, Vector{Int}, Vector{Int}}
+    alt_accdon_sites = IntervalCollection{AltAccDonMetadata}()
+
+    for (a, b) in eachoverlap(exons, exons, filter=match_strand)
+        # skip exons without flanks for now
+        if isnull(a.metadata[2]) || isnull(a.metadata[3]) ||
+           isnull(b.metadata[2]) || isnull(b.metadata[3])
+            continue
+        end
+
+        # alternate acceptor/donor site case 1
+        #
+        #    ...aaaaa--------------|
+        #    ...bbbbbbb------------|
+        # or
+        #    ...aaaaaaa------------|
+        #    ...bbbbb--------------|
+        #
+        if get(a.metadata[3]) == get(b.metadata[3]) && a.last != b.last
+            short_last = long_last = get(a.metadata[3])
+            if a.last < b.last
+                short_first, long_first = a.last + 1,    b.last + 1
+                short_tid,   long_tid   = a.metadata[1], b.metadata[1]
+            else
+                long_first, short_first = a.last + 1,    b.last + 1
+                long_tid,   short_tid   = a.metadata[1], b.metadata[1]
+            end
+
+
+        # alternate acceptor/donor site case 2
+        #
+        #    |--------------aaaaa...
+        #    |------------bbbbbbb...
+        # or
+        #    |--------------bbbbb...
+        #    |------------aaaaaaa...
+        #
+        elseif get(a.metadata[2]) == get(b.metadata[2]) && a.first != b.first
+            short_first = long_first = get(a.metadata[2])
+            if a.first > b.first
+                short_last, long_last = b.first - 1,   a.first - 1
+                short_tid,  long_tid  = b.metadata[1], a.metadata[1]
+            else
+                long_last, short_last = b.first - 1,   a.first - 1
+                long_tid,  short_tid  = b.metadata[1], a.metadata[1]
+            end
+        else
+            continue
+        end
+
+        key = Interval{Tuple{Int, Int}}(
+            a.seqname, short_first, short_last, a.strand, (long_first, long_last))
+        entry = findfirst(alt_accdon_sites, key,
+            filter=(a,b) -> a.strand == b.strand &&
+                a.metadata[1] == b.metadata[1] &&
+                a.metadata[2] == b.metadata[2])
+        if isnull(entry)
+            entry = Interval{AltAccDonMetadata}(
+                a.seqname, short_first, short_last, a.strand,
+                (Int(long_first), Int(long_last), Int[short_tid], Int[long_tid]))
+            push!(alt_accdon_sites, entry)
+        else
+            entry_ = get(entry)
+            push!(entry_.metadata[3], short_tid)
+            push!(entry_.metadata[4], long_tid)
+        end
+    end
+
+    # TODO: maybe put these in a simpler data structure?
+    return alt_accdon_sites
 end
 
 

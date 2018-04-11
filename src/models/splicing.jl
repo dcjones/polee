@@ -97,3 +97,123 @@ function approximate_splicing_likelihood(input::ModelInput)
     return (sess[:run](qx_feature_loc), sess[:run](qx_feature_scale))
 end
 
+
+"""
+Identify alternative splicing features (e.g. cassette exons), add to the gene
+database, and return.
+
+Returns:
+    num_features: Number of alternative splicing features.
+    feature_idxs and feature_transcript_idxs: together a mapping between
+        features and transcripts which include that feature
+    antifeature_idxs and antifeature_transcript_idxs: together a mapping between
+        features and transcripts which exclude that feature
+"""
+function splicing_features(input::ModelInput)
+    @time cassette_exons = get_cassette_exons(input.ts)
+    @time alt_donor_acceptor = get_alt_donor_acceptor_sites(input.ts)
+    exit()
+    # TODO: alt acceptor
+    # TODO: alt donor
+    # TODO: mutually exclusive exons
+    # TODO: 5'-most exon
+    # TODO: 3'-most exon
+
+    # TODO: move this to another function
+    db = input.gene_db
+    SQLite.execute!(db, "drop table if exists splicing_features")
+    SQLite.execute!(db,
+        """
+        create table splicing_features
+        (
+            feature_num INT PRIMARY KEY,
+            type TEXT,
+            seqname TEXT,
+            included_first INT,
+            included_last INT,
+            excluded_first INT,
+            excluded_last INT
+        )
+        """)
+    ins_stmt = SQLite.Stmt(db,
+        "insert into splicing_features values (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
+    SQLite.execute!(db, "begin transaction")
+    for (i, (intron, flanks)) in  enumerate(cassette_exons)
+        SQLite.bind!(ins_stmt, 1, i)
+        SQLite.bind!(ins_stmt, 2, "cassette_exon")
+        SQLite.bind!(ins_stmt, 3, intron.seqname)
+        SQLite.bind!(ins_stmt, 4, flanks.metadata[1])
+        SQLite.bind!(ins_stmt, 5, flanks.metadata[2])
+        SQLite.bind!(ins_stmt, 6, flanks.first)
+        SQLite.bind!(ins_stmt, 7, flanks.last)
+        SQLite.execute!(ins_stmt)
+    end
+    SQLite.execute!(db, "end transaction")
+
+    SQLite.execute!(db, "drop table if exists splicing_feature_including_transcripts")
+    SQLite.execute!(db,
+        """
+        create table splicing_feature_including_transcripts
+        (
+            feature_num INT KEY,
+            transcript_num INT
+        )
+        """)
+
+    SQLite.execute!(db, "drop table if exists splicing_feature_excluding_transcripts")
+    SQLite.execute!(db,
+        """
+        create table splicing_feature_excluding_transcripts
+        (
+            feature_num INT KEY,
+            transcript_num INT
+        )
+        """)
+
+    inc_ins_stmt = SQLite.Stmt(db,
+        "insert into splicing_feature_including_transcripts values (?1, ?2)")
+    exc_ins_stmt = SQLite.Stmt(db,
+        "insert into splicing_feature_excluding_transcripts values (?1, ?2)")
+    SQLite.execute!(db, "begin transaction")
+    for (i, (intron, flanks)) in  enumerate(cassette_exons)
+        SQLite.bind!(inc_ins_stmt, 1, i)
+        SQLite.bind!(exc_ins_stmt, 1, i)
+
+        for id in flanks.metadata[3]
+            SQLite.bind!(inc_ins_stmt, 2, id)
+            SQLite.execute!(inc_ins_stmt)
+        end
+
+        for id in intron.metadata
+            SQLite.bind!(exc_ins_stmt, 2, id)
+            SQLite.execute!(exc_ins_stmt)
+        end
+    end
+    SQLite.execute!(db, "end transaction")
+
+    feature_idxs = Int32[]
+    feature_transcript_idxs = Int32[]
+    antifeature_idxs = Int32[]
+    antifeature_transcript_idxs = Int32[]
+    num_features = length(cassette_exons)
+
+    for (i, (intron, flanks)) in  enumerate(cassette_exons)
+        @assert !isempty(intron.metadata)
+        @assert !isempty(flanks.metadata[3])
+
+        for id in flanks.metadata[3]
+            push!(feature_idxs, i)
+            push!(feature_transcript_idxs, id)
+        end
+
+        for id in intron.metadata
+            push!(antifeature_idxs, i)
+            push!(antifeature_transcript_idxs, id)
+        end
+    end
+
+    return num_features,
+           feature_idxs, feature_transcript_idxs,
+           antifeature_idxs, antifeature_transcript_idxs
+end
+

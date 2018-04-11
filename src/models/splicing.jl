@@ -33,7 +33,6 @@ function transcript_expression_to_splicing_log_ratios(
     end
 
     splice_lr = tf.squeeze(tf.stack(splice_lrs), axis=-1)
-    splice_lr = tf_print_span(splice_lr, "splice_lr")
     return splice_lr
 end
 

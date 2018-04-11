@@ -180,13 +180,12 @@ end
 
 
 function estimate_splicing_linear_regression(input::ModelInput)
+
+    splice_loc_param, splice_scale_param = approximate_splicing_likelihood(input)
+
     num_samples, n = size(input.loaded_samples.x0_values)
+    num_features = size(splice_loc_param, 2)
     num_factors, factoridx, z = build_linear_regression_design_matrix(input, false)
-
-    (num_features,
-     feature_idxs, feature_transcript_idxs,
-     antifeature_idxs, antifeature_transcript_idxs) = splicing_features(input)
-
 
     # bias
     # ----
@@ -196,7 +195,6 @@ function estimate_splicing_linear_regression(input::ModelInput)
 
     mu_bias = edmodels.Normal(loc=tf.fill([1, num_features], w_bias_mu0),
                               scale=tf.fill([1, num_features], w_bias_sigma0))
-
 
     # regression
     # ----------
@@ -208,27 +206,52 @@ function estimate_splicing_linear_regression(input::ModelInput)
 
     x_mu = tf.add(mu_bias, mu_reg)
 
-    vars, var_approximations, data =
-        model_nondisjoint_feature_expression(input, num_features,
-                                            feature_idxs, feature_transcript_idxs,
-                                            antifeature_idxs, antifeature_transcript_idxs,
-                                            x_mu)
+    x_err_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[1, num_features])
+    x_err_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[1, num_features])
+    x_err_sigma = edmodels.InverseGamma(x_err_sigma_alpha0, x_err_sigma_beta0, name="x_err_sigma")
+
+    # x_err = edmodels.Normal(loc=tf.fill([num_samples, num_features], 0.0f0), scale=x_err_sigma, name="x_err")
+    x_err = edmodels.StudentT(df=10.0, loc=tf.fill([num_samples, num_features], 0.0f0), scale=x_err_sigma, name="x_err")
+
+    approxlik = polee_py.ApproximatedLikelihood(
+        edmodels.NormalWithSoftplusScale(
+            loc=splice_loc_param, scale=splice_scale_param),
+        x_mu + x_err)
+
+    data = Dict(approxlik => zeros(Float32, (num_samples, 0)))
 
     # inference
     # ---------
 
-    qmu_bias_loc = tf.Variable(tf.zeros([1, num_features]), name="qmu_bias_loc")
+    qx_err_loc = tf.Variable(tf.zeros([num_samples, num_features]), name="qx_err_loc")
+    qx_err_softplus_scale = tf.Variable(tf.fill([num_samples, num_features], -2.0), name="qx_err_softplus_scale")
+    qx_err = edmodels.NormalWithSoftplusScale(loc=qx_err_loc, scale=qx_err_softplus_scale, name="qx_err")
+
+    qx_err_sigma_mu_param =
+        tf.Variable(tf.fill([1, num_features], -3.0f0), name="qx_sigma_mu_param")
+    qx_err_sigma_sigma_param =
+        tf.Variable(tf.fill([1, num_features], -1.0f0), name="qx_sigma_sigma_param")
+    qx_err_sigma = edmodels.TransformedDistribution(
+        distribution=edmodels.NormalWithSoftplusScale(
+            qx_err_sigma_mu_param, qx_err_sigma_sigma_param),
+        bijector=tfdist.bijectors[:Softplus](),
+        name="qx_err_sigma_sq")
+
+    qmu_bias_loc = tf.Variable(tf.reduce_mean(splice_loc_param, 0), name="qmu_bias_loc")
     qmu_bias_softplus_scale = tf.Variable(tf.fill([1, num_features], -1.0f0), name="qmu_bias_softplus_scale")
-    qmu_bias = edmodels.NormalWithSoftplusScale(loc=qmu_bias_loc, scale=qmu_bias_softplus_scale)
+    qmu_bias = edmodels.NormalWithSoftplusScale(loc=qmu_bias_loc,
+                                                scale=qmu_bias_softplus_scale,
+                                                name="qmu_bias")
 
     qw_loc = tf.Variable(tf.zeros([num_factors, num_features]), name="qw_loc")
     qw_softplus_scale = tf.Variable(tf.fill([num_factors, num_features], -1.0f0), name="qw_softplus_scale")
     qw = edmodels.NormalWithSoftplusScale(loc=qw_loc, scale=qw_softplus_scale)
 
-    vars[:w] = w
-    vars[:qmu_bias] = mu_bias
-    var_approximations[w] = qw
+    var_approximations = Dict()
+    var_approximations[x_err] = qx_err
     var_approximations[mu_bias] = qmu_bias
+    var_approximations[x_err_sigma] = qx_err_sigma
+    var_approximations[w] = qw
 
     inference = ed.KLqp(latent_vars=var_approximations, data=data)
 
@@ -274,7 +297,7 @@ function estimate_splicing_linear_regression(input::ModelInput)
     #     end
     # end
 
-    error_sigma = zeros(Float32, size(mean_est))
+    error_sigma = sess[:run](qx_err_sigma[:quantile](0.5))
 
     @time write_effects(output_filename, factoridx,
                         est, sigma_est,

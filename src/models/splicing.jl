@@ -111,7 +111,13 @@ Returns:
 """
 function splicing_features(input::ModelInput)
     @time cassette_exons = get_cassette_exons(input.ts)
-    @time alt_donor_acceptor = get_alt_donor_acceptor_sites(input.ts)
+    @time alt_donor_acceptor, retained_introns = get_alt_donor_acceptor_sites(input.ts)
+
+
+    @show length(cassette_exons)
+    @show length(alt_donor_acceptor)
+    @show length(retained_introns)
+
     exit()
     # TODO: alt acceptor
     # TODO: alt donor

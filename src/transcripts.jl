@@ -364,17 +364,14 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
         end
     end
 
-    int_count = 0
-    push_count = 0
-
-    # How do we store alt acc/don sites?
-    # IntervalCollection indexed by what? 
-
     # interval contains the shorter intron. First two metadata fields contain
     # the longer intron. Second two fields give the transcript numbers for those
     # using the shorter and longer introns respectively.
     const AltAccDonMetadata = Tuple{Int, Int, Vector{Int}, Vector{Int}}
     alt_accdon_sites = IntervalCollection{AltAccDonMetadata}()
+
+    const RetIntronMetadata = Tuple{Vector{Int}, Vector{Int}}
+    retained_introns = IntervalCollection{RetIntronMetadata}()
 
     for (a, b) in eachoverlap(exons, exons, filter=match_strand)
         # skip exons without flanks for now
@@ -382,6 +379,9 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
            isnull(b.metadata[2]) || isnull(b.metadata[3])
             continue
         end
+
+        has_alt_accdon = false
+        has_retained_intron = false
 
         # alternate acceptor/donor site case 1
         #
@@ -400,7 +400,7 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
                 long_first, short_first = a.last + 1,    b.last + 1
                 long_tid,   short_tid   = a.metadata[1], b.metadata[1]
             end
-
+            has_alt_accdon = true
 
         # alternate acceptor/donor site case 2
         #
@@ -419,30 +419,89 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
                 long_last, short_last = b.first - 1,   a.first - 1
                 long_tid,  short_tid  = b.metadata[1], a.metadata[1]
             end
-        else
-            continue
+            has_alt_accdon = true
+
+        # retained intron case 1
+        #
+        #    aaaaa-------|
+        #    bbbbbbbbbbbbbbb...
+        # or
+        #    bbbbb-------|
+        #    aaaaaaaaaaaaaaa...
+        elseif get(a.metadata[3]) < b.last
+            retained_intron_first = a.last + 1
+            retained_intron_last  = get(a.metadata[3])
+            retained_intron_include_tid = b.metadata[1]
+            retained_intron_exclude_tid = a.metadata[1]
+            has_retained_intron = true
+        elseif get(b.metadata[3]) < a.last
+            retained_intron_first = b.last + 1
+            retained_intron_last  = get(b.metadata[3])
+            retained_intron_include_tid = a.metadata[1]
+            retained_intron_exclude_tid = b.metadata[1]
+            has_retained_intron = true
+
+        # retained intron case 1
+        #
+        #     |-------aaaaa
+        #    bbbbbbbbbbbbbbb
+        # or
+        #     |-------bbbbb
+        #    aaaaaaaaaaaaaaa
+        elseif get(a.metadata[2]) > b.first
+            retained_intron_first = get(a.metadata[2])
+            retained_intron_last  = a.first - 1
+            retained_intron_include_tid = b.metadata[1]
+            retained_intron_exclude_tid = a.metadata[1]
+            has_retained_intron = true
+        elseif get(b.metadata[2]) > a.last
+            retained_intron_first = get(b.metadata[2])
+            retained_intron_last  = b.first - 1
+            retained_intron_include_tid = a.metadata[1]
+            retained_intron_exclude_tid = b.metadata[1]
+            has_retained_intron = true
         end
 
-        key = Interval{Tuple{Int, Int}}(
-            a.seqname, short_first, short_last, a.strand, (long_first, long_last))
-        entry = findfirst(alt_accdon_sites, key,
-            filter=(a,b) -> a.strand == b.strand &&
-                a.metadata[1] == b.metadata[1] &&
-                a.metadata[2] == b.metadata[2])
-        if isnull(entry)
-            entry = Interval{AltAccDonMetadata}(
-                a.seqname, short_first, short_last, a.strand,
-                (Int(long_first), Int(long_last), Int[short_tid], Int[long_tid]))
-            push!(alt_accdon_sites, entry)
-        else
-            entry_ = get(entry)
-            push!(entry_.metadata[3], short_tid)
-            push!(entry_.metadata[4], long_tid)
+        if has_alt_accdon
+            key = Interval{Tuple{Int, Int}}(
+                a.seqname, short_first, short_last, a.strand, (long_first, long_last))
+            entry = findfirst(alt_accdon_sites, key,
+                filter=(a,b) -> a.strand == b.strand &&
+                    a.metadata[1] == b.metadata[1] &&
+                    a.metadata[2] == b.metadata[2])
+            if isnull(entry)
+                entry = Interval{AltAccDonMetadata}(
+                    a.seqname, short_first, short_last, a.strand,
+                    (Int(long_first), Int(long_last), Int[short_tid], Int[long_tid]))
+                push!(alt_accdon_sites, entry)
+            else
+                entry_ = get(entry)
+                push!(entry_.metadata[3], short_tid)
+                push!(entry_.metadata[4], long_tid)
+            end
+        elseif has_retained_intron
+            key = Interval{Void}(
+                a.seqname, retained_intron_first, retained_intron_last,
+                a.strand, nothing)
+            entry = findfirst(retained_introns, key,
+                filter=(a,b) -> a.strand == b.strand)
+            if isnull(entry)
+                entry = Interval{RetIntronMetadata}(
+                    a.seqname, retained_intron_first, retained_intron_last,
+                    a.strand, (
+                        Int[retained_intron_include_tid],
+                        Int[retained_intron_exclude_tid]))
+                push!(retained_introns, entry)
+            else
+                entry_ = get(entry)
+                push!(entry_.metadata[1], retained_intron_include_tid)
+                push!(entry_.metadata[2], retained_intron_exclude_tid)
+            end
         end
     end
 
     # TODO: maybe put these in a simpler data structure?
-    return alt_accdon_sites
+    return alt_accdon_sites, retained_introns
 end
 
 

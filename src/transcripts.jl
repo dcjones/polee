@@ -367,10 +367,10 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
     # interval contains the shorter intron. First two metadata fields contain
     # the longer intron. Second two fields give the transcript numbers for those
     # using the shorter and longer introns respectively.
-    const AltAccDonMetadata = Tuple{Int, Int, Vector{Int}, Vector{Int}}
+    const AltAccDonMetadata = Tuple{Int, Int, Set{Int}, Set{Int}}
     alt_accdon_sites = IntervalCollection{AltAccDonMetadata}()
 
-    const RetIntronMetadata = Tuple{Vector{Int}, Vector{Int}}
+    const RetIntronMetadata = Tuple{Set{Int}, Set{Int}}
     retained_introns = IntervalCollection{RetIntronMetadata}()
 
     for (a, b) in eachoverlap(exons, exons, filter=match_strand)
@@ -469,10 +469,11 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
                 filter=(a,b) -> a.strand == b.strand &&
                     a.metadata[1] == b.metadata[1] &&
                     a.metadata[2] == b.metadata[2])
+            @assert short_tid != long_tid
             if isnull(entry)
                 entry = Interval{AltAccDonMetadata}(
                     a.seqname, short_first, short_last, a.strand,
-                    (Int(long_first), Int(long_last), Int[short_tid], Int[long_tid]))
+                    (Int(long_first), Int(long_last), Set{Int}(short_tid), Set{Int}(long_tid)))
                 push!(alt_accdon_sites, entry)
             else
                 entry_ = get(entry)
@@ -485,12 +486,13 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
                 a.strand, nothing)
             entry = findfirst(retained_introns, key,
                 filter=(a,b) -> a.strand == b.strand)
+            @assert retained_intron_exclude_tid != retained_intron_include_tid
             if isnull(entry)
                 entry = Interval{RetIntronMetadata}(
                     a.seqname, retained_intron_first, retained_intron_last,
                     a.strand, (
-                        Int[retained_intron_include_tid],
-                        Int[retained_intron_exclude_tid]))
+                        Set{Int}(retained_intron_include_tid),
+                        Set{Int}(retained_intron_exclude_tid)))
                 push!(retained_introns, entry)
             else
                 entry_ = get(entry)
@@ -500,7 +502,6 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
         end
     end
 
-    # TODO: maybe put these in a simpler data structure?
     return alt_accdon_sites, retained_introns
 end
 

@@ -162,7 +162,6 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
     init_feed_dict = Dict{Any, Any}()
     for (name, val) in zip(var_names, var_values)
         typ = eltype(val) == Float32 ? tf.float32 : tf.int32
-        @show (name, typ, size(val))
         var_init = tf.placeholder(typ, shape=size(val))
         var      = tf.Variable(var_init)
         variables[name] = var
@@ -199,16 +198,21 @@ end
 Construct a python RNASeqApproxLikelihood class.
 """
 function RNASeqApproxLikelihood(input::ModelInput, x)
+    return RNASeqApproxLikelihood(input.load_samples, x)
+end
+
+
+function RNASeqApproxLikelihood(loaded_samples::LoadedSamples, x)
     invhsb_params = [
-        input.loaded_samples.variables[:left_index],
-        input.loaded_samples.variables[:right_index],
-        input.loaded_samples.variables[:leaf_index]
+        loaded_samples.variables[:left_index],
+        loaded_samples.variables[:right_index],
+        loaded_samples.variables[:leaf_index]
     ]
 
     return polee_py.RNASeqApproxLikelihood(
             x=x,
-            efflens=input.loaded_samples.variables[:efflen],
-            la_params=input.loaded_samples.variables[:la_param],
+            efflens=loaded_samples.variables[:efflen],
+            la_params=loaded_samples.variables[:la_param],
             invhsb_params=invhsb_params,
             value=Float32[])
 end
@@ -350,7 +354,12 @@ end
 This is essentiall Inference.run from edward, but customized to avoid
 reinitializing variables on each iteration.
 """
-function run_inference(input, inference, n_iter, optimizer)
+function run_inference(input::ModelInput, inference, n_iter, optimizer)
+    return run_inference(input.loaded_samples.init_feed_dict, inference, n_iter, optimizer)
+end
+
+
+function run_inference(init_feed_dict::Dict, inference, n_iter, optimizer)
     sess = ed.get_session()
 
     # enable XLA
@@ -364,11 +373,19 @@ function run_inference(input, inference, n_iter, optimizer)
     inference[:initialize](n_iter=n_iter, optimizer=optimizer, auto_transform=false, logdir="log")
     # inference[:initialize](n_iter=n_iter)
 
-    sess[:run](tf.global_variables_initializer(),
-            feed_dict=input.loaded_samples.init_feed_dict)
+    sess[:run](tf.global_variables_initializer(), feed_dict=init_feed_dict)
 
     for iter in 1:n_iter
-        info_dict = inference[:update]()
+        # try
+            info_dict = inference[:update]()
+        # catch e
+        #     @show e.T
+        #     @show e.msg
+        #     @show e.val["message"]
+        #     # @show typeof(e)
+        #     # @show fieldnames(e)
+        #     throw()
+        # end
         inference[:print_progress](info_dict)
     end
 

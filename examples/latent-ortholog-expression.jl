@@ -10,6 +10,7 @@ using PyCall
 using YAML
 
 @pyimport tensorflow as tf
+@pyimport tensorflow.contrib.distributions as tfdist
 @pyimport edward as ed
 @pyimport edward.models as edmodels
 
@@ -80,16 +81,17 @@ function main()
     num_orth_groups = length(ortholog_groups)
     println("Read ", num_orth_groups, " ortholog groups")
 
-    latent_vars = Dict()
     data = Dict()
 
-    # TODO: I think this really should be a hierarchical model. Since it's on a
-    # floating scale, it may not be super meaningful otherwise.
-    x_og_mu0 = log(1.0f0/num_orth_groups)
-    x_og_sigma0 = 5.0
-    x_og = edmodels.Normal(
-        loc=tf.fill([num_samples, num_orth_groups], x_og_mu0),
-        scale=x_og_sigma0)
+    num_components = 2
+    x_og, vars, latent_vars = orthogroup_pca(
+        num_samples, num_orth_groups, num_components)
+
+    # x_og_mu0 = log(1.0f0/num_orth_groups)
+    # x_og_sigma0 = 5.0
+    # x_og = edmodels.Normal(
+    #     loc=tf.fill([num_samples, num_orth_groups], x_og_mu0),
+    #     scale=x_og_sigma0)
 
     idxoff = 0
     for taxon_idx in 1:num_taxons
@@ -217,33 +219,105 @@ function main()
     # Inference
     # ---------
 
-    latent_vars[x_og] = edmodels.NormalWithSoftplusScale(
-        loc=tf.Variable(tf.fill([num_samples, num_orth_groups], x_og_mu0)),
-        scale=tf.Variable(tf.fill([num_samples, num_orth_groups], 0.0f0)))
+    # latent_vars[x_og] = edmodels.NormalWithSoftplusScale(
+    #     loc=tf.Variable(tf.fill([num_samples, num_orth_groups], x_og_mu0)),
+    #     scale=tf.Variable(tf.fill([num_samples, num_orth_groups], 0.0f0)))
 
     inference= ed.KLqp(latent_vars, data)
     optimizer = tf.train[:AdamOptimizer](0.05)
 
     init_feed_dict = reduce(merge, [ls.init_feed_dict for ls in species_loaded_samples])
-    Polee.run_inference(init_feed_dict, inference, 1000, optimizer)
+    Polee.run_inference(init_feed_dict, inference, 2000, optimizer)
 
     sess = ed.get_session()
-    open("latent-ortholog-expression.csv", "w") do output
-        println(output, "sample,orthogroup,expression")
-        x_est = sess[:run](latent_vars[x_og][:mean]())
+    z_est = sess[:run](latent_vars[vars[:z]][:mean]())
+
+    open("latent-ortholog-pca.csv", "w") do output
+        print(output, "sample,")
+        println(output, join([string("pc", j) for j in 1:num_components], ','))
         i = 1
         for k in 1:length(species_loaded_samples)
             ls = species_loaded_samples[k]
             for name in ls.sample_names
-                for j in 1:size(x_est, 2)
-                    println(output, name, ",", j, ",", x_est[i, j])
-                end
+                # for j in 1:size(x_est, 2)
+                #     println(output, name, ",", j, ",", x_est[i, j])
+                # end
+                print(output, '"', name, '"', ',')
+                println(output, join(z_est[i,:], ','))
                 i += 1
             end
         end
     end
+
+    # open("latent-ortholog-expression.csv", "w") do output
+    #     println(output, "sample,orthogroup,expression")
+    #     x_est = sess[:run](latent_vars[x_og][:mean]())
+    #     i = 1
+    #     for k in 1:length(species_loaded_samples)
+    #         ls = species_loaded_samples[k]
+    #         for name in ls.sample_names
+    #             for j in 1:size(x_est, 2)
+    #                 println(output, name, ",", j, ",", x_est[i, j])
+    #             end
+    #             i += 1
+    #         end
+    #     end
+    # end
 end
 
+
+function orthogroup_pca(num_samples, num_groups, num_components=2)
+
+    w_bias_mu0 = log(1.0f0/num_groups)
+    w_bias_sigma0 = 5.0f0
+    x_mu_bias = edmodels.Normal(loc=tf.fill([1, num_groups], w_bias_mu0),
+                                scale=tf.fill([1, num_groups], w_bias_sigma0),
+                                name="xmu_bias")
+
+    w = edmodels.Normal(loc=tf.zeros([num_components, num_groups]),
+                        scale=tf.fill([num_components, num_groups], 1.0f0))
+
+    z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
+                        scale=tf.fill([num_samples, num_components], 1.0f0))
+
+    x_mu_pca = tf.matmul(z, w)
+
+    x_err_sigma_alpha0 = tf.constant(Polee.SIGMA_ALPHA0, shape=[1, num_groups])
+    x_err_sigma_beta0 = tf.constant(Polee.SIGMA_BETA0, shape=[1, num_groups])
+    x_err_sigma = edmodels.InverseGamma(x_err_sigma_alpha0, x_err_sigma_beta0, name="x_err_sigma")
+
+    x_err = edmodels.Normal(loc=tf.fill([num_samples, num_groups], 0.0f0), scale=x_err_sigma, name="x_err")
+    x = x_mu_bias + x_mu_pca + x_err
+
+    latent_vars = Dict(
+        w => edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(0.001f0 * tf.random_normal([num_components, num_groups]), name="qw_loc"),
+            scale=tf.Variable(tf.fill([num_components, num_groups], -1.0f0), name="qw_scale")),
+        z => edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(0.001f0 * tf.random_normal([num_samples, num_components]), name="qz_loc"),
+            scale=tf.Variable(tf.fill([num_samples, num_components], -1.0f0), name="qz_scale")),
+        x_mu_bias => edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(tf.fill([1, num_groups], 1.0/num_groups)),
+            scale=tf.Variable(tf.fill([1, num_groups], -1.0f0))),
+        x_err_sigma => edmodels.TransformedDistribution(
+            distribution=edmodels.NormalWithSoftplusScale(
+                loc=tf.Variable(tf.fill([1, num_groups], -3.0f0)),
+                scale=tf.Variable(tf.fill([1, num_groups], -1.0f0))),
+            bijector=tfdist.bijectors[:Softplus](),
+            name="qx_err_sigma_sq"),
+        x_err => edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(tf.zeros([num_samples, num_groups]), name="qx_err_loc"),
+            scale=tf.Variable(tf.fill([num_samples, num_groups], -2.0f0), name="qx_err_softplus_scale")))
+
+    vars = Dict(
+        :w           => w,
+        :z           => z,
+        :x_err_sigma => x_err_sigma,
+        :x_err       => x_err
+    )
+
+    return x, vars, latent_vars
+end
 
 
 main()

@@ -85,7 +85,7 @@ function main()
 
     num_components = 2
     x_og, vars, latent_vars = orthogroup_pca(
-        num_samples, num_orth_groups, num_components)
+        species_loaded_samples, num_taxons, num_samples, num_orth_groups, num_components)
 
     # x_og_mu0 = log(1.0f0/num_orth_groups)
     # x_og_sigma0 = 5.0
@@ -207,13 +207,19 @@ function main()
         likapprox = Polee.RNASeqApproxLikelihood(species_loaded_samples[taxon_idx], x)
         data[likapprox] = Float32[]
 
-        latent_vars[x_constituent] = edmodels.NormalWithSoftplusScale(
-            loc=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0)),
-            scale=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0)))
+        # latent_vars[x_constituent] = edmodels.NormalWithSoftplusScale(
+        #     loc=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_loc"),
+        #     scale=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_scale"))
 
-        latent_vars[x_ng] = edmodels.NormalWithSoftplusScale(
-            loc=tf.Variable(tf.fill([species_num_samples, nongrouped_n], log(1.0f0/nongrouped_n))),
-            scale=tf.Variable(tf.fill([species_num_samples, nongrouped_n], 0.0f0)))
+        # latent_vars[x_ng] = edmodels.NormalWithSoftplusScale(
+        #     loc=tf.Variable(tf.fill([species_num_samples, nongrouped_n], log(1.0f0/nongrouped_n)), name="qx_ng_loc"),
+        #     scale=tf.Variable(tf.fill([species_num_samples, nongrouped_n], 0.0f0), name="qx_ng_scale"))
+
+        latent_vars[x_constituent] = edmodels.PointMass(
+            tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_loc"))
+
+        latent_vars[x_ng] = edmodels.PointMass(
+            tf.Variable(tf.fill([species_num_samples, nongrouped_n], log(1.0f0/nongrouped_n)), name="qx_ng_loc"))
     end
 
     # Inference
@@ -223,7 +229,8 @@ function main()
     #     loc=tf.Variable(tf.fill([num_samples, num_orth_groups], x_og_mu0)),
     #     scale=tf.Variable(tf.fill([num_samples, num_orth_groups], 0.0f0)))
 
-    inference= ed.KLqp(latent_vars, data)
+    # inference= ed.KLqp(latent_vars, data)
+    inference= ed.MAP(latent_vars, data)
     optimizer = tf.train[:AdamOptimizer](0.05)
 
     init_feed_dict = reduce(merge, [ls.init_feed_dict for ls in species_loaded_samples])
@@ -266,16 +273,51 @@ function main()
 end
 
 
-function orthogroup_pca(num_samples, num_groups, num_components=2)
+"""
+Build a factor matrix for species by parsing sample names.
 
+(Obviously depends on a specific sample name format)
+"""
+function species_factor_matrix(species_loaded_samples, num_samples)
+        species_code_to_idx = Dict{String, Int}()
+        J = Int[]
+        for k in 1:length(species_loaded_samples)
+            ls = species_loaded_samples[k]
+            for name in ls.sample_names
+                species_code = match(r"^(..)", name).captures[1]
+                idx = get!(species_code_to_idx, species_code, length(species_code_to_idx) + 1)
+                push!(J, idx)
+            end
+        end
+
+        factor_mat = zeros(Float32, (num_samples, length(species_code_to_idx)))
+        for (i, j) in enumerate(J)
+            factor_mat[i, j] = 1.0f0
+        end
+
+        @show factor_mat
+
+        return factor_mat
+end
+
+
+function orthogroup_pca(
+    species_loaded_samples, num_species, num_samples, num_groups, num_components=2)
+
+    # remove broad species effects
+    species_factor_mat = species_factor_matrix(species_loaded_samples, num_samples)
+    w_species = edmodels.Normal(loc=tf.fill([num_species, num_groups], log(1.0f0/num_groups)), scale=10.0f0)
+    x_species_effects = tf.matmul(species_factor_mat, w_species)
+
+    # pca
     w_bias_mu0 = log(1.0f0/num_groups)
-    w_bias_sigma0 = 5.0f0
+    w_bias_sigma0 = 10.0f0
     x_mu_bias = edmodels.Normal(loc=tf.fill([1, num_groups], w_bias_mu0),
                                 scale=tf.fill([1, num_groups], w_bias_sigma0),
                                 name="xmu_bias")
 
     w = edmodels.Normal(loc=tf.zeros([num_components, num_groups]),
-                        scale=tf.fill([num_components, num_groups], 1.0f0))
+                        scale=tf.fill([num_components, num_groups], 4.0f0))
 
     z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
                         scale=tf.fill([num_samples, num_components], 1.0f0))
@@ -287,29 +329,50 @@ function orthogroup_pca(num_samples, num_groups, num_components=2)
     x_err_sigma = edmodels.InverseGamma(x_err_sigma_alpha0, x_err_sigma_beta0, name="x_err_sigma")
 
     x_err = edmodels.Normal(loc=tf.fill([num_samples, num_groups], 0.0f0), scale=x_err_sigma, name="x_err")
-    x = x_mu_bias + x_mu_pca + x_err
+    # x = x_mu_bias + x_species_effects + x_mu_pca + x_err
+    # x = x_species_effects + x_mu_pca + x_err
+    x = x_species_effects + x_mu_pca
+
+    # latent_vars = Dict(
+    #     w_species => edmodels.NormalWithSoftplusScale(
+    #         loc=tf.Variable(tf.fill([num_species, num_groups], 0.0f0), name="qw_species_loc"),
+    #         scale=tf.Variable(tf.fill([num_species, num_groups], -1.0f0)), name="qw_species_scale"),
+    #     w => edmodels.NormalWithSoftplusScale(
+    #         loc=tf.Variable(0.001f0 * tf.random_normal([num_components, num_groups]), name="qw_loc"),
+    #         scale=tf.Variable(tf.fill([num_components, num_groups], -1.0f0), name="qw_scale")),
+    #     z => edmodels.NormalWithSoftplusScale(
+    #         loc=tf.Variable(0.001f0 * tf.random_normal([num_samples, num_components]), name="qz_loc"),
+    #         scale=tf.Variable(tf.fill([num_samples, num_components], -1.0f0), name="qz_scale")),
+    #     # x_mu_bias => edmodels.NormalWithSoftplusScale(
+    #     #     loc=tf.Variable(tf.fill([1, num_groups], 1.0/num_groups), name="qx_mu_bias_loc"),
+    #     #     scale=tf.Variable(tf.fill([1, num_groups], -1.0f0)), name="qx_mu_bias_scale"),
+    #     x_err_sigma => edmodels.TransformedDistribution(
+    #         distribution=edmodels.NormalWithSoftplusScale(
+    #             loc=tf.Variable(tf.fill([1, num_groups], -3.0f0), name="qx_err_sigma_loc"),
+    #             scale=tf.Variable(tf.fill([1, num_groups], -1.0f0)), name="qx_err_sigma_scale"),
+    #         bijector=tfdist.bijectors[:Softplus](),
+    #         name="qx_err_sigma_sq"),
+    #     x_err => edmodels.NormalWithSoftplusScale(
+    #         loc=tf.Variable(tf.zeros([num_samples, num_groups]), name="qx_err_loc"),
+    #         scale=tf.Variable(tf.fill([num_samples, num_groups], -2.0f0), name="qx_err_softplus_scale")))
 
     latent_vars = Dict(
-        w => edmodels.NormalWithSoftplusScale(
-            loc=tf.Variable(0.001f0 * tf.random_normal([num_components, num_groups]), name="qw_loc"),
-            scale=tf.Variable(tf.fill([num_components, num_groups], -1.0f0), name="qw_scale")),
-        z => edmodels.NormalWithSoftplusScale(
-            loc=tf.Variable(0.001f0 * tf.random_normal([num_samples, num_components]), name="qz_loc"),
-            scale=tf.Variable(tf.fill([num_samples, num_components], -1.0f0), name="qz_scale")),
-        x_mu_bias => edmodels.NormalWithSoftplusScale(
-            loc=tf.Variable(tf.fill([1, num_groups], 1.0/num_groups)),
-            scale=tf.Variable(tf.fill([1, num_groups], -1.0f0))),
-        x_err_sigma => edmodels.TransformedDistribution(
-            distribution=edmodels.NormalWithSoftplusScale(
-                loc=tf.Variable(tf.fill([1, num_groups], -3.0f0)),
-                scale=tf.Variable(tf.fill([1, num_groups], -1.0f0))),
-            bijector=tfdist.bijectors[:Softplus](),
-            name="qx_err_sigma_sq"),
-        x_err => edmodels.NormalWithSoftplusScale(
-            loc=tf.Variable(tf.zeros([num_samples, num_groups]), name="qx_err_loc"),
-            scale=tf.Variable(tf.fill([num_samples, num_groups], -2.0f0), name="qx_err_softplus_scale")))
+        w_species => edmodels.PointMass(
+            tf.Variable(tf.fill([num_species, num_groups], log(1.0f0/num_groups)), name="qw_species_loc")),
+        w => edmodels.PointMass(
+            tf.Variable(0.001f0 * tf.random_normal([num_components, num_groups]), name="qw_loc")),
+        z => edmodels.PointMass(
+            # tf.Variable(0.001f0 * tf.random_normal([num_samples, num_components]), name="qz_loc")),
+            tf.Variable(tf.zeros([num_samples, num_components]), name="qz_loc")),
+        # x_mu_bias => edmodels.NormalWithSoftplusScale(
+        #     loc=tf.Variable(tf.fill([1, num_groups], 1.0/num_groups), name="qx_mu_bias_loc"),
+        #     scale=tf.Variable(tf.fill([1, num_groups], -1.0f0)), name="qx_mu_bias_scale"),
+        x_err_sigma => edmodels.PointMass(tf.nn[:softplus](tf.Variable(tf.fill([1, num_groups], -3.0f0), name="qx_err_sigma"))),
+        x_err => edmodels.PointMass(
+            tf.Variable(tf.zeros([num_samples, num_groups]), name="qx_err_loc")))
 
     vars = Dict(
+        :w_species   => w_species,
         :w           => w,
         :z           => z,
         :x_err_sigma => x_err_sigma,

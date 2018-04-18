@@ -125,9 +125,62 @@ function RNASeqSample(transcripts_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
                       output=Nullable{String}())
-
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     read_transcript_sequences!(ts, genome_filename)
+    return RNASeqSample(
+        ts, ts_metadata, reads_filename, excluded_seqs,
+        excluded_transcripts, output)
+end
+
+
+"""
+Build an RNASeqSample from scratch where transcript sequences and alignments
+are given instead of genome sequence and alginments.
+"""
+function RNASeqSample(transcript_sequence_filename::String,
+                      reads_filename::String,
+                      excluded_seqs::Set{String},
+                      excluded_transcripts::Set{String},
+                      output=Nullable{String}())
+
+    println("Reading transcript sequences")
+    tic()
+    reader = open(FASTA.Reader, transcript_sequence_filename)
+    entry = eltype(reader)()
+
+    transcripts = Transcript[]
+    while !isnull(tryread!(reader, entry))
+        seqname = FASTA.identifier(entry)
+        seq = FASTA.sequence(entry)
+        id = length(transcripts) + 1
+        t = Transcript(seqname, 1, length(seq), STRAND_POS,
+                TranscriptMetadata(seqname, id, [Exon(1, length(seq))], seq))
+        push!(transcripts, t)
+    end
+
+    ts = Transcripts(transcripts, true)
+    ts_metadata = TranscriptsMetadata()
+
+    toc()
+    println("Read ", length(transcripts), " transcripts")
+
+    return RNASeqSample(
+        ts, ts_metadata, reads_filename, excluded_seqs,
+        excluded_transcripts, output)
+end
+
+
+"""
+Build an RNASeqSample from Transcripts, with sequences with the metadata.seq
+field set.
+"""
+function RNASeqSample(ts::Transcripts,
+                      ts_metadata::TranscriptsMetadata,
+                      reads_filename::String,
+                      excluded_seqs::Set{String},
+                      excluded_transcripts::Set{String},
+                      output=Nullable{String}())
+
     rs = Reads(reads_filename, excluded_seqs)
     fm = FragModel(rs, ts)
 

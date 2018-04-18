@@ -162,6 +162,61 @@ function main()
         approximate_likelihood(approx, sample, parsed_args["output"])
         return
 
+
+    elseif subcmd == "trans-prep"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "sample-data.h5"
+            "transcript_sequence_filename"
+                required = true
+            "reads_filename"
+                required = true
+            "--exclude-seqs"
+                required = false
+            "--exclude-transcripts"
+                required = false
+            "--likelihood-matrix"
+                required = false
+            "--approx-method"
+                default = "logit_skew_normal_hsb"
+            "--tree-method"
+                default = "cluster"
+            "--num-threads", "-t" # handled by the wrapper script
+            "--no-gpu"            # handled by the wrapper script
+        end
+        parsed_args = parse_args(subcmd_args, arg_settings)
+
+        tree_method = Symbol(parsed_args["tree-method"])
+        approx = select_approx_method(parsed_args["approx-method"], tree_method)
+
+        excluded_seqs = Set{String}()
+        if parsed_args["exclude-seqs"] != nothing
+            open(parsed_args["exclude-seqs"]) do input
+                for line in eachline(input)
+                    push!(excluded_seqs, chomp(line))
+                end
+            end
+        end
+
+        excluded_transcripts = Set{String}()
+        if parsed_args["exclude-transcripts"] != nothing
+            open(parsed_args["exclude-transcripts"]) do input
+                for line in eachline(input)
+                    push!(excluded_transcripts, chomp(line))
+                end
+            end
+        end
+
+        sample = RNASeqSample(parsed_args["transcript_sequence_filename"],
+                              parsed_args["reads_filename"],
+                              excluded_seqs,
+                              excluded_transcripts,
+                              parsed_args["likelihood-matrix"] == nothing ?
+                                Nullable{String}() :
+                                Nullable(parsed_args["likelihood-matrix"]))
+        approximate_likelihood(approx, sample, parsed_args["output"])
+        return
+
     elseif subcmd == "estimate" || subcmd == "est"
         @add_arg_table arg_settings begin
             "--output", "-o"

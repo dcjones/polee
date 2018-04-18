@@ -83,9 +83,12 @@ function main()
 
     data = Dict()
 
-    num_components = 2
-    x_og, vars, latent_vars = orthogroup_pca(
-        species_loaded_samples, num_taxons, num_samples, num_orth_groups, num_components)
+    # num_components = 2
+    # x_og, vars, latent_vars = orthogroup_pca(
+    #     species_loaded_samples, num_taxons, num_samples, num_orth_groups, num_components)
+
+    x_og, vars, latent_vars, species_factors, cond_factors = orthogroup_regression(
+        species_loaded_samples, num_taxons, num_samples, num_orth_groups)
 
     # x_og_mu0 = log(1.0f0/num_orth_groups)
     # x_og_sigma0 = 5.0
@@ -207,19 +210,19 @@ function main()
         likapprox = Polee.RNASeqApproxLikelihood(species_loaded_samples[taxon_idx], x)
         data[likapprox] = Float32[]
 
-        # latent_vars[x_constituent] = edmodels.NormalWithSoftplusScale(
-        #     loc=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_loc"),
-        #     scale=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_scale"))
+        latent_vars[x_constituent] = edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_loc"),
+            scale=tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_scale"))
 
-        # latent_vars[x_ng] = edmodels.NormalWithSoftplusScale(
-        #     loc=tf.Variable(tf.fill([species_num_samples, nongrouped_n], log(1.0f0/nongrouped_n)), name="qx_ng_loc"),
-        #     scale=tf.Variable(tf.fill([species_num_samples, nongrouped_n], 0.0f0), name="qx_ng_scale"))
+        latent_vars[x_ng] = edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(tf.fill([species_num_samples, nongrouped_n], log(1.0f0/nongrouped_n)), name="qx_ng_loc"),
+            scale=tf.Variable(tf.fill([species_num_samples, nongrouped_n], 0.0f0), name="qx_ng_scale"))
 
-        latent_vars[x_constituent] = edmodels.PointMass(
-            tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_loc"))
+        # latent_vars[x_constituent] = edmodels.PointMass(
+        #     tf.Variable(tf.fill([species_num_samples, grouped_n], 0.0f0), name="qx_constituent_loc"))
 
-        latent_vars[x_ng] = edmodels.PointMass(
-            tf.Variable(tf.fill([species_num_samples, nongrouped_n], log(1.0f0/nongrouped_n)), name="qx_ng_loc"))
+        # latent_vars[x_ng] = edmodels.PointMass(
+        #     tf.Variable(tf.fill([species_num_samples, nongrouped_n], log(1.0f0/nongrouped_n)), name="qx_ng_loc"))
     end
 
     # Inference
@@ -229,32 +232,51 @@ function main()
     #     loc=tf.Variable(tf.fill([num_samples, num_orth_groups], x_og_mu0)),
     #     scale=tf.Variable(tf.fill([num_samples, num_orth_groups], 0.0f0)))
 
-    # inference= ed.KLqp(latent_vars, data)
-    inference= ed.MAP(latent_vars, data)
+    inference= ed.KLqp(latent_vars, data)
+    # inference= ed.MAP(latent_vars, data)
     optimizer = tf.train[:AdamOptimizer](0.05)
 
     init_feed_dict = reduce(merge, [ls.init_feed_dict for ls in species_loaded_samples])
-    Polee.run_inference(init_feed_dict, inference, 2000, optimizer)
+    # Polee.run_inference(init_feed_dict, inference, 5000, optimizer)
+    Polee.run_inference(init_feed_dict, inference, 5000, optimizer)
 
     sess = ed.get_session()
-    z_est = sess[:run](latent_vars[vars[:z]][:mean]())
 
-    open("latent-ortholog-pca.csv", "w") do output
-        print(output, "sample,")
-        println(output, join([string("pc", j) for j in 1:num_components], ','))
-        i = 1
-        for k in 1:length(species_loaded_samples)
-            ls = species_loaded_samples[k]
-            for name in ls.sample_names
-                # for j in 1:size(x_est, 2)
-                #     println(output, name, ",", j, ",", x_est[i, j])
-                # end
-                print(output, '"', name, '"', ',')
-                println(output, join(z_est[i,:], ','))
-                i += 1
+    w_cond_mean  = sess[:run](latent_vars[vars[:w_cond]][:mean]())
+    w_cond_lower = sess[:run](latent_vars[vars[:w_cond]][:quantile](0.005))
+    w_cond_upper = sess[:run](latent_vars[vars[:w_cond]][:quantile](0.995))
+    open("latent-ortholog-regression.csv", "w") do output
+        println(output, "ortholog_group,factor,lower_credible,mean,upper_credible")
+
+        for j in 1:num_orth_groups
+            for (factor, i) in cond_factors
+                println(
+                    output, j, ",",
+                    factor, ",",
+                    w_cond_lower[i, j], ",",
+                    w_cond_mean[i, j], ",",
+                    w_cond_upper[i, j])
             end
         end
     end
+
+    # z_est = sess[:run](latent_vars[vars[:z]][:mean]())
+    # open("latent-ortholog-pca.csv", "w") do output
+    #     print(output, "sample,")
+    #     println(output, join([string("pc", j) for j in 1:num_components], ','))
+    #     i = 1
+    #     for k in 1:length(species_loaded_samples)
+    #         ls = species_loaded_samples[k]
+    #         for name in ls.sample_names
+    #             # for j in 1:size(x_est, 2)
+    #             #     println(output, name, ",", j, ",", x_est[i, j])
+    #             # end
+    #             print(output, '"', name, '"', ',')
+    #             println(output, join(z_est[i,:], ','))
+    #             i += 1
+    #         end
+    #     end
+    # end
 
     # open("latent-ortholog-expression.csv", "w") do output
     #     println(output, "sample,orthogroup,expression")
@@ -301,6 +323,63 @@ function species_factor_matrix(species_loaded_samples, num_samples)
 end
 
 
+"""
+
+"""
+function species_condition_factor_matrix(species_loaded_samples, num_samples)
+    # Introduce a factor for
+    # (bias terms) HS, MM, AC
+    # HS-A, HS-E, MM-A, MM-E
+    # HS-A-2, ..., HS-E-2, ..., MM-A-2, ..., MM-E-2, ..., AC-2, ...
+    # Essentially we want to form a hierarchical model. and in that way compare
+    # the effects of each treatment, normalized for broad species effects.
+
+    species_factors = Dict{String, Int}()
+    cond_factors = Dict{String, Int}()
+    species_factor_idxs = Tuple{Int, Int}[]
+    cond_factor_idxs = Tuple{Int, Int}[]
+    k = 1
+    for ls in species_loaded_samples
+        for name in ls.sample_names
+            mat = match(r"^((..)(?:-(\D))?-(\d))", name)
+            cond      = mat.captures[1]
+            species   = mat.captures[2]
+            stage     = mat.captures[3]
+            treatment = mat.captures[4]
+
+            @show (cond, species, stage, treatment)
+
+            push!(species_factor_idxs,
+                (k, get!(species_factors, species, 1 + length(species_factors))))
+
+            if stage != nothing
+                push!(cond_factor_idxs,
+                    (k, get!(cond_factors, string(species, "-", stage), 1 + length(cond_factors))))
+            end
+
+            if treatment != "1"
+                push!(cond_factor_idxs,
+                        (k, get!(cond_factors, cond, 1 + length(cond_factors))))
+            end
+
+            k += 1
+        end
+    end
+
+    species_factor_mat = zeros(Float32, (num_samples, length(species_factors)))
+    for (i, j) in species_factor_idxs
+        species_factor_mat[i, j] = 1.0f0
+    end
+
+    cond_factor_mat = zeros(Float32, (num_samples, length(cond_factors)))
+    for (i, j) in cond_factor_idxs
+        cond_factor_mat[i, j] = 1.0f0
+    end
+
+    return species_factors, species_factor_mat, cond_factors, cond_factor_mat
+end
+
+
 function orthogroup_pca(
     species_loaded_samples, num_species, num_samples, num_groups, num_components=2)
 
@@ -317,7 +396,7 @@ function orthogroup_pca(
                                 name="xmu_bias")
 
     w = edmodels.Normal(loc=tf.zeros([num_components, num_groups]),
-                        scale=tf.fill([num_components, num_groups], 4.0f0))
+                        scale=tf.fill([num_components, num_groups], 1.0f0))
 
     z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
                         scale=tf.fill([num_samples, num_components], 1.0f0))
@@ -330,8 +409,8 @@ function orthogroup_pca(
 
     x_err = edmodels.Normal(loc=tf.fill([num_samples, num_groups], 0.0f0), scale=x_err_sigma, name="x_err")
     # x = x_mu_bias + x_species_effects + x_mu_pca + x_err
-    # x = x_species_effects + x_mu_pca + x_err
-    x = x_species_effects + x_mu_pca
+    x = x_species_effects + x_mu_pca + x_err
+    # x = x_species_effects + x_mu_pca
 
     # latent_vars = Dict(
     #     w_species => edmodels.NormalWithSoftplusScale(
@@ -360,10 +439,11 @@ function orthogroup_pca(
         w_species => edmodels.PointMass(
             tf.Variable(tf.fill([num_species, num_groups], log(1.0f0/num_groups)), name="qw_species_loc")),
         w => edmodels.PointMass(
-            tf.Variable(0.001f0 * tf.random_normal([num_components, num_groups]), name="qw_loc")),
+            tf.Variable(tf.random_normal([num_components, num_groups]), name="qw_loc")),
+            # tf.Variable(tf.zeros([num_components, num_groups]), name="qw_loc")),
         z => edmodels.PointMass(
-            # tf.Variable(0.001f0 * tf.random_normal([num_samples, num_components]), name="qz_loc")),
-            tf.Variable(tf.zeros([num_samples, num_components]), name="qz_loc")),
+            tf.Variable(tf.random_normal([num_samples, num_components]), name="qz_loc")),
+            # tf.Variable(tf.zeros([num_samples, num_components]), name="qz_loc")),
         # x_mu_bias => edmodels.NormalWithSoftplusScale(
         #     loc=tf.Variable(tf.fill([1, num_groups], 1.0/num_groups), name="qx_mu_bias_loc"),
         #     scale=tf.Variable(tf.fill([1, num_groups], -1.0f0)), name="qx_mu_bias_scale"),
@@ -380,6 +460,66 @@ function orthogroup_pca(
     )
 
     return x, vars, latent_vars
+end
+
+
+function orthogroup_regression(
+    species_loaded_samples, num_species, num_samples, num_groups)
+
+    species_factors, species_factor_mat, cond_factors, cond_factor_mat =
+        species_condition_factor_matrix(species_loaded_samples, num_samples)
+
+    w_species = edmodels.Normal(
+        loc=tf.fill([length(species_factors), num_groups], log(1.0f0/num_groups)),
+        scale=10.0f0)
+    x_mu_species = tf.matmul(tf.constant(species_factor_mat), w_species)
+
+    w_cond = edmodels.Normal(loc=tf.zeros([length(cond_factors), num_groups]),
+                        scale=tf.fill([length(cond_factors), num_groups], 1.0f0))
+    x_mu_cond = tf.matmul(tf.constant(cond_factor_mat), w_cond)
+
+    x_err_sigma_alpha0 = tf.constant(Polee.SIGMA_ALPHA0, shape=[1, num_groups])
+    x_err_sigma_beta0 = tf.constant(Polee.SIGMA_BETA0, shape=[1, num_groups])
+    x_err_sigma = edmodels.InverseGamma(x_err_sigma_alpha0, x_err_sigma_beta0, name="x_err_sigma")
+    x_err = edmodels.Normal(loc=tf.fill([num_samples, num_groups], 0.0f0), scale=x_err_sigma, name="x_err")
+
+    x = x_mu_species + x_mu_cond + x_err
+
+    # inference
+    # latent_vars = Dict(
+    #     w_species => edmodels.PointMass(
+    #         tf.Variable(tf.fill([length(species_factors), num_groups], log(1.0f0/num_groups)), name="qw_species_loc")),
+    #     w_cond => edmodels.PointMass(
+    #         tf.Variable(tf.zeros([length(cond_factors), num_groups]), name="qw_cond_loc")),
+    #     x_err_sigma => edmodels.PointMass(tf.nn[:softplus](tf.Variable(tf.fill([1, num_groups], -3.0f0), name="qx_err_sigma"))),
+    #     x_err => edmodels.PointMass(
+    #         tf.Variable(tf.zeros([num_samples, num_groups]), name="qx_err_loc")))
+
+    latent_vars = Dict(
+        w_species => edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(tf.fill([length(species_factors), num_groups], log(1.0f0/num_groups)), name="qw_species_loc"),
+            scale=tf.Variable(tf.fill([length(species_factors), num_groups], -1.0f0)), name="qw_species_scale"),
+        w_cond => edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(tf.zeros([length(cond_factors), num_groups]), name="qw_cond_loc"),
+            scale=tf.Variable(tf.fill([length(cond_factors), num_groups], -1.0f0), name="qw_cond_scale")),
+        x_err_sigma => edmodels.TransformedDistribution(
+            distribution=edmodels.NormalWithSoftplusScale(
+                loc=tf.Variable(tf.fill([1, num_groups], -3.0f0), name="qx_err_sigma_loc"),
+                scale=tf.Variable(tf.fill([1, num_groups], -1.0f0)), name="qx_err_sigma_scale"),
+            bijector=tfdist.bijectors[:Softplus](),
+            name="qx_err_sigma_sq"),
+        x_err => edmodels.NormalWithSoftplusScale(
+            loc=tf.Variable(tf.zeros([num_samples, num_groups]), name="qx_err_loc"),
+            scale=tf.Variable(tf.fill([num_samples, num_groups], -2.0f0), name="qx_err_softplus_scale")))
+
+    vars = Dict(
+        :w_species   => w_species,
+        :w_cond      => w_cond,
+        :x_err_sigma => x_err_sigma,
+        :x_err       => x_err
+    )
+
+    return x, vars, latent_vars, species_factors, cond_factors
 end
 
 

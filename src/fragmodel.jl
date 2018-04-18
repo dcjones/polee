@@ -17,30 +17,44 @@ function sample_training_examples(rs::Reads, n::Int)
     n = min(n, length(rs.alignment_pairs))
     examples = IntervalCollection{AlignmentPairMetadata}()
 
-    # count unique alignment start positions, ignoring sequence name for
-    # simplicity
-    starts = Set{Int}()
-    for tree in values(rs.alignment_pairs.trees)
+    # count unique alignment start positions
+    starts = Dict{String, Set{Int}}()
+    for (seqname, tree) in rs.alignment_pairs.trees
+        starts[seqname] = Set{Int}()
+        starts_seqname = starts[seqname]
         for alnpr in tree
-            push!(starts, alnpr.first)
+            push!(starts_seqname, alnpr.first)
         end
     end
     n = min(n, length(starts))
 
-    starts_subset = Set{Int}()
-    starts_subset_idxs = Set{Int}(sample(1:length(starts), n, replace=false))
-    for (i, start) in enumerate(starts)
-        if i in starts_subset_idxs
-            push!(starts_subset, start)
+    num_starts = 0
+    for v in values(starts)
+        num_starts += length(v)
+    end
+
+    # subsample start positions
+    starts_subset = Dict{String, Set{Int}}()
+    starts_subset_idxs = Set(sample(1:num_starts, n, replace=false))
+    k = 0
+    for (seqname, starts_seqname) in starts
+        starts_subset[seqname] = Set{Int}()
+        starts_subset_seqname = starts_subset[seqname]
+        for i in starts_seqname
+            k += 1
+            if k in starts_subset_idxs
+                push!(starts_subset_seqname, i)
+            end
         end
     end
 
+    # select alignments
     last_start = 0
-    # for alnpr in rs.alignment_pairs
-    for tree in values(rs.alignment_pairs.trees)
+    for (seqname, tree) in rs.alignment_pairs.trees
+        starts_subset_seqname = starts_subset[seqname]
         for alnpr in tree
             if alnpr.first != last_start
-                if alnpr.first > 0 && alnpr.first in starts_subset
+                if alnpr.first > 0 && alnpr.first in starts_subset_seqname
                     push!(examples, alnpr)
                 end
                 last_start = alnpr.first
@@ -135,11 +149,12 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
     end
     fraglen_pmf_count = sum(fraglen_pmf) - MAX_FRAG_LEN
     fraglen_pmf ./= sum(fraglen_pmf)
-    out = open("fraglen.csv", "w")
-    println(out, "fraglen,freq")
-    for (fl, freq) in enumerate(fraglen_pmf)
-        println(out, fl, ",", freq)
-    end
+
+    # out = open("fraglen.csv", "w")
+    # println(out, "fraglen,freq")
+    # for (fl, freq) in enumerate(fraglen_pmf)
+    #     println(out, fl, ",", freq)
+    # end
 
     fraglen_cdf = copy(fraglen_pmf)
     for i in 2:length(fraglen_cdf)

@@ -30,6 +30,10 @@ type TranscriptMetadata
     function TranscriptMetadata(name, id)
         return new(name, id, Exon[], DNASequence())
     end
+
+    function TranscriptMetadata(name, id, exons, seq)
+        return new(name, id, exons, seq)
+    end
 end
 
 

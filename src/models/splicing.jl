@@ -12,6 +12,7 @@ function transcript_expression_to_splicing_log_ratios(
                 feature_idxs, feature_transcript_idxs,
                 antifeature_idxs, antifeature_transcript_idxs, x)
 
+    # TODO: make sure indices are in the right order
     feature_matrix = tf.SparseTensor(
         indices=hcat(feature_idxs .- 1, feature_transcript_idxs .- 1),
         values=tf.ones(length(feature_idxs)),

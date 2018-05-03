@@ -198,7 +198,7 @@ end
 Construct a python RNASeqApproxLikelihood class.
 """
 function RNASeqApproxLikelihood(input::ModelInput, x)
-    return RNASeqApproxLikelihood(input.load_samples, x)
+    return RNASeqApproxLikelihood(input.loaded_samples, x)
 end
 
 

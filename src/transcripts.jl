@@ -161,7 +161,8 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
                 push!(transcript_by_id,
                     Transcript(get!(interned_seqnames, seqname, seqname),
                                GFF3.seqstart(entry), GFF3.seqend(entry),
-                               GFF3.strand(entry), TranscriptMetadata(parent_name, id)))
+                               GFF3.hasstrand(entry) ? GFF3.strand(entry) : STRAND_BOTH,
+                               TranscriptMetadata(parent_name, id)))
             end
             push!(transcript_by_id[id].metadata.exons,
                 Exon(GFF3.seqstart(entry), GFF3.seqend(entry)))

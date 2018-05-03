@@ -67,7 +67,9 @@ function estimate_transcript_expression(input::ModelInput, write_results::Bool=t
     # TODO: this should be a temporary measure until we decide exactly how
     # results should be reported. Probably in sqlite or something.
     if write_results
-        write_transcript_expression_csv("transcript-expression-estimates.csv",
+        output_filename = isnull(input.output_filename) ?
+            "transcript-expression-estimates.csv" : get(input.output_filename)
+        write_transcript_expression_csv(output_filename,
                                         input.ts, input.loaded_samples.sample_names,
                                         mean_est, lower_credible, upper_credible)
     end
@@ -195,30 +197,6 @@ function transcript_to_feature_expression_transform(feature_idxs, transcript_idx
     end
 
     return tf.squeeze(tf.stack(xs), axis=-1)
-end
-
-
-function estimate_gene_expression2(input::ModelInput)
-    num_samples, n = size(input.loaded_samples.x0_values)
-    num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
-        gene_feature_matrix(input.ts, input.ts_metadata)
-
-    prior_vars, prior_var_approximations =
-        model_disjoint_feature_prior(input, gene_idxs, transcript_idxs)
-
-    x_feature = prior_vars[:x_feature]
-
-    # TODO: the big outstanding problem: expression sampled from the likelihood
-    # function will be on a simplex. Currently x_feature is a log-transformed
-    # unconstrained values. What do we do about that. Just log-transform
-    # the samples?
-
-    T = x -> transcript_to_feature_expression_transform(gene_idxs, transcript_idxs, x)
-
-    optimizer = tf.train[:AdamOptimizer](5e-2)
-    inference = ed.KLqp(latent_vars=var_approximations)
-
-    run_implicit_model_inference(input, x_feature, T, inference, 1000, optimizer)
 end
 
 
@@ -447,8 +425,8 @@ function model_disjoint_feature_expression(input::ModelInput, feature_idxs,
     num_samples, n = size(input.loaded_samples.x0_values)
 
     # within feature relative expression of feature constituents
-    x_constituent_mu_mu0 = tf.constant(0.0, shape=[n])
-    x_constituent_mu_sigma0 = tf.constant(4.0, shape=[n])
+    x_constituent_mu_mu0 = tf.constant(0.0f0, shape=[n])
+    x_constituent_mu_sigma0 = tf.constant(10.0f0, shape=[n])
     x_constituent_mu = edmodels.Normal(loc=x_constituent_mu_mu0,
                                        scale=x_constituent_mu_sigma0)
 

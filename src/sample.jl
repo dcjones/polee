@@ -210,7 +210,7 @@ function RNASeqSample(ts::Transcripts,
     end
 
     effective_lengths = Float32[effective_length(fm, t) for t in ts]
-    @time I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
+    I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 
     gc()
     p = sortperm(I)
@@ -221,19 +221,12 @@ function RNASeqSample(ts::Transcripts,
 
     compact_indexes!(I) # 0.000 GB
     m = isempty(I) ? 0 : Int(maximum(I))
+    @show m
 
     n = length(ts)
     M = sparse(I, J, V, m, n)
 
-    # @show sum(J .== 133568)
-    # @show sum(J .== 133569)
-    # @show sum(J .== 133570)
-
-    # @show effective_lengths[133568]
-    # @show effective_lengths[133569]
-    # @show effective_lengths[133570]
-
-    @show length(V)
+    println(length(V), " intersections")
 
     if !isnull(output)
         h5open(get(output), "w") do out

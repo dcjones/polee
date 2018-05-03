@@ -216,7 +216,8 @@ function estimate_splicing_linear_regression(input::ModelInput)
     approxlik = polee_py.ApproximatedLikelihood(
         edmodels.NormalWithSoftplusScale(
             loc=splice_loc_param, scale=splice_scale_param),
-        x_mu + x_err)
+        x_mu)
+        # x_mu + x_err)
 
     data = Dict(approxlik => zeros(Float32, (num_samples, 0)))
 
@@ -275,12 +276,14 @@ function estimate_splicing_linear_regression(input::ModelInput)
             dist = Normal(mean_est[i, j], sigma_est[i, j])
             logistic_bias_j = logistic(bias_est[j])
 
-            est[i, j] = logistic(bias_est[j] + mean_est[i, j]) - logistic_bias_j
-
-            lower_credible[i, j] =
-                logistic(bias_est[j] + quantile(dist, input.credible_interval[1])) - logistic_bias_j
-            upper_credible[i, j] =
-                logistic(bias_est[j] + quantile(dist, input.credible_interval[2])) - logistic_bias_j
+            # est[i, j] = logistic(bias_est[j] + mean_est[i, j]) - logistic_bias_j
+            # lower_credible[i, j] =
+            #     logistic(bias_est[j] + quantile(dist, input.credible_interval[1])) - logistic_bias_j
+            # upper_credible[i, j] =
+            #     logistic(bias_est[j] + quantile(dist, input.credible_interval[2])) - logistic_bias_j
+            est[i, j] = mean_est[i, j]
+            lower_credible[i, j] = quantile(dist, input.credible_interval[1])
+            upper_credible[i, j] = quantile(dist, input.credible_interval[2])
         end
     end
 

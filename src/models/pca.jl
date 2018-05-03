@@ -296,7 +296,7 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
     # ----
 
     w_bias_mu0 = 0.0f0
-    w_bias_sigma0 = 5.0f0
+    w_bias_sigma0 = 10.0f0
 
     mu_bias = edmodels.Normal(loc=tf.fill([1, num_features], w_bias_mu0),
                               scale=tf.fill([1, num_features], w_bias_sigma0),
@@ -344,7 +344,7 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
 
     if input.inference == :variational
         qx_err_loc = tf.Variable(tf.zeros([num_samples, num_features]), name="qx_err_loc")
-        qx_err_softplus_scale = tf.Variable(tf.fill([num_samples, num_features], -2.0), name="qx_err_softplus_scale")
+        qx_err_softplus_scale = tf.Variable(tf.fill([num_samples, num_features], -2.0f0), name="qx_err_softplus_scale")
         qx_err = edmodels.NormalWithSoftplusScale(loc=qx_err_loc, scale=qx_err_softplus_scale, name="qx_err")
 
         qmu_bias_loc = tf.Variable(tf.reduce_mean(splice_loc_param, 0), name="qmu_bias_loc")
@@ -427,8 +427,8 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
         )
 
         inference = ed.MAP(var_maps, data=data)
-        optimizer = tf.train[:AdamOptimizer](5e-2)
-        run_inference(input, inference, 1000, optimizer)
+        optimizer = tf.train[:AdamOptimizer](2e-2)
+        run_inference(input, inference, 5000, optimizer)
 
         sess = ed.get_session()
         z_est = sess[:run](qz_param)

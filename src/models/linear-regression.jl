@@ -69,8 +69,8 @@ function estimate_transcript_linear_regression(input::ModelInput)
     x_sigma_sq     = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
     x_sigma        = tf.sqrt(x_sigma_sq)
 
-    # x = edmodels.StudentT(df=10.0f0, loc=x_mu, scale=x_sigma)
-    x = edmodels.Normal(loc=x_mu, scale=x_sigma)
+    x = edmodels.StudentT(df=10.0f0, loc=x_mu, scale=x_sigma)
+    # x = edmodels.Normal(loc=x_mu, scale=x_sigma)
 
     likapprox = RNASeqApproxLikelihood(input, x)
 
@@ -96,8 +96,8 @@ function estimate_transcript_linear_regression(input::ModelInput)
         qx_sigma_sq_mu_param    = tf.Variable(tf.fill([n], -2.0f0), name="qx_sigma_sq_mu_param")
         qx_sigma_sq_sigma_param = tf.Variable(tf.fill([n], -1.0f0), name="qx_sigma_sq_sigma_param")
 
-        qx_sigma_sq_mu_param =  tf_print_span(qx_sigma_sq_mu_param, "qx_sigma_sq_mu_param")
-        qx_sigma_sq_sigma_param =  tf_print_span(qx_sigma_sq_sigma_param, "qx_sigma_sq_sigma_param")
+        # qx_sigma_sq_mu_param =  tf_print_span(qx_sigma_sq_mu_param, "qx_sigma_sq_mu_param")
+        # qx_sigma_sq_sigma_param =  tf_print_span(qx_sigma_sq_sigma_param, "qx_sigma_sq_sigma_param")
 
         qx_sigma_sq = edmodels.TransformedDistribution(
             distribution=edmodels.NormalWithSoftplusScale(qx_sigma_sq_mu_param, qx_sigma_sq_sigma_param),

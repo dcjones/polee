@@ -270,11 +270,15 @@ function estimate_splicing_proportions(input::ModelInput; write_results::Bool=tr
     upper_credible = sess[:run](qx_feature[:quantile](input.credible_interval[2]))
     est = sess[:run](qx_feature[:quantile](0.5))
 
-    output_filename = isnull(input.output_filename) ?
-        "splicing-proportion-estimates.csv" : get(input.output_filename)
+    if write_results
+        output_filename = isnull(input.output_filename) ?
+            "splicing-proportion-estimates.csv" : get(input.output_filename)
 
-    write_splicing_proportions_csv(output_filename, input.loaded_samples.sample_names,
-                                   est, lower_credible, upper_credible)
+        write_splicing_proportions_csv(output_filename, input.loaded_samples.sample_names,
+                                    est, lower_credible, upper_credible)
+    end
+
+    return est
 end
 
 

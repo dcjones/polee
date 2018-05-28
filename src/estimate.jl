@@ -254,7 +254,8 @@ function run_implicit_model_map_inference(input, Tx, T, latent_vars, n_iter, opt
     inference = ed.MAP(latent_vars=latent_vars, data=data)
 
     # inference[:initialize](n_iter=n_iter, optimizer=optimizer, n_print=1, logdir="log")
-    inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
+    # inference[:initialize](n_iter=n_iter, optimizer=optimizer, logdir="log")
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer)
 
     sess[:run](tf.global_variables_initializer(),
                feed_dict=input.loaded_samples.init_feed_dict)
@@ -369,23 +370,24 @@ function run_inference(init_feed_dict::Dict, inference, n_iter, optimizer)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession(config=config)
     # ed.util[:graphs][:_ED_SESSION] = tf.InteractiveSession()
 
-    # inference[:initialize](n_iter=n_iter, optimizer=optimizer)
-    inference[:initialize](n_iter=n_iter, optimizer=optimizer, auto_transform=false, logdir="log")
+    inference[:initialize](n_iter=n_iter, optimizer=optimizer)
+    # inference[:initialize](n_iter=n_iter, optimizer=optimizer, auto_transform=false, logdir="log")
     # inference[:initialize](n_iter=n_iter)
 
     sess[:run](tf.global_variables_initializer(), feed_dict=init_feed_dict)
 
     for iter in 1:n_iter
-        # try
+        local info_dict
+        try
             info_dict = inference[:update]()
-        # catch e
-        #     @show e.T
-        #     @show e.msg
-        #     @show e.val["message"]
-        #     # @show typeof(e)
-        #     # @show fieldnames(e)
-        #     throw()
-        # end
+        catch e
+            @show e.T
+            @show e.msg
+            @show e.val["message"]
+            # @show typeof(e)
+            # @show fieldnames(e)
+            throw()
+        end
         inference[:print_progress](info_dict)
     end
 

@@ -14,7 +14,13 @@ using YAML
 @pyimport edward as ed
 @pyimport edward.models as edmodels
 
+
+const baseline_treatment = "2"
+# const baseline_treatment = nothing
+
 function main()
+    # Which treatment to use as the baseline. 3 is serum starvation.
+
     model_name = ARGS[1]
     ortholog_groups_filename = ARGS[2]
 
@@ -88,7 +94,7 @@ function main()
 
     if model_name == "pca"
         num_components = 2
-        x_og, vars, latent_vars = orthogroup_pca(
+        x_og, vars, latent_vars, nonbaseline_sample_mat = orthogroup_pca(
             species_loaded_samples, species_transcripts, ortholog_group_by_id,
             num_taxons, num_samples, num_orth_groups, num_components)
     elseif model_name == "regression"
@@ -243,6 +249,12 @@ function main()
             for k in 1:length(species_loaded_samples)
                 ls = species_loaded_samples[k]
                 for name in ls.sample_names
+
+                    # TODO:
+                    if match(r"(\d+)-\d+$", name).captures[1] == baseline_treatment
+                        continue
+                    end
+
                     # for j in 1:size(x_est, 2)
                     #     println(output, name, ",", j, ",", x_est[i, j])
                     # end
@@ -261,8 +273,8 @@ function main()
 
         sess = ed.get_session()
         w_cond_mean  = sess[:run](latent_vars[vars[:w_cond]][:mean]())
-        w_cond_lower = sess[:run](latent_vars[vars[:w_cond]][:quantile](0.005))
-        w_cond_upper = sess[:run](latent_vars[vars[:w_cond]][:quantile](0.995))
+        w_cond_lower = sess[:run](latent_vars[vars[:w_cond]][:quantile](0.05))
+        w_cond_upper = sess[:run](latent_vars[vars[:w_cond]][:quantile](0.95))
         open("latent-ortholog-regression.csv", "w") do output
             println(output, "ortholog_group,factor,lower_credible,mean,upper_credible")
 
@@ -307,7 +319,32 @@ function species_factor_matrix(species_loaded_samples, num_samples)
             factor_mat[i, j] = 1.0f0
         end
 
-        return factor_mat, species_factor_weight
+        return species_code_to_idx, factor_mat, species_factor_weight
+end
+
+
+function species_stage_factor_matrix(species_loaded_samples, num_samples)
+        species_code_to_idx = Dict{String, Int}()
+        species_factor_weight = Dict{Int, Float32}()
+        J = Int[]
+        for k in 1:length(species_loaded_samples)
+            ls = species_loaded_samples[k]
+            n = size(ls.x0_values, 2)
+            c = log(1.0f0/n)
+            for name in ls.sample_names
+                species_code = match(r"^(..(:?-[AE])?)", name).captures[1]
+                idx = get!(species_code_to_idx, species_code, length(species_code_to_idx) + 1)
+                species_factor_weight[idx] = c
+                push!(J, idx)
+            end
+        end
+
+        factor_mat = zeros(Float32, (num_samples, length(species_code_to_idx)))
+        for (i, j) in enumerate(J)
+            factor_mat[i, j] = 1.0f0
+        end
+
+        return species_code_to_idx, factor_mat, species_factor_weight
 end
 
 
@@ -336,13 +373,8 @@ end
 """
 
 """
-function species_condition_factor_matrix(species_loaded_samples, num_samples)
-    # Introduce a factor for
-    # (bias terms) HS, MM, AC
-    # HS-A, HS-E, MM-A, MM-E
-    # HS-A-2, ..., HS-E-2, ..., MM-A-2, ..., MM-E-2, ..., AC-2, ...
-    # Essentially we want to form a hierarchical model. and in that way compare
-    # the effects of each treatment, normalized for broad species effects.
+function species_condition_factor_matrix(
+    species_loaded_samples, num_samples)
 
     species_factors = Dict{String, Int}()
     species_factor_weight = Dict{Int, Float32}()
@@ -365,7 +397,7 @@ function species_condition_factor_matrix(species_loaded_samples, num_samples)
             species_factor_weight[l] = c
             push!(species_factor_idxs, (k, l))
 
-            if treatment != "1"
+            if treatment != baseline_treatment
                 push!(cond_factor_idxs,
                         (k, get!(cond_factors, cond, 1 + length(cond_factors))))
             end
@@ -392,17 +424,17 @@ function orthogroup_pca(
     species_loaded_samples, species_transcripts, ortholog_group_by_id,
      num_species, num_samples, num_groups, num_components=2)
 
-    # TODO: bias is per species now. We may want to make it per (species, age)
-
     x0 = orthgroup_expr_initial_values(
         species_loaded_samples, species_transcripts,
         ortholog_group_by_id, num_samples, num_groups)
 
-    species_factor_mat, species_factor_weight =
-        species_factor_matrix(species_loaded_samples, num_samples)
+    # species_factor_mat, species_factor_weight =
+    #     species_factor_matrix(species_loaded_samples, num_samples)
+    species_factors, species_factor_mat, species_factor_weight =
+        species_stage_factor_matrix(species_loaded_samples, num_samples)
 
     # compute a reasonable prior mean
-    w_species_loc0 = Array{Float32}(num_species, num_groups)
+    w_species_loc0 = Array{Float32}(length(species_factors), num_groups)
     for i in 1:size(w_species_loc0, 1)
         c = species_factor_weight[i]
         for j in 1:size(w_species_loc0, 2)
@@ -412,17 +444,42 @@ function orthogroup_pca(
         end
     end
 
+    # TODO: option to toggle between different bias term schemes
+    # species specific bias
     w_bias = edmodels.Normal(loc=tf.constant(w_species_loc0), scale=10.0f0)
     x_mu_bias = tf.matmul(species_factor_mat, w_bias)
 
+    # fixed bias
+    # x_mu_bias = edmodels.Normal(loc=tf.zeros([1, num_groups]), scale=10.0f0)
+
     # pca
+
+    # map non-baseline samples to samples
+    nonbaseline_sample_idxs = Int[]
+    idx = 1
+    for k in 1:length(species_loaded_samples)
+        ls = species_loaded_samples[k]
+        for name in ls.sample_names
+            if match(r"(\d+)-\d+$", name).captures[1] != baseline_treatment
+                push!(nonbaseline_sample_idxs, idx)
+            end
+            idx += 1
+        end
+    end
+    num_nonbaseline_samples = length(nonbaseline_sample_idxs)
+
+    nonbaseline_samples_mat = zeros(Float32, (num_samples, num_nonbaseline_samples))
+    for (j, i) in enumerate(nonbaseline_sample_idxs)
+        nonbaseline_samples_mat[i, j] = 1.0f0
+    end
+
     w = edmodels.Normal(loc=tf.zeros([num_components, num_groups]),
                         scale=tf.fill([num_components, num_groups], 1.0f0))
 
-    z = edmodels.Normal(loc=tf.zeros([num_samples, num_components]),
-                        scale=tf.fill([num_samples, num_components], 1.0f0))
+    z = edmodels.Normal(loc=tf.zeros([num_nonbaseline_samples, num_components]),
+                        scale=tf.fill([num_nonbaseline_samples, num_components], 1.0f0))
 
-    x_mu_pca = tf.matmul(z, w)
+    x_mu_pca = tf.matmul(tf.constant(nonbaseline_samples_mat), tf.matmul(z, w))
 
     x_err_sigma_alpha0 = tf.constant(Polee.SIGMA_ALPHA0, shape=[1, num_groups])
     x_err_sigma_beta0 = tf.constant(Polee.SIGMA_BETA0, shape=[1, num_groups])
@@ -431,12 +488,23 @@ function orthogroup_pca(
     x_err = edmodels.Normal(
         loc=tf.fill([num_samples, num_groups], 0.0f0),
         scale=tf.sqrt(x_err_sigma), name="x_err")
-    x = x_mu_bias + x_mu_pca + x_err
+    # x_err = edmodels.Normal(
+    #     loc=tf.fill([num_samples, num_groups], 0.0f0),
+    #     scale=tf.fill([num_samples, num_groups], 1.0f0), name="x_err")
+
+    # TODO: why does including the x_err term make things so much worse?
+    # x = x_mu_bias + x_mu_pca + x_err
+    x = x_mu_bias + x_mu_pca
 
     # reasonable initialization for w_species
-    w_species0 = zeros(Float32, (num_species, num_groups))
-    w_species_count = zeros(Int, num_species)
+    nonbaseline_sample_idxs_set = Set(nonbaseline_sample_idxs)
+    w_species0 = zeros(Float32, (length(species_factors), num_groups))
+    w_species_count = zeros(Int, length(species_factors))
     for (i, j) in zip(findnz(species_factor_mat)[1:2]...)
+        if baseline_treatment != nothing && i ∈ nonbaseline_sample_idxs_set
+            continue
+        end
+
         for k in 1:num_groups
             w_species0[j, k] += x0[i, k]
         end
@@ -450,6 +518,7 @@ function orthogroup_pca(
     end
 
     latent_vars = Dict(
+        # x_mu_bias => edmodels.PointMass(tf.Variable(tf.fill([1, num_groups], log(1.0f0/num_groups)))),
         w_bias => edmodels.PointMass(
             tf.Variable(w_species0)),
             # tf.Variable(tf.fill([num_species, num_groups], log(1.0f0/num_groups)), name="qw_bias_loc")),
@@ -457,21 +526,21 @@ function orthogroup_pca(
             tf.Variable(tf.random_normal([num_components, num_groups]), name="qw_loc")),
             # tf.Variable(tf.zeros([num_components, num_groups]), name="qw_loc")),
         z => edmodels.PointMass(
-            tf.Variable(tf.random_normal([num_samples, num_components]), name="qz_loc")),
+            tf.Variable(tf.random_normal([num_nonbaseline_samples, num_components]), name="qz_loc")),
             # tf.Variable(tf.zeros([num_samples, num_components]), name="qz_loc")),
         x_err_sigma => edmodels.PointMass(tf.nn[:softplus](tf.Variable(tf.fill([1, num_groups], -3.0f0), name="qx_err_sigma"))),
         x_err => edmodels.PointMass(
             tf.Variable(tf.zeros([num_samples, num_groups]), name="qx_err_loc")))
 
     vars = Dict(
-        :w_bias   => w_bias,
+        # :w_bias   => w_bias,
         :w           => w,
         :z           => z,
         :x_err_sigma => x_err_sigma,
         :x_err       => x_err
     )
 
-    return x, vars, latent_vars
+    return x, vars, latent_vars, nonbaseline_samples_mat
 end
 
 

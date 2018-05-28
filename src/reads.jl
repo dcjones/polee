@@ -103,7 +103,7 @@ function isequiv(cigardata, a::Alignment, b::Alignment)
 end
 
 
-immutable Reads
+struct Reads
     alignments::Vector{Alignment}
     alignment_pairs::IntervalCollection{AlignmentPairMetadata}
     cigardata::Vector{UInt32}
@@ -350,6 +350,66 @@ function make_interval_collection(alignments, seqnames, blocks, trees, cigardata
     GenomicFeatures.update_ordered_trees!(alignment_pairs)
 
     return alignment_pairs
+end
+
+
+"""
+Sample a subset of rs without replacement, and treating reads that start at the
+same position as equivalent.
+"""
+function subsample_reads(rs::Reads, n::Int)
+    # resevoir sampling to select n alignments with unique positions. Unique
+    # positions are used to avoid overfitting models to any one highly
+    # expressed transcript (e.g. rRNA)
+    reservoir = zeros(Int, n)
+    next_reservoir_idx = 1
+    last_first = 0
+    i = 1
+    for alnpr in rs.alignment_pairs
+        if alnpr.first != last_first
+            if next_reservoir_idx <= n
+                reservoir[next_reservoir_idx] = i
+                next_reservoir_idx += 1
+            else
+                j = rand(1:i)
+                if j <= n
+                    reservoir[j] = i
+                end
+            end
+            last_first = alnpr.first
+            i += 1
+        end
+    end
+
+    # build subset of reads
+    reservoir_set = Set{Int}(
+        next_reservoir_idx <= n ? reservoir[1:next_reservoir_idx-1] : reservoir)
+
+    read_idxs_subset = Set{UInt32}()
+    last_first = 0
+    i = 1
+    for alnpr in rs.alignment_pairs
+        if alnpr.first != last_first
+            id = rs.alignments[alnpr.metadata.mate1_idx].id
+            if i ∈ reservoir_set
+                push!(read_idxs_subset, rs.alignments[alnpr.metadata.mate1_idx].id)
+            end
+            last_first = alnpr.first
+            i += 1
+        end
+    end
+    @show length(read_idxs_subset)
+
+    # build collection containing every alignment of reads in the subset
+    alignment_pairs_subset = IntervalCollection{AlignmentPairMetadata}()
+    for alnpr in rs.alignment_pairs
+        id = rs.alignments[alnpr.metadata.mate1_idx].id
+        if id ∈ read_idxs_subset
+            push!(alignment_pairs_subset, alnpr)
+        end
+    end
+
+    return Reads(rs.alignments, alignment_pairs_subset, rs.cigardata)
 end
 
 

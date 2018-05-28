@@ -1,106 +1,44 @@
 
+"""
+Model of conditional fragment probabilities. Should implement:
 
-type FragModel
+condfragprob(fm, t::Transcript, rs::Reads, alnpr::AlignmentPair, effective_length::Float32)
+effective_length(fm, t::Transcript)
+"""
+abstract type FragModel; end
+
+
+"""
+A simple fragment model without any bias modeling.
+"""
+struct SimplisticFragModel <: FragModel
     fraglen_pmf::Vector{Float32}
     fraglen_cdf::Vector{Float32}
     fallback_fraglen_dist::Normal{Float64}
     use_fallback_fraglen_dist::Bool
     strand_specificity::Float32
-    bm::BiasModel
 end
 
 
-"""
-Randomly sample alignment pairs avoiding chosing duplicate reads
-"""
-function sample_training_examples(rs::Reads, n::Int)
-    n = min(n, length(rs.alignment_pairs))
-    examples = IntervalCollection{AlignmentPairMetadata}()
 
-    # count unique alignment start positions
-    starts = Dict{String, Set{Int}}()
-    for (seqname, tree) in rs.alignment_pairs.trees
-        starts[seqname] = Set{Int}()
-        starts_seqname = starts[seqname]
-        for alnpr in tree
-            push!(starts_seqname, alnpr.first)
-        end
-    end
-    n = min(n, length(starts))
 
-    num_starts = 0
-    for v in values(starts)
-        num_starts += length(v)
-    end
 
-    # subsample start positions
-    starts_subset = Dict{String, Set{Int}}()
-    starts_subset_idxs = Set(sample(1:num_starts, n, replace=false))
-    k = 0
-    for (seqname, starts_seqname) in starts
-        starts_subset[seqname] = Set{Int}()
-        starts_subset_seqname = starts_subset[seqname]
-        for i in starts_seqname
-            k += 1
-            if k in starts_subset_idxs
-                push!(starts_subset_seqname, i)
-            end
-        end
-    end
-
-    # select alignments
-    last_start = 0
-    for (seqname, tree) in rs.alignment_pairs.trees
-        starts_subset_seqname = starts_subset[seqname]
-        for alnpr in tree
-            if alnpr.first != last_start
-                if alnpr.first > 0 && alnpr.first in starts_subset_seqname
-                    push!(examples, alnpr)
-                end
-                last_start = alnpr.first
-            end
-        end
-    end
-
-    return examples
+mutable struct BiasedFragModel <: FragModel
+    # TODO:
 end
 
 
-function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
-                   bias_upctx::Int=15, bias_downctx::Int=15)
-    examples = sample_training_examples(rs, n)
 
-    # TODO: positional bias
-    # TODO: strand bias
+function SimplisticFragModel(rs::Reads, ts::Transcripts, n::Int=10000)
+    examples = rs.alignment_pairs
 
     # alignment pair fragment lengths
     alnpr_fraglen = ObjectIdDict()
-
-    # sequence bias training examples
-    fs_foreground = DNASequence[]
-    fs_background = DNASequence[]
-    ss_foreground = DNASequence[]
-    ss_background = DNASequence[]
 
     strand_match_count = 0
     strand_mismatch_count = 0
 
     for (t, alnpr) in eachoverlap(ts, examples)
-        # collect sequences for sequence bias
-        if alnpr.metadata.mate1_idx > 0
-            push_alignment_context!(
-                fs_foreground, fs_background, ss_foreground, ss_background,
-                bias_upctx, bias_downctx, rs,
-                rs.alignments[alnpr.metadata.mate1_idx], t)
-        end
-
-        if alnpr.metadata.mate2_idx > 0
-            push_alignment_context!(
-                fs_foreground, fs_background, ss_foreground, ss_background,
-                bias_upctx, bias_downctx, rs,
-                rs.alignments[alnpr.metadata.mate2_idx], t)
-        end
-
         if alnpr.strand == t.strand
             strand_match_count += 1
         elseif alnpr.strand != STRAND_BOTH
@@ -119,20 +57,6 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
             end
         end
     end
-
-    # train sequence bias models
-    println("training first-strand bias model")
-    fs_model = train_model(fs_foreground, fs_background,
-                           bias_upctx + 1 + bias_downctx)
-    println("training second-strand bias model")
-    ss_model = train_model(ss_foreground, ss_background,
-                           bias_upctx + 1 + bias_downctx)
-
-    bm = BiasModel(bias_upctx, bias_downctx,
-                   fs_foreground, fs_background,
-                   ss_foreground, ss_background,
-                   fs_model, ss_model)
-    # write_statistics(open("bias.csv", "w"), bm)
 
     strand_specificity = strand_match_count /
         (strand_match_count + strand_mismatch_count)
@@ -162,12 +86,13 @@ function FragModel(rs::Reads, ts::Transcripts, n::Int=10000,
     end
 
     use_fallback_fraglen_dist = fraglen_pmf_count < MIN_FRAG_LEN_COUNT
-    return FragModel(fraglen_pmf, fraglen_cdf, Normal(200, 100),
-                     use_fallback_fraglen_dist, strand_specificity, bm)
+    return SimplisticFragModel(
+        fraglen_pmf, fraglen_cdf, Normal(200, 100),
+        use_fallback_fraglen_dist, strand_specificity)
 end
 
 
-function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
+function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
                       alnpr::AlignmentPair, effective_length::Float32)
     fraglen_ = fragmentlength(t, rs, alnpr)
     if isnull(fraglen_)
@@ -198,16 +123,13 @@ function condfragprob(fm::FragModel, t::Transcript, rs::Reads,
         fraglenpr = 0.0f0
     end
 
-    # TODO: use more sophisticated fragment probability model
-    #fragpr = fraglenpr / (tlen <= MAX_FRAG_LEN ? fm.fraglen_cdf[tlen] : 1.0f0)
-    #fragpr = fraglenpr / (tlen - fraglen)
     fragpr = fraglenpr / effective_length
 
     return fragpr
 end
 
 
-function effective_length(fm::FragModel, t::Transcript)
+function effective_length(fm::SimplisticFragModel, t::Transcript)
     tlen = exonic_length(t)
     el = 0.0f0
     for l in 1:min(tlen, MAX_FRAG_LEN)

@@ -62,6 +62,12 @@ NormalALRApprox() = NormalALRApprox(-1)
 #   - Dirichlet
 #   - HSB with Beta distributed balances
 
+
+function optimize_likelihood(sample::RNASeqSample)
+    return approximate_likelihood(OptimizeHSBApprox(), sample)["x"]
+end
+
+
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 input_filename::String, output_filename::String)
     sample = read(input_filename, RNASeqSample)
@@ -165,11 +171,13 @@ end
 
 
 
-function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCSC,
+function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, sample::RNASeqSample,
                                           ::Type{Val{GRADONLY}}=Val{true})
+    X = sample.X
+    efflens = sample.effective_lengths
+
     m, n = size(X)
     Xt = transpose(X)
-
     model = Model(m, n)
 
     # cluster transcripts for hierachrical stick breaking

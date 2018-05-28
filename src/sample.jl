@@ -97,21 +97,37 @@ end
 
 # reassign indexes to remove any zero rows, which would lead to a
 # -Inf log likelihood
-function compact_indexes!(I)
+function compact_indexes!(I, aln_idx_rev_map::Vector{UInt32})
     if isempty(I)
         warn("No compatible reads found.")
     else
+        numrows = 1
         last_i = I[1]
+        for k in 2:length(I)
+            if I[k] == last_i
+            else
+                numrows += 1
+                last_i = I[k]
+            end
+        end
+
+        aln_idx_rev_map2 = zeros(UInt32, numrows)
+        last_i = I[1]
+        aln_idx_rev_map2[1] = aln_idx_rev_map[I[1]]
         I[1] = 1
         for k in 2:length(I)
             if I[k] == last_i
                 I[k] = I[k-1]
             else
                 last_i = I[k]
-                I[k] = I[k-1] + 1
+                next_i = I[k-1] + 1
+                aln_idx_rev_map2[next_i] = aln_idx_rev_map[I[k]]
+                I[k] = next_i
             end
         end
     end
+
+    return aln_idx_rev_map2
 end
 
 
@@ -179,14 +195,79 @@ function RNASeqSample(ts::Transcripts,
                       reads_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
-                      output=Nullable{String}())
+                      output=Nullable{String}();
+                      num_training_reads::Int=100000)
 
     rs = Reads(reads_filename, excluded_seqs)
-    fm = FragModel(rs, ts)
+
+    # train fragment model by selecting a random subset of reads, assigning
+    # them to transcripts, then extracting sequence context.
+    rs_train      = subsample_reads(rs, num_training_reads)
+    simplistic_fm = SimplisticFragModel(rs_train, ts)
+    aln_idx_rev_map_ref = Ref{Vector{UInt32}}()
+    sample_train  = RNASeqSample(
+        simplistic_fm, rs_train, ts, ts_metadata,
+        Nullable{String}(), Nullable(aln_idx_rev_map_ref))
+    aln_idx_rev_map = aln_idx_rev_map_ref.x
+
+    # assign reads to transcripts
+    xs_train = optimize_likelihood(sample_train)
+    Xt = transpose(sample_train.X)
+
+    # map read index to a transcript index
+    read_assignments = Dict{Int, Int}()
+
+    for i in 1:size(sample_train.X, 1)
+        read_idx = aln_idx_rev_map[i]
+
+        z_sum = 0.0
+        for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
+            j = Xt.rowval[ptr]
+            z_sum += xs_train[j] * Xt.nzval[ptr]
+        end
+
+        # assign read randomly according to its probability
+        r = rand()
+        read_assignment = 0
+        for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
+            j = Xt.rowval[ptr]
+            zj = xs_train[j] * Xt.nzval[ptr] / z_sum
+            if zj > r || ptr == Xt.colptr[i+1]-1
+                read_assignment = j
+            else
+                r -= zj
+            end
+        end
+        @assert read_assignment != 0
+        read_assignments[read_idx] = read_assignment
+    end
+
+    exit()
+
+    # TODO: pass assignments off to BiasedFragModel along with assignments
+
+    # TODO: extract sequence context
+    # TODO: train bias on contexts
+
+
+    # TODO: construct full sample using trained fragment model
+end
+
+
+"""
+Build a RNASeqSample from a provided fragment model and read set.
+"""
+function RNASeqSample(fm::FragModel,
+                      rs::Reads,
+                      ts::Transcripts,
+                      ts_metadata::TranscriptsMetadata,
+                      output=Nullable{String}(),
+                      aln_idx_rev_map_ref=Nullable{Ref{Vector{UInt32}}})
 
     println("intersecting reads and transcripts...")
 
     # reassign indexes to alignments to group by position
+    # TODO: this is allocated larger than it needs to be. Use a dict?
     aln_idx_map = zeros(UInt32, length(rs.alignments))
     nextidx = 1
     # for alnpr in rs.alignment_pairs
@@ -212,6 +293,15 @@ function RNASeqSample(ts::Transcripts,
     effective_lengths = Float32[effective_length(fm, t) for t in ts]
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 
+    # reverse index (mapping matrix index to read id)
+    aln_idx_rev_map = zeros(UInt32, maximum(I))
+    for (i, j) in enumerate(aln_idx_map)
+        if j != 0
+            aln_idx_rev_map[j] = i
+        end
+    end
+    @assert sum(aln_idx_rev_map .== 0) == 0
+
     gc()
     p = sortperm(I)
     I = I[p]
@@ -219,7 +309,13 @@ function RNASeqSample(ts::Transcripts,
     V = V[p]
     gc()
 
-    compact_indexes!(I) # 0.000 GB
+    @show maximum(I)
+
+    aln_idx_rev_map = compact_indexes!(I, aln_idx_rev_map)
+    if !isnull(aln_idx_rev_map_ref)
+        get(aln_idx_rev_map_ref).x = aln_idx_rev_map
+    end
+
     m = isempty(I) ? 0 : Int(maximum(I))
     @show m
 
@@ -246,5 +342,3 @@ function RNASeqSample(ts::Transcripts,
 
     return RNASeqSample(m, n, M, effective_lengths, ts_metadata)
 end
-
-

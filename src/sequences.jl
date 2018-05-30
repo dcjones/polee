@@ -29,6 +29,9 @@ function read_transcript_sequences_from_fasta!(ts, filename)
                         append!(seq, entryseq[exon.first:exon.last])
                     end
                 end
+                if t.strand == STRAND_NEG
+                    reverse_complement!(seq)
+                end
             end
         end
     end
@@ -55,6 +58,9 @@ function read_transcript_sequences_from_twobit!(ts, filename)
                 if exon.last <= length(refseq)
                     append!(seq, DNASequence(refseq[exon.first:exon.last]))
                 end
+            end
+            if t.strand == STRAND_NEG
+                reverse_complement!(seq)
             end
         end
     end

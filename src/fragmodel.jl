@@ -20,16 +20,7 @@ struct SimplisticFragModel <: FragModel
 end
 
 
-
-
-
-mutable struct BiasedFragModel <: FragModel
-    # TODO:
-end
-
-
-
-function SimplisticFragModel(rs::Reads, ts::Transcripts, n::Int=10000)
+function SimplisticFragModel(rs::Reads, ts::Transcripts)
     examples = rs.alignment_pairs
 
     # alignment pair fragment lengths
@@ -136,6 +127,149 @@ function effective_length(fm::SimplisticFragModel, t::Transcript)
         el += fm.fraglen_pmf[l] * (tlen - l + 1)
     end
     return Float32(max(el, MIN_EFFECTIVE_LENGTH))
+end
+
+
+mutable struct BiasedFragModel <: FragModel
+    # TODO:
+end
+
+
+function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int, Int})
+
+    ts_by_id = collect(Transcript, ts)
+
+    # strand-preference and fragment length distribution are estimated seperately
+    # from other bias effects to simplify things. This way we can just randomly
+    # shift reads without resizing fragments or changing strand.
+
+    bias_foreground_examples = BiasTrainingExample[]
+    bias_background_examples = BiasTrainingExample[]
+
+    strand_match_count = 0
+    strand_mismatch_count = 0
+    fraglens = Int[]
+
+    for alnpr in rs.alignment_pairs
+        read_id = rs.alignments[alnpr.metadata.mate1_idx].id
+        transcript_id = get(read_assignments, read_id, 0)
+        if transcript_id == 0
+            continue
+        end
+        t = ts_by_id[transcript_id]
+        tseq = t.metadata.seq
+
+        fraglen = fragmentlength(t, rs, alnpr)
+        if isnull(fraglen)
+            continue
+        end
+
+        if alnpr.strand == t.strand
+            strand_match_count += 1
+        elseif alnpr.strand != STRAND_BOTH
+            strand_mismatch_count += 1
+        end
+
+        if get(fraglen) > 0
+            push!(fraglens, get(fraglen))
+            fl = get(fraglen)
+        else
+            fl = FALLBACK_FRAGLEN_MEAN
+        end
+
+
+        # set tpos to 5' most position of the fragment (relative to transcript)
+        if alnpr.metadata.mate1_idx > 0 && alnpr.metadata.mate2_idx > 0
+            aln1 = rs.alignments[alnpr.metadata.mate1_idx]
+            aln2 = rs.alignments[alnpr.metadata.mate2_idx]
+            if t.strand == STRAND_POS
+                gpos = min(aln1.leftpos, aln2.leftpos)
+            else
+                gpos = max(aln1.rightpos, aln2.rightpos)
+            end
+            tpos = genomic_to_transcriptomic(t, gpos)
+        else
+            # single-strand where we may have to guess
+            aln = alnpr.metadata.mate1_idx > 0 ?
+                rs.alignments[alnpr.metadata.mate1_idx] :
+                rs.alignments[alnpr.metadata.mate2_idx]
+
+            alnstrand = aln.flag & SAM.FLAG_REVERSE != 0 ?
+                STRAND_NEG : STRAND_POS
+
+            if t.strand == STRAND_POS
+                if alnstrand == STRAND_POS
+                    tpos = genomic_to_transcriptomic(t, aln.leftpos)
+                else
+                    tpos = genomic_to_transcriptomic(t, aln.rightpos) - fl
+                end
+            else
+                if alnstrand == STRAND_POS
+                    tpos = genomic_to_transcriptomic(t, aln.leftpos) - fl
+                else
+                    tpos = genomic_to_transcriptomic(t, aln.rightpos)
+                end
+            end
+
+        end
+
+        # nudge reads that overhang (due to soft-clipping typically)
+        if tpos <= 0
+            fl += tpos - 1
+            tpos = 1
+        end
+
+        if tpos+fl-1 > length(tseq)
+            fl = length(tseq) - tpos + 1
+        end
+
+        if fl <= 0 || tpos < 1 || tpos + fl - 1 > length(tseq)
+            continue
+        end
+
+        fragseq = tseq[tpos:tpos+fl-1]
+        push!(bias_foreground_examples, BiasTrainingExample(fragseq))
+
+        # perturb fragment position and record context as a background sample
+        tpos = rand(1:length(tseq)-fl+1)
+        fragseq = tseq[tpos:tpos+fl-1]
+        push!(bias_background_examples, BiasTrainingExample(fragseq))
+    end
+
+    @show length(read_assignments)
+    @show length(rs.alignment_pairs)
+    @show length(fraglens)
+    @show length(bias_foreground_examples)
+
+    strand_specificity = strand_match_count /
+        (strand_match_count + strand_mismatch_count)
+    negentropy = strand_specificity * log2(strand_specificity) +
+        (1.0 - strand_specificity) * log2(1.0 - strand_specificity)
+    println("Strand specificity: ", round(100.0 * (1 + negentropy), 1), "%")
+
+    # compute fragment length frequencies
+    fraglen_pmf = fill(1.0, MAX_FRAG_LEN) # init with pseudocount
+    for fl in fraglens
+        if fl <= MAX_FRAG_LEN
+            fraglen_pmf[fl] += 1
+        end
+    end
+    fraglen_pmf ./= sum(fraglen_pmf)
+
+    # out = open("fraglen.csv", "w")
+    # println(out, "fraglen,freq")
+    # for (fl, freq) in enumerate(fraglen_pmf)
+    #     println(out, fl, ",", freq)
+    # end
+
+    fraglen_cdf = copy(fraglen_pmf)
+    for i in 2:length(fraglen_cdf)
+        fraglen_cdf[i] += fraglen_cdf[i-1]
+    end
+
+    use_fallback_fraglen_dist = length(fraglens) < MIN_FRAG_LEN_COUNT
+
+
 end
 
 

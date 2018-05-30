@@ -259,13 +259,19 @@ function genomic_to_transcriptomic(t::Transcript, position::Integer)
     exons = t.metadata.exons
     i = searchsortedlast(exons, Exon(position, position))
     if i == 0 || exons[i].last < position
+        # @show position
+        # @show exons
         return 0
     else
         tpos = 1
         for j in 1:i-1
             tpos += exons[j].last - exons[j].first + 1
         end
-        return tpos + position - t.metadata.exons[i].first
+        tpos += position - t.metadata.exons[i].first
+        if t.strand == STRAND_NEG
+            tpos = exonic_length(t) - tpos + 1
+        end
+        return tpos
     end
 end
 

@@ -239,16 +239,13 @@ function RNASeqSample(ts::Transcripts,
             end
         end
         @assert read_assignment != 0
+        @assert !haskey(read_assignments, read_idx)
         read_assignments[read_idx] = read_assignment
     end
 
+    fm = BiasedFragModel(rs_train, ts, read_assignments)
+
     exit()
-
-    # TODO: pass assignments off to BiasedFragModel along with assignments
-
-    # TODO: extract sequence context
-    # TODO: train bias on contexts
-
 
     # TODO: construct full sample using trained fragment model
 end
@@ -297,6 +294,7 @@ function RNASeqSample(fm::FragModel,
     aln_idx_rev_map = zeros(UInt32, maximum(I))
     for (i, j) in enumerate(aln_idx_map)
         if j != 0
+            @assert aln_idx_rev_map[j] == 0
             aln_idx_rev_map[j] = i
         end
     end

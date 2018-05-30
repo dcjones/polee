@@ -16,6 +16,10 @@ const USED_BAM_FLAGS =
     0x040 | # read 1
     0x080   # read 2
 
+# For single-end sequencing, make some assumptions about fragment length distribution
+const FALLBACK_FRAGLEN_MEAN = 150
+const FALLBACK_FRAGLEN_STD  = 50
+
 # Disallow fragments longer than this
 const MAX_FRAG_LEN = 1500
 

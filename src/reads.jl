@@ -700,3 +700,14 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 end
 
 
+"""
+Extract the fragment's sequence assuming it originated from transcript t.
+"""
+function fragmentsequence(t::Transcript, rs::Reads, alnpr::AlignmentPair)
+
+    tseq = t.metadata.seq
+
+
+end
+
+

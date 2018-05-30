@@ -1,5 +1,11 @@
 
 
+
+struct BiasTrainingExample
+    seq::DNASequence
+end
+
+
 type BiasModel
     upctx::Int
     downctx::Int

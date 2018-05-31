@@ -485,7 +485,10 @@ function estimate_splicing_pca(input::ModelInput; num_components::Int=1,
         error("Inference type $(input.inference) is not supported.")
     end
 
-    open("splicing-pca-estimates.csv", "w") do out
+    output_filename = isnull(input.output_filename) ?
+        "splicing-pca-estimates.csv" : get(input.output_filename)
+
+    open(output_filename, "w") do out
         print(out, "sample,")
         println(out, join([string("pc", j) for j in 1:num_components], ','))
         for i in 1:num_samples

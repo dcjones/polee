@@ -57,3 +57,10 @@ const LIKAP_NUM_MC_SAMPLES = 5
 # Note: tensorflow parameterizes inverse gamma by recipricals because its a fucking sadist
 const SIGMA_ALPHA0 = 0.001f0
 const SIGMA_BETA0  = 0.001f0
+
+# amount of sequence up- and downstream of the fragment sequence to include.
+const BIAS_SEQ_INNER_CTX  = 20
+const BIAS_SEQ_OUTER_CTX  = 10
+
+# Number of bins to divide sequence fragments into for counting nucleotide frequencies
+const BIAS_NUM_FREQ_BINS = 4

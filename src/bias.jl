@@ -2,8 +2,91 @@
 
 
 struct BiasTrainingExample
-    seq::DNASequence
+    left_seq::DNASequence
+    right_seq::DNASequence
+    frag_gc::Float64
+    tpdist::Float64
+    tlen::Float64
+    fl::Float64
+    a_freqs::NTuple{BIAS_NUM_FREQ_BINS, Float64}
+    c_freqs::NTuple{BIAS_NUM_FREQ_BINS, Float64}
+    g_freqs::NTuple{BIAS_NUM_FREQ_BINS, Float64}
+    t_freqs::NTuple{BIAS_NUM_FREQ_BINS, Float64}
 end
+
+
+function BiasTrainingExample(tseq, tpos, fl)
+    fragseq = extract_padded_seq(
+        tseq, tpos - BIAS_SEQ_OUTER_CTX, tpos + fl - 1 + BIAS_SEQ_OUTER_CTX)
+    left_seq  = fragseq[1:BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX]
+    right_seq = fragseq[end-(BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX)+1:end]
+
+    a_freqs = zeros(Float64, BIAS_NUM_FREQ_BINS)
+    c_freqs = zeros(Float64, BIAS_NUM_FREQ_BINS)
+    g_freqs = zeros(Float64, BIAS_NUM_FREQ_BINS)
+    t_freqs = zeros(Float64, BIAS_NUM_FREQ_BINS)
+
+    fragseq = fragseq[BIAS_SEQ_OUTER_CTX+1:end-BIAS_SEQ_OUTER_CTX]
+    gc = 0
+    binsize = div(length(fragseq), BIAS_NUM_FREQ_BINS)
+    for bin in 1:BIAS_NUM_FREQ_BINS
+        if bin == BIAS_NUM_FREQ_BINS
+            from = 1 + (bin - 1) * binsize
+            to = length(fragseq)
+        else
+            from = 1 + (bin - 1) * binsize
+            to = bin * binsize
+        end
+
+        for i in from:to
+            if fragseq[i] == DNA_A
+                a_freqs[bin] += 1
+            elseif fragseq[i] == DNA_C
+                gc += 1
+                c_freqs[bin] += 1
+            elseif fragseq[i] == DNA_G
+                gc += 1
+                g_freqs[bin] += 1
+            elseif fragseq[i] == DNA_T
+                t_freqs[bin] += 1
+            end
+        end
+
+        a_freqs[bin] ./= length(from:to)
+        c_freqs[bin] ./= length(from:to)
+        g_freqs[bin] ./= length(from:to)
+        t_freqs[bin] ./= length(from:to)
+    end
+    gc /= length(fragseq)
+
+    tend = length(tseq) - BIAS_SEQ_OUTER_CTX
+    # tpdist = (length(tseq) - (tpos + fl - 1)) / length(tseq)
+    tpdist = length(tseq) - tpos
+
+    return BiasTrainingExample(
+        left_seq, right_seq, gc, tpdist, length(tseq), fl,
+        NTuple{BIAS_NUM_FREQ_BINS, Float64}(a_freqs),
+        NTuple{BIAS_NUM_FREQ_BINS, Float64}(c_freqs),
+        NTuple{BIAS_NUM_FREQ_BINS, Float64}(g_freqs),
+        NTuple{BIAS_NUM_FREQ_BINS, Float64}(t_freqs))
+end
+
+
+"""
+Essentially do tseq[first:last], but pad the sequence with Ns when first:last
+is out of bounds.
+"""
+function extract_padded_seq(tseq, first, last)
+    leftpad = first < 1 ? 1 - first : 0
+    rightpad = last > length(tseq) ? last - length(tseq) : 0
+    fragseq = tseq[max(1, first):min(length(tseq), last)]
+    if leftpad == 0 && rightpad == 0
+        return fragseq
+    else
+        return DNASequence(repeat(dna"N", leftpad), fragseq, repeat(dna"N", rightpad))
+    end
+end
+
 
 
 type BiasModel

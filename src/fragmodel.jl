@@ -135,6 +135,7 @@ mutable struct BiasedFragModel <: FragModel
 end
 
 
+
 function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int, Int})
 
     ts_by_id = collect(Transcript, ts)
@@ -227,13 +228,15 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
             continue
         end
 
-        fragseq = tseq[tpos:tpos+fl-1]
-        push!(bias_foreground_examples, BiasTrainingExample(fragseq))
+        # fraqseq = extract_padded_seq(
+        #     tseq, tpos - BIAS_SEQ_FRAG_PAD_LEFT, tpos + fl - 1 + BIAS_SEQ_FRAG_PAD_RIGHT)
+        push!(bias_foreground_examples, BiasTrainingExample(tseq, tpos, fl))
 
         # perturb fragment position and record context as a background sample
         tpos = rand(1:length(tseq)-fl+1)
-        fragseq = tseq[tpos:tpos+fl-1]
-        push!(bias_background_examples, BiasTrainingExample(fragseq))
+        # fraqseq = extract_padded_seq(
+        #     tseq, tpos - BIAS_SEQ_FRAG_PAD_LEFT, tpos + fl - 1 + BIAS_SEQ_FRAG_PAD_RIGHT)
+        push!(bias_background_examples, BiasTrainingExample(tseq, tpos, fl))
     end
 
     @show length(read_assignments)
@@ -269,6 +272,39 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
 
     use_fallback_fraglen_dist = length(fraglens) < MIN_FRAG_LEN_COUNT
 
+    open("bias-foreground.csv", "w") do output
+        for example in bias_foreground_examples
+            println(
+                output, example.left_seq,
+                ',', example.right_seq,
+                ',', example.frag_gc,
+                ',', example.tpdist,
+                ',', example.tlen,
+                ',', example.fl,
+                ',', join(example.a_freqs, ','),
+                ',', join(example.c_freqs, ','),
+                ',', join(example.g_freqs, ','),
+                ',', join(example.t_freqs, ','))
+        end
+    end
+
+    open("bias-background.csv", "w") do output
+        for example in bias_background_examples
+            println(
+                output, example.left_seq,
+                ',', example.right_seq,
+                ',', example.frag_gc,
+                ',', example.tpdist,
+                ',', example.tlen,
+                ',', example.fl,
+                ',', join(example.a_freqs, ','),
+                ',', join(example.c_freqs, ','),
+                ',', join(example.g_freqs, ','),
+                ',', join(example.t_freqs, ','))
+        end
+    end
+
+    # TODO: construct sequence bias models
 
 end
 

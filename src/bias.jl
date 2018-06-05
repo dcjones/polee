@@ -88,20 +88,6 @@ function extract_padded_seq(tseq, first, last)
 end
 
 
-
-type BiasModel
-    upctx::Int
-    downctx::Int
-    fs_foreground::Vector{DNASequence}
-    fs_background::Vector{DNASequence}
-    ss_foreground::Vector{DNASequence}
-    ss_background::Vector{DNASequence}
-
-    fs_model
-    ss_model
-end
-
-
 function perturb_transcriptomic_position(pos, lower, upper)
     @assert lower <= pos <= upper
     pos_ = pos + round(Int, rand(Normal(5,5)))
@@ -177,111 +163,81 @@ function push_alignment_context!(
 end
 
 
-function train_model(foreground, background, k)
-    # TF = TensorFlow
-
-    # sess = TF.Session(TF.Graph())
-
-
-    #=
-    n0, n1 = length(background), length(foreground)
-    n = n0 + n1
-
-    ntencode = Dict{DNANucleotide, Int}(
-        DNA_A => 1, DNA_C => 2, DNA_G => 3, DNA_T => 4,
-        DNA_N => 1) # encode N as A, which is dumb, but it doesn't matter
-
-    examples = zeros(Float32, (n, 4*k))
-    labels = zeros(Float32, (n, 2))
-    for (i, example) in enumerate(vcat(foreground, background))
-        for (j, nt) in enumerate(example)
-            examples[i, 4*(j-1) + ntencode[nt]] = 1
-        end
-        labels[i, ifelse(i <= n0, 1, 2)] = 1
-    end
-
-    x = TensorFlow.placeholder(Float32, shape=[n, 4*k])
-    y_ = TensorFlow.placeholder(Float32, shape=[n, 2])
-    W = TF.Variable(zeros(Float32, 4*k, 2))
-    b = TF.Variable(zeros(Float32, 2))
-    y = TF.nn.softmax(x*W+b)
-    run(sess, TF.initialize_all_variables())
-
-    cross_entropy = TF.reduce_mean(
-        -TF.reduce_sum(y_ .* log(y), reduction_indices=[2]))
-
-    train_step = TF.train.minimize(TF.train.GradientDescentOptimizer(.00001),
-                                   cross_entropy)
-
-    run(sess, train_step, Dict(x=>examples, y_=>labels))
-    =#
-
-    # TODO:
-    #   - how do I get a weight out of this given a sequence context
-    #     It's easy to do xW+b, do I just take the ratio of the two values then?
-    #
-    #   - how should I actually evaluate the model? Ultimately I want to improve
-    #     accuracy on various benchmarks, but I can't do that at this point.
-    #
-    # I actually think I can score this the same way seqbias does: penalized
-    # likelihood. Once I get that in place, I can start messing around with
-    # models. I shouldn't go too far though. We need to build up the
-    # quantification pipeline to do the ultimate evaluation.
-    #
-    # So let's get some basic stuff working, then focus on evaluating
-    # conditional probabilities and dumping them to a sparse matrix.
-    # return sess
-end
-
-
-function bias(bm::BiasModel, t::Transcript)
-    # TODO: compute all-subsequence bias across transcript
-end
-
-
-function write_statistics(out::IO, bm::BiasModel)
-    println(out, "strand,state,position,nucleotide,frequency")
-    example_collections = [
-        ("first-strand", "foreground", bm.fs_foreground),
-        ("first-strand", "background", bm.fs_background),
-        ("second-strand", "foreground", bm.ss_foreground),
-        ("second-strand", "background", bm.ss_background)]
-    freqs = Dict{DNA, Float64}(
-        DNA_A => 0.0, DNA_C => 0.0, DNA_G => 0.0, DNA_T => 0.0)
-
-    n = bm.upctx + 1 + bm.downctx
-    for (strand, state, examples) in example_collections
-        for pos in 1:n
-            for k in keys(freqs)
-                freqs[k] = 0.0
-            end
-
-            for seq in examples
-                if seq[pos] != DNA_N
-                    freqs[seq[pos]] += 1
-                end
-            end
-
-            z = sum(values(freqs))
-            for (k, v) in freqs
-                @printf(out, "%s,%s,%d,%c,%0.4f\n",
-                        strand, state, pos - bm.upctx - 1, Char(k), v/z)
-            end
-        end
-    end
-end
-
-
 struct SeqBiasModel
-
+    orders::Vector{Int}
+    ps::Array{Float32, 4}
 end
 
+
+# some helper functions for training seqbiasmodel
+
+
+# update position j in the markov chain parameters ps
+function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order)
+    ps[j,1:end,1:end,1:end] = 1 # pseudocount
+
+    for i in 1:size(seq_train, 1) # 0.22 seconds
+        ctx = 0
+        for l in 1:order
+            ctx = (ctx << 2) | seq_train[i, j+l]
+        end
+        ps[j, ys_train[i]+1, seq_train[i, j]+1, ctx+1] += 1
+    end
+
+    for i2 in 1:2 # 0.0001 seconds
+        for ctx in 1:(4^order)
+            z = sum(ps[j, i2, 1:end, ctx])
+            ps[j, i2, 1:end, ctx] ./= z
+            for l in 1:4
+                ps[j, i2, l, ctx] = log(ps[j, i2, l, ctx])
+            end
+        end
+    end
+end
+
+
+function seqbias_update_lp!(ps, seq_test, seq_test_lp, j, order)
+    if order < 0
+        return
+    end
+
+    for i in 1:size(seq_test, 1)
+        ctx = 0
+        for l in 1:order
+            ctx = (ctx << 2) | seq_test[i, j+l]
+        end
+
+        nt = seq_test[i, j]+1
+        seq_test_lp[i, 1, j] = ps[j, 1, nt, ctx+1]
+        seq_test_lp[i, 2, j] = ps[j, 2, nt, ctx+1]
+    end
+end
+
+
+function seqbias_save_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
+    for i1 in 1:2, i2 in 1:4, i3 in 1:size(ps, 4)
+        tmp_ps[i1, i2, i3] = ps[j, i1, i2, i3]
+    end
+
+    for i1 in 1:size(seq_test_lp, 1), i2 in 1:2
+        tmp_seq_test_lp[i1, i2] = seq_test_lp[i1, i2, j]
+    end
+end
+
+function seqbias_restore_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
+    for i1 in 1:2, i2 in 1:4, i3 in 1:size(ps, 4)
+        ps[j, i1, i2, i3] = tmp_ps[i1, i2, i3]
+    end
+
+    for i1 in 1:size(seq_test_lp, 1), i2 in 1:2
+        seq_test_lp[i1, i2, j] = tmp_seq_test_lp[i1, i2]
+    end
+end
 
 
 function SeqBiasModel(
         foreground_training_examples::Vector{BiasTrainingExample},
         background_training_examples::Vector{BiasTrainingExample},
-        training_example_weights::Vector{Float32},
         foreground_testing_examples::Vector{BiasTrainingExample},
         background_testing_examples::Vector{BiasTrainingExample},
         fragend::Symbol)
@@ -290,19 +246,21 @@ function SeqBiasModel(
     maxorder = 6
     maxorder_size = 4^maxorder
     k = length(foreground_training_examples[1].left_seq)
-    ps_fg = zeros(Float32, (k, 4, maxorder_size))
-    ps_bg = zeros(Float32, (k, 4, maxorder_size))
 
     # 2bit encode every sequence
-    seq_fg_train = Array{UInt8}((length(foreground_training_examples), k))
-    seq_bg_train = Array{UInt8}((length(background_training_examples), k))
-    seq_fg_test = Array{UInt8}((length(foreground_testing_examples), k))
-    seq_bg_test = Array{UInt8}((length(background_testing_examples), k))
-    for (arr, examples) in
-            [(seq_fg_train, foreground_training_examples),
-             (seq_bg_train, background_training_examples),
-             (seq_fg_test, foreground_testing_examples),
-             (seq_bg_test, background_testing_examples)]
+    n_train   = length(foreground_training_examples) + length(background_training_examples)
+    seq_train = Array{UInt8}((n_train, k))
+    ys_train  = Array{Bool}(n_train)
+
+    n_test    = length(foreground_testing_examples) + length(background_testing_examples)
+    seq_test  = Array{UInt8}((n_test, k))
+    ys_test   = Array{Bool}(n_test)
+
+    for (seqarr, ys, offset, y, examples) in
+            [(seq_train, ys_train,                                    0,  true, foreground_training_examples),
+             (seq_train, ys_train, length(foreground_training_examples), false, background_training_examples),
+             (seq_test,  ys_test,                                     0,  true, foreground_testing_examples),
+             (seq_test,  ys_test,   length(foreground_testing_examples), false, background_testing_examples)]
         for (i, example) in enumerate(examples)
             seq = fragend == :left ? example.left_seq : example.right_seq
             for j in 1:k
@@ -311,7 +269,8 @@ function SeqBiasModel(
                     seq[j] == DNA_G ? UInt8(2) :
                     seq[j] == DNA_T ? UInt8(3) :
                     rand(UInt8(0):UInt8(3))
-                arr[i, j] = c
+                seqarr[offset + i, j] = c
+                ys[offset + i] = y
             end
         end
     end
@@ -319,123 +278,98 @@ function SeqBiasModel(
     prior = length(foreground_training_examples) /
         (length(foreground_training_examples) + length(background_training_examples))
 
+    log_prior = log(prior)
+    log_inv_prior = log(1.0 - prior)
+
+    # markov chain paremeters: indexed by
+    #     position, foreground/background, nucleotide, nucleotide context
+    ps = zeros(Float32, (k, 2, 4, maxorder_size))
+
+    # arrays for saving a slice of ps
+    tmp_ps = Array{Float32}((2, 4, maxorder_size))
+
+    # probability terms, precomputed to avoid revaluating things
+    seq_test_lp = zeros(Float32, (n_test, 2, k))
+
+    # arrays for saving slices of seq_fg_test_lp/seq_bg_test_lp
+    tmp_seq_test_lp = zeros(Float32, (n_test, 2))
+
+    # order of the markov chain at each position, where -1 indicated an
+    # excluded position
     orders = fill(-1, k)
 
-    # update ps_fg, ps_bg
-    function update_param_estimate!(j)
-        ps_fg[j,1:end,1:end] = 1 # pseudocount
-        ps_bg[j,1:end,1:end] = 1 # pseudocount
-        order = orders[j]
-
-        for (ps, seqs) in [(ps_fg, seq_fg_train), (ps_bg, seq_bg_train)]
-            for i in 1:size(seqs, 1)
-                ctx = 0
-                for l in 1:order
-                    ctx = (ctx << 2) | seqs[i, j+l]
-                end
-                ps[j, seqs[i, j]+1, ctx+1] += 1
-            end
-
-            for ctx in 1:(4^order)
-                z = sum(ps[j, 1:end, ctx])
-                ps[j, 1:end, ctx] ./= z
-                for l in 1:4
-                    ps[j, l, ctx] = log(ps[j, l, ctx])
-                end
-            end
-        end
+    function compute_accuracy()
+        lps = sum(seq_test_lp, 3)
+        return mean((lps[1:end, 2] .> lps[1:end, 1]) .== ys_test)
     end
 
-    function eval_accuracy()
-        cross_entropy = 0.0
-        accuracy = 0.0
-        for (y, seqs) in [(1.0, seq_fg_test), (0.0, seq_bg_test)]
-            for i in 1:size(seqs, 1)
-                lp1 = log(prior)
-                lp0 = log(1.0 - prior)
-                for j in 1:k
-                    order = orders[j]
-                    if order < 0
-                        continue
-                    end
-                    ctx = 0
-                    for l in 1:order
-                        ctx = (ctx << 2) | seqs[i, j+l]
-                    end
-
-                    lp1 += ps_fg[j, seqs[i, j]+1, ctx+1]
-                    lp0 += ps_bg[j, seqs[i, j]+1, ctx+1]
-                end
-
-                p1 = exp(lp1)
-                p0 = exp(lp0)
-                lpdenom = log(exp(lp0) + exp(lp1))
-
-                # @show (p1, p0)
-
-                accuracy += (p1 > p0) == (y == 1.0)
-                cross_entropy -= y * (lp1 - lpdenom) + (1 - y) * (lp0 - lpdenom)
-            end
+    function compute_cross_entropy()
+        logcondprobs = sum(seq_test_lp, 3)
+        condprobs = exp.(logcondprobs)
+        logprobs = logcondprobs .- log.(condprobs[1:end, 1] .+ condprobs[1:end, 2])
+        entropy = 0.0
+        for i1 in 1:size(logprobs, 1)
+            entropy -= ys_test[i1] * logprobs[i1, 2] + (1 - ys_test[i1]) * logprobs[i1, 1]
         end
-        cross_entropy /= size(seq_fg_test, 1) + size(seq_bg_test, 1)
-        accuracy /= size(seq_fg_test, 1) + size(seq_bg_test, 1)
-        return cross_entropy, accuracy
+        entropy /= size(logprobs, 1)
+        return entropy
     end
 
-    tmp_fg = Array{Float32}((4, maxorder_size))
-    tmp_bg = Array{Float32}((4, maxorder_size))
-
-    entropy0, accuracy0 = eval_accuracy()
-    @show entropy0, accuracy0
-
+    accuracy0 = compute_accuracy()
+    entropy0 = compute_cross_entropy()
     while true
-        best_entropy = entropy0
         best_accuracy = accuracy0
+        best_entropy = entropy0
         best_j = 0
 
         for j in 1:k
             if orders[j] < maxorder && j + orders[j] < k
                 # save parameters
-                ps_fg_j = view(ps_fg, j, 1:4, 1:maxorder_size)
-                ps_bg_j = view(ps_bg, j, 1:4, 1:maxorder_size)
-                copy!(tmp_fg, ps_fg_j)
-                copy!(tmp_bg, ps_bg_j)
+                seqbias_save_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
 
                 # increase order and try out the model
                 orders[j] += 1
-                @time update_param_estimate!(j) # 0.04 seconds
 
-                @time entropy, accuracy = eval_accuracy() # 0.21 seconds
-                @show (j, orders[j], entropy, accuracy)
+                seqbias_update_param_estimate!(
+                    ps, seq_train, ys_train, j, orders[j]) # 0.0005 seconds
+                seqbias_update_lp!(
+                    ps, seq_test, seq_test_lp, j, orders[j]) # 0.0001 seconds
+
+                accuracy = compute_accuracy() # 0.001 seconds
+                entropy = compute_cross_entropy() # 0.001 seconds
+
+                # @show (j, orders[j], accuracy)
+                # if accuracy > best_accuracy
                 if entropy < best_entropy
-                    best_entropy = entropy
                     best_accuracy = accuracy
+                    best_entropy = entropy
                     best_j = j
                 end
 
                 # return parameters to original state
                 orders[j] -= 1
-                copy!(ps_fg_j, tmp_fg)
-                copy!(ps_bg_j, tmp_bg)
+                seqbias_restore_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
             end
         end
 
+        # if best_accuracy <= accuracy0
         if best_entropy >= entropy0
             break
         else
             orders[best_j] += 1
-            update_param_estimate!(best_j)
-            entropy0 = best_entropy
+            seqbias_update_param_estimate!(
+                ps, seq_train, ys_train, best_j, orders[best_j])
+            seqbias_update_lp!(ps, seq_test, seq_test_lp, best_j, orders[best_j])
             accuracy0 = best_accuracy
-            @show best_j
-            @show entropy0
-            @show accuracy0
+            entropy0 = best_entropy
         end
     end
 
+    @show accuracy0
+    @show entropy0
     @show orders
 
-    # TODO: return some sort of representation
+    return SeqBiasModel(orders, ps)
 end
 
 

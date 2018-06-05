@@ -282,13 +282,19 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
     bias_foreground_testing_examples = bias_foreground_examples[n_training+1:end]
     bias_background_testing_examples = bias_background_examples[n_training+1:end]
 
-    seqbias = SeqBiasModel(
+    @time seqbias_left = SeqBiasModel(
         bias_foreground_training_examples,
         bias_background_training_examples,
-        ones(Float32, length(bias_foreground_training_examples)),
         bias_foreground_testing_examples,
         bias_background_testing_examples,
         :left)
+
+    @time seqbias_right = SeqBiasModel(
+        bias_foreground_training_examples,
+        bias_background_training_examples,
+        bias_foreground_testing_examples,
+        bias_background_testing_examples,
+        :right)
 
 
     open("bias-foreground.csv", "w") do output

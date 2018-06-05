@@ -272,6 +272,25 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
 
     use_fallback_fraglen_dist = length(fraglens) < MIN_FRAG_LEN_COUNT
 
+    p = shuffle(1:length(bias_foreground_examples))
+    bias_foreground_examples = bias_foreground_examples[p]
+    bias_background_examples = bias_background_examples[p]
+    n_training = floor(Int, 0.8 * length(bias_foreground_examples))
+
+    bias_foreground_training_examples = bias_foreground_examples[1:n_training]
+    bias_background_training_examples = bias_background_examples[1:n_training]
+    bias_foreground_testing_examples = bias_foreground_examples[n_training+1:end]
+    bias_background_testing_examples = bias_background_examples[n_training+1:end]
+
+    seqbias = SeqBiasModel(
+        bias_foreground_training_examples,
+        bias_background_training_examples,
+        ones(Float32, length(bias_foreground_training_examples)),
+        bias_foreground_testing_examples,
+        bias_background_testing_examples,
+        :left)
+
+
     open("bias-foreground.csv", "w") do output
         for example in bias_foreground_examples
             println(

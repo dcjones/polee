@@ -271,3 +271,171 @@ function write_statistics(out::IO, bm::BiasModel)
     end
 end
 
+
+struct SeqBiasModel
+
+end
+
+
+
+function SeqBiasModel(
+        foreground_training_examples::Vector{BiasTrainingExample},
+        background_training_examples::Vector{BiasTrainingExample},
+        training_example_weights::Vector{Float32},
+        foreground_testing_examples::Vector{BiasTrainingExample},
+        background_testing_examples::Vector{BiasTrainingExample},
+        fragend::Symbol)
+
+    @assert fragend == :left || fragend == :right
+    maxorder = 6
+    maxorder_size = 4^maxorder
+    k = length(foreground_training_examples[1].left_seq)
+    ps_fg = zeros(Float32, (k, 4, maxorder_size))
+    ps_bg = zeros(Float32, (k, 4, maxorder_size))
+
+    # 2bit encode every sequence
+    seq_fg_train = Array{UInt8}((length(foreground_training_examples), k))
+    seq_bg_train = Array{UInt8}((length(background_training_examples), k))
+    seq_fg_test = Array{UInt8}((length(foreground_testing_examples), k))
+    seq_bg_test = Array{UInt8}((length(background_testing_examples), k))
+    for (arr, examples) in
+            [(seq_fg_train, foreground_training_examples),
+             (seq_bg_train, background_training_examples),
+             (seq_fg_test, foreground_testing_examples),
+             (seq_bg_test, background_testing_examples)]
+        for (i, example) in enumerate(examples)
+            seq = fragend == :left ? example.left_seq : example.right_seq
+            for j in 1:k
+                c = seq[j] == DNA_A ? UInt8(0) :
+                    seq[j] == DNA_C ? UInt8(1) :
+                    seq[j] == DNA_G ? UInt8(2) :
+                    seq[j] == DNA_T ? UInt8(3) :
+                    rand(UInt8(0):UInt8(3))
+                arr[i, j] = c
+            end
+        end
+    end
+
+    prior = length(foreground_training_examples) /
+        (length(foreground_training_examples) + length(background_training_examples))
+
+    orders = fill(-1, k)
+
+    # update ps_fg, ps_bg
+    function update_param_estimate!(j)
+        ps_fg[j,1:end,1:end] = 1 # pseudocount
+        ps_bg[j,1:end,1:end] = 1 # pseudocount
+        order = orders[j]
+
+        for (ps, seqs) in [(ps_fg, seq_fg_train), (ps_bg, seq_bg_train)]
+            for i in 1:size(seqs, 1)
+                ctx = 0
+                for l in 1:order
+                    ctx = (ctx << 2) | seqs[i, j+l]
+                end
+                ps[j, seqs[i, j]+1, ctx+1] += 1
+            end
+
+            for ctx in 1:(4^order)
+                z = sum(ps[j, 1:end, ctx])
+                ps[j, 1:end, ctx] ./= z
+                for l in 1:4
+                    ps[j, l, ctx] = log(ps[j, l, ctx])
+                end
+            end
+        end
+    end
+
+    function eval_accuracy()
+        cross_entropy = 0.0
+        accuracy = 0.0
+        for (y, seqs) in [(1.0, seq_fg_test), (0.0, seq_bg_test)]
+            for i in 1:size(seqs, 1)
+                lp1 = log(prior)
+                lp0 = log(1.0 - prior)
+                for j in 1:k
+                    order = orders[j]
+                    if order < 0
+                        continue
+                    end
+                    ctx = 0
+                    for l in 1:order
+                        ctx = (ctx << 2) | seqs[i, j+l]
+                    end
+
+                    lp1 += ps_fg[j, seqs[i, j]+1, ctx+1]
+                    lp0 += ps_bg[j, seqs[i, j]+1, ctx+1]
+                end
+
+                p1 = exp(lp1)
+                p0 = exp(lp0)
+                lpdenom = log(exp(lp0) + exp(lp1))
+
+                # @show (p1, p0)
+
+                accuracy += (p1 > p0) == (y == 1.0)
+                cross_entropy -= y * (lp1 - lpdenom) + (1 - y) * (lp0 - lpdenom)
+            end
+        end
+        cross_entropy /= size(seq_fg_test, 1) + size(seq_bg_test, 1)
+        accuracy /= size(seq_fg_test, 1) + size(seq_bg_test, 1)
+        return cross_entropy, accuracy
+    end
+
+    tmp_fg = Array{Float32}((4, maxorder_size))
+    tmp_bg = Array{Float32}((4, maxorder_size))
+
+    entropy0, accuracy0 = eval_accuracy()
+    @show entropy0, accuracy0
+
+    while true
+        best_entropy = entropy0
+        best_accuracy = accuracy0
+        best_j = 0
+
+        for j in 1:k
+            if orders[j] < maxorder && j + orders[j] < k
+                # save parameters
+                ps_fg_j = view(ps_fg, j, 1:4, 1:maxorder_size)
+                ps_bg_j = view(ps_bg, j, 1:4, 1:maxorder_size)
+                copy!(tmp_fg, ps_fg_j)
+                copy!(tmp_bg, ps_bg_j)
+
+                # increase order and try out the model
+                orders[j] += 1
+                @time update_param_estimate!(j) # 0.04 seconds
+
+                @time entropy, accuracy = eval_accuracy() # 0.21 seconds
+                @show (j, orders[j], entropy, accuracy)
+                if entropy < best_entropy
+                    best_entropy = entropy
+                    best_accuracy = accuracy
+                    best_j = j
+                end
+
+                # return parameters to original state
+                orders[j] -= 1
+                copy!(ps_fg_j, tmp_fg)
+                copy!(ps_bg_j, tmp_bg)
+            end
+        end
+
+        if best_entropy >= entropy0
+            break
+        else
+            orders[best_j] += 1
+            update_param_estimate!(best_j)
+            entropy0 = best_entropy
+            accuracy0 = best_accuracy
+            @show best_j
+            @show entropy0
+            @show accuracy0
+        end
+    end
+
+    @show orders
+
+    # TODO: return some sort of representation
+end
+
+

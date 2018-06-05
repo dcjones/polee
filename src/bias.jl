@@ -1,6 +1,8 @@
 
 
-
+"""
+One training example for bias models.
+"""
 struct BiasTrainingExample
     left_seq::DNASequence
     right_seq::DNASequence
@@ -58,6 +60,7 @@ function BiasTrainingExample(tseq, tpos, fl)
         t_freqs[bin] ./= length(from:to)
     end
     gc /= length(fragseq)
+    @assert 0.0 <= gc <= 1.0
 
     tend = length(tseq) - BIAS_SEQ_OUTER_CTX
     # tpdist = (length(tseq) - (tpos + fl - 1)) / length(tseq)
@@ -172,6 +175,16 @@ end
 # some helper functions for training seqbiasmodel
 
 
+function nt2bit(nt::DNA)
+    c = nt == DNA_A ? UInt8(0) :
+        nt == DNA_C ? UInt8(1) :
+        nt == DNA_G ? UInt8(2) :
+        nt == DNA_T ? UInt8(3) :
+        rand(UInt8(0):UInt8(3))
+    return c
+end
+
+
 # update position j in the markov chain parameters ps
 function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order)
     ps[j,1:end,1:end,1:end] = 1 # pseudocount
@@ -264,11 +277,7 @@ function SeqBiasModel(
         for (i, example) in enumerate(examples)
             seq = fragend == :left ? example.left_seq : example.right_seq
             for j in 1:k
-                c = seq[j] == DNA_A ? UInt8(0) :
-                    seq[j] == DNA_C ? UInt8(1) :
-                    seq[j] == DNA_G ? UInt8(2) :
-                    seq[j] == DNA_T ? UInt8(3) :
-                    rand(UInt8(0):UInt8(3))
+                c = nt2bit(seq[j])
                 seqarr[offset + i, j] = c
                 ys[offset + i] = y
             end
@@ -369,7 +378,185 @@ function SeqBiasModel(
     @show entropy0
     @show orders
 
+    # TODO: I can make this faster by storing foreground/background ratios in ps
+    # instead of having two separate arrays
+
     return SeqBiasModel(orders, ps)
 end
 
 
+function evaluate(sb::SeqBiasModel, seq::DNASequence)
+    @assert length(seq) == length(sb.orders)
+    bias = 0.0
+    for i in 1:length(seq)
+        if sb.orders[i] > 0
+            c = nt2bit(seq[i])
+            ctx = 0
+            for l in 1:sb.orders[i]
+                ctx = (ctx << 2) | nt2bit(seq[i+l])
+            end
+            bias += sb.ps[i, 2, c+1, ctx+1] - sb.ps[i, 1, c+1, ctx+1]
+        end
+    end
+    return bias
+end
+
+
+struct SimpleHistogramModel
+    qs::Vector{Float32} # quantiles
+    bins::Vector{Float32} # log-probability ratios
+end
+
+
+function SimpleHistogramModel(
+        xs::Vector{Float32}, ys::Vector{Bool}, weights::Vector{Float32})
+    numbins = 40
+    total_weight = sum(weights)
+    binsize = total_weight/numbins
+
+    p = sortperm(xs)
+    xs      = xs[p]
+    weights = weights[p]
+    ys      = ys[p]
+
+    # define bin quantiles
+    qs = Vector{Float32}(numbins-1)
+    nextbin = 1
+    wsum = 0.0
+    for (x, w) in zip(xs, weights)
+        wsum += w
+        if wsum > nextbin*binsize
+            qs[nextbin] = x
+            nextbin += 1
+            if nextbin == numbins
+                break
+            end
+        end
+    end
+    @show qs
+
+    bincounts = ones(Float32, (2, numbins))
+    for (x, y, w) in zip(xs, ys, weights)
+        i = searchsorted(qs, x).start
+        bincounts[y+1, i] += w
+    end
+
+    bincounts_sums = sum(bincounts, 2)
+    @show bincounts
+    @show bincounts_sums
+    bins = Vector{Float32}(numbins)
+    for i in 1:numbins
+        bins[i] =
+            log(bincounts[2, i]/bincounts_sums[2]) -
+            log(bincounts[1, i]/bincounts_sums[1])
+    end
+    @show bins
+
+    return SimpleHistogramModel(qs, bins)
+end
+
+
+function evaluate(hist::SimpleHistogramModel, x)
+    i = searchsorted(hist.qs, x).start
+    return hist.bins[i]
+end
+
+
+struct BiasModel
+    left_seqbias::SeqBiasModel
+    right_seqbias::SeqBiasModel
+    gc_model::SimpleHistogramModel
+end
+
+
+"""
+Train ensemble bias model.
+"""
+function BiasModel(
+        bias_foreground_training_examples::Vector{BiasTrainingExample},
+        bias_background_training_examples::Vector{BiasTrainingExample},
+        bias_foreground_testing_examples::Vector{BiasTrainingExample},
+        bias_background_testing_examples::Vector{BiasTrainingExample})
+
+    # train sequence bias models
+    @time seqbias_left = SeqBiasModel(
+        bias_foreground_training_examples,
+        bias_background_training_examples,
+        bias_foreground_testing_examples,
+        bias_background_testing_examples,
+        :left)
+
+    @time seqbias_right = SeqBiasModel(
+        bias_foreground_training_examples,
+        bias_background_training_examples,
+        bias_foreground_testing_examples,
+        bias_background_testing_examples,
+        :right)
+
+    # TODO: weight training examples
+
+    # collect GC information
+    n_training =
+        length(bias_foreground_training_examples) +
+        length(bias_background_training_examples)
+    frag_gc_training = Vector{Float32}(n_training)
+    ys_training = Vector{Bool}(n_training)
+    for (i, example) in enumerate(bias_foreground_training_examples)
+        frag_gc_training[i] = example.frag_gc
+        ys_training[i] = true
+    end
+    for (i, example) in enumerate(bias_background_training_examples)
+        idx = length(bias_foreground_training_examples) + i
+        frag_gc_training[idx] = example.frag_gc
+        ys_training[idx] = false
+    end
+
+    n_testing =
+        length(bias_foreground_testing_examples) +
+        length(bias_background_testing_examples)
+    frag_gc_testing = Vector{Float32}(n_testing)
+    ys_testing = Vector{Bool}(n_testing)
+    for (i, example) in enumerate(bias_foreground_testing_examples)
+        frag_gc_testing[i] = example.frag_gc
+        ys_testing[i] = true
+    end
+    for (i, example) in enumerate(bias_background_testing_examples)
+        idx = length(bias_foreground_testing_examples) + i
+        frag_gc_testing[idx] = example.frag_gc
+        ys_testing[idx] = false
+    end
+
+    gc_model = SimpleHistogramModel(
+        frag_gc_training, ys_training, ones(Float32, n_training))
+
+    bm = BiasModel(seqbias_left, seqbias_right, gc_model)
+
+    @show accuracy(
+        bm, bias_foreground_testing_examples, bias_background_testing_examples)
+
+    return bm
+end
+
+
+
+function accuracy(
+        bm::BiasModel, foreground_testing_examples, background_testing_examples)
+    acc = 0
+    for example in foreground_testing_examples
+        bias =
+            evaluate(bm.left_seqbias, example.left_seq) +
+            evaluate(bm.right_seqbias, example.right_seq) +
+            evaluate(bm.gc_model, example.frag_gc)
+        acc += bias > 0.0
+    end
+
+    for example in background_testing_examples
+        bias =
+            evaluate(bm.left_seqbias, example.left_seq) +
+            evaluate(bm.right_seqbias, example.right_seq) +
+            evaluate(bm.gc_model, example.frag_gc)
+        acc += bias < 0.0
+    end
+
+    return acc / (length(foreground_testing_examples) + length(background_testing_examples))
+end

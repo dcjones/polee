@@ -8,6 +8,7 @@ struct BiasTrainingExample
     right_seq::DNASequence
     frag_gc::Float64
     tpdist::Float64
+    fpdist::Float64
     tlen::Float64
     fl::Float64
     a_freqs::NTuple{BIAS_NUM_FREQ_BINS, Float64}
@@ -62,12 +63,13 @@ function BiasTrainingExample(tseq, tpos, fl)
     gc /= length(fragseq)
     @assert 0.0 <= gc <= 1.0
 
-    tend = length(tseq) - BIAS_SEQ_OUTER_CTX
     # tpdist = (length(tseq) - (tpos + fl - 1)) / length(tseq)
-    tpdist = length(tseq) - tpos
+    tpdist = length(tseq) - (tpos + fl - 1)
+    # tpdist = length(tseq) - tpos
+    fpdist = tpos
 
     return BiasTrainingExample(
-        left_seq, right_seq, gc, tpdist, length(tseq), fl,
+        left_seq, right_seq, gc, tpdist, fpdist, length(tseq), fl,
         NTuple{BIAS_NUM_FREQ_BINS, Float64}(a_freqs),
         NTuple{BIAS_NUM_FREQ_BINS, Float64}(c_freqs),
         NTuple{BIAS_NUM_FREQ_BINS, Float64}(g_freqs),
@@ -410,14 +412,15 @@ end
 
 function SimpleHistogramModel(
         xs::Vector{Float32}, ys::Vector{Bool}, weights::Vector{Float32})
-    numbins = 40
     total_weight = sum(weights)
-    binsize = total_weight/numbins
 
     p = sortperm(xs)
     xs      = xs[p]
     weights = weights[p]
     ys      = ys[p]
+
+    numbins = 15
+    binsize = total_weight/numbins
 
     # define bin quantiles
     qs = Vector{Float32}(numbins-1)
@@ -433,7 +436,6 @@ function SimpleHistogramModel(
             end
         end
     end
-    @show qs
 
     bincounts = ones(Float32, (2, numbins))
     for (x, y, w) in zip(xs, ys, weights)
@@ -442,8 +444,6 @@ function SimpleHistogramModel(
     end
 
     bincounts_sums = sum(bincounts, 2)
-    @show bincounts
-    @show bincounts_sums
     bins = Vector{Float32}(numbins)
     for i in 1:numbins
         bins[i] =
@@ -462,10 +462,147 @@ function evaluate(hist::SimpleHistogramModel, x)
 end
 
 
+const PosInterType =
+    ScaledInterpolation{Float32,2,
+        Interpolations.BSplineInterpolation{Float32,2,Array{Float32,2},BSpline{Linear},OnGrid,0},
+        BSpline{Linear},
+        OnGrid,
+        Tuple{
+            StepRangeLen{Float32,Base.TwicePrecision{Float32},Base.TwicePrecision{Float32}},
+            StepRangeLen{Float32,Base.TwicePrecision{Float32},Base.TwicePrecision{Float32}}}}
+
+struct PositionalBiasModel
+    intp_fg::PosInterType
+    intp_bg::PosInterType
+end
+
+
+function fit_interpolation(tpdists, tlens, numlenbins, lenbinsize, numposbins, weights)
+    lenbins = collect(lenbinsize:lenbinsize:(lenbinsize * numlenbins))
+
+    posbins = collect(linspace(0.0, 1.0, numposbins+1))[2:end]
+    posbinsize = length(posbins) > 1 ? posbins[2] - posbins[1] : 1.0
+
+    A = fill(1.f0, (numlenbins, numposbins))
+    for (tlen, tpdist, w) in zip(tlens, tpdists, weights)
+        if tlen > lenbins[end]
+            continue
+        end
+        i = min(numlenbins, searchsorted(lenbins, tlen).start)
+        j = min(numposbins, searchsorted(posbins, tpdist).start)
+        A[i, j] += w
+    end
+
+    A ./= sum(A, 2)
+
+    #itp = interpolate(A, BSpline(Constant()), OnGrid())
+    itp = interpolate(A, BSpline(Linear()), OnGrid())
+    #itp = interpolate(A, BSpline(Cubic(Natural())), OnGrid())
+
+    lenscale = Float32(lenbins[1] - lenbinsize/2):Float32(lenbinsize):Float32(lenbins[end] - lenbinsize/2)
+    posscale = Float32(posbins[1] - posbinsize/2):Float32(posbinsize):Float32(posbins[end] - posbinsize/2)
+    sitp = Interpolations.scale(itp, lenscale, posscale)
+
+    return sitp
+end
+
+
+function compute_cross_entropy(
+        model::PositionalBiasModel,
+        tpdists_fg_test, tlens_fg_test,
+        tpdists_bg_test, tlens_bg_test)
+    entropy = 0.0
+    for (tlen, tpdist) in zip(tlens_fg_test, tpdists_fg_test)
+        p = logistic(evaluate(model, tlen, tpdist))
+        entropy -= log(p)
+    end
+
+    for (tlen, tpdist) in zip(tlens_bg_test, tpdists_bg_test)
+        p = logistic(evaluate(model, tlen, tpdist))
+        entropy -= log(1 - p)
+    end
+
+    return entropy/(length(tlens_fg_test) + length(tlens_bg_test))
+end
+
+function PositionalBiasModel(
+        foreground_training_examples::Vector{BiasTrainingExample},
+        background_training_examples::Vector{BiasTrainingExample},
+        foreground_testing_examples::Vector{BiasTrainingExample},
+        background_testing_examples::Vector{BiasTrainingExample},
+        weights::Vector{Float32})
+
+    # copy relavent data from examples to flat arrays
+    tpdists_fg_train = Vector{Float32}(length(foreground_training_examples))
+    tlens_fg_train   = Vector{Float32}(length(foreground_training_examples))
+
+    tpdists_bg_train = Vector{Float32}(length(background_training_examples))
+    tlens_bg_train   = Vector{Float32}(length(background_training_examples))
+
+    tpdists_fg_test = Vector{Float32}(length(foreground_testing_examples))
+    tlens_fg_test   = Vector{Float32}(length(foreground_testing_examples))
+
+    tpdists_bg_test = Vector{Float32}(length(background_testing_examples))
+    tlens_bg_test   = Vector{Float32}(length(background_testing_examples))
+
+    for (tpdists, tlens, examples) in
+                [(tpdists_fg_train, tlens_fg_train, foreground_training_examples),
+                 (tpdists_bg_train, tlens_bg_train, background_training_examples),
+                 (tpdists_fg_test, tlens_fg_test, foreground_testing_examples),
+                 (tpdists_bg_test, tlens_bg_test, background_testing_examples) ]
+        for (i, example) in enumerate(examples)
+            tpdists[i] = example.tpdist / example.tlen
+            tlens[i] = example.tlen
+        end
+    end
+
+    lenbinsize = 500
+
+    best_entropy = Inf
+    best_model = nothing
+    best_numlenbins = 0
+    best_numposbins = 0
+
+    # search for a good number of bins in the histogram
+    for numlenbins in 1:10, numposbins in 1:10
+        intp_fg = fit_interpolation(
+            tpdists_fg_train, tlens_fg_train, numlenbins, lenbinsize, numposbins, weights)
+        intp_bg = fit_interpolation(
+            tpdists_bg_train, tlens_bg_train, numlenbins, lenbinsize, numposbins, weights)
+        model = PositionalBiasModel(intp_fg, intp_bg)
+
+        entropy = compute_cross_entropy(
+            model,
+            tpdists_fg_test, tlens_fg_test,
+            tpdists_bg_test, tlens_bg_test)
+
+        if entropy < best_entropy
+            best_entropy = entropy
+            best_model = model
+            best_numlenbins = numlenbins
+            best_numposbins = numposbins
+        end
+    end
+
+    @show (best_numlenbins, best_numposbins, best_entropy)
+
+    @assert best_model != nothing
+    return best_model::PositionalBiasModel
+end
+
+
+function evaluate(posmodel::PositionalBiasModel, tlen, tpdist)
+    p_fg = clamp(posmodel.intp_fg[tlen, tpdist], 0.01, 0.99)
+    p_bg = clamp(posmodel.intp_bg[tlen, tpdist], 0.01, 0.99)
+    return log(p_fg / p_bg)
+end
+
+
 struct BiasModel
     left_seqbias::SeqBiasModel
     right_seqbias::SeqBiasModel
     gc_model::SimpleHistogramModel
+    pos_model::PositionalBiasModel
 end
 
 
@@ -478,7 +615,17 @@ function BiasModel(
         bias_foreground_testing_examples::Vector{BiasTrainingExample},
         bias_background_testing_examples::Vector{BiasTrainingExample})
 
+    n_training =
+        length(bias_foreground_training_examples) +
+        length(bias_background_training_examples)
+
+    n_testing =
+        length(bias_foreground_testing_examples) +
+        length(bias_background_testing_examples)
+
     # train sequence bias models
+    # --------------------------
+
     @time seqbias_left = SeqBiasModel(
         bias_foreground_training_examples,
         bias_background_training_examples,
@@ -493,12 +640,30 @@ function BiasModel(
         bias_background_testing_examples,
         :right)
 
-    # TODO: weight training examples
+    # weight training examples
+    # ------------------------
+
+    weights = Vector{Float32}(n_training)
+    bs = Float32[]
+
+    for (i, example) in enumerate(bias_foreground_training_examples)
+        b = evaluate(seqbias_left, example.left_seq) +
+            evaluate(seqbias_right, example.right_seq)
+        push!(bs, b)
+        weights[i] = 1.0 - logistic(b)
+    end
+    for (i, example) in enumerate(bias_foreground_training_examples)
+        b = evaluate(seqbias_left, example.left_seq) +
+            evaluate(seqbias_right, example.right_seq)
+        push!(bs, b)
+        idx = length(bias_foreground_training_examples) + i
+        weights[idx] = logistic(b)
+    end
+
+    # train fragment GC model
+    # -----------------------
 
     # collect GC information
-    n_training =
-        length(bias_foreground_training_examples) +
-        length(bias_background_training_examples)
     frag_gc_training = Vector{Float32}(n_training)
     ys_training = Vector{Bool}(n_training)
     for (i, example) in enumerate(bias_foreground_training_examples)
@@ -511,9 +676,6 @@ function BiasModel(
         ys_training[idx] = false
     end
 
-    n_testing =
-        length(bias_foreground_testing_examples) +
-        length(bias_background_testing_examples)
     frag_gc_testing = Vector{Float32}(n_testing)
     ys_testing = Vector{Bool}(n_testing)
     for (i, example) in enumerate(bias_foreground_testing_examples)
@@ -527,9 +689,31 @@ function BiasModel(
     end
 
     gc_model = SimpleHistogramModel(
-        frag_gc_training, ys_training, ones(Float32, n_training))
+        frag_gc_training, ys_training, weights)
 
-    bm = BiasModel(seqbias_left, seqbias_right, gc_model)
+    # re-weight training examples
+    # ---------------------------
+
+    for (i, example) in enumerate(bias_foreground_training_examples)
+        weights[i] *= 1.0 - logistic(evaluate(gc_model, example.frag_gc))
+    end
+
+    for (i, example) in enumerate(bias_foreground_training_examples)
+        idx = length(bias_foreground_training_examples) + i
+        weights[idx] *= logistic(evaluate(gc_model, example.frag_gc))
+    end
+
+    # train positional bias model
+    # ---------------------------
+
+    pos_model = PositionalBiasModel(
+        bias_foreground_training_examples,
+        bias_background_training_examples,
+        bias_foreground_testing_examples,
+        bias_background_testing_examples,
+        weights)
+
+    bm = BiasModel(seqbias_left, seqbias_right, gc_model, pos_model)
 
     @show accuracy(
         bm, bias_foreground_testing_examples, bias_background_testing_examples)
@@ -542,20 +726,37 @@ end
 function accuracy(
         bm::BiasModel, foreground_testing_examples, background_testing_examples)
     acc = 0
+
+    bs = Vector{Float64}(length(foreground_testing_examples) + length(background_testing_examples))
+    idx = 1
     for example in foreground_testing_examples
         bias =
             evaluate(bm.left_seqbias, example.left_seq) +
             evaluate(bm.right_seqbias, example.right_seq) +
-            evaluate(bm.gc_model, example.frag_gc)
-        acc += bias > 0.0
+            evaluate(bm.gc_model, example.frag_gc) +
+            evaluate(bm.pos_model, example.tlen, example.tpdist/example.tlen)
+        bs[idx] = bias
+        idx += 1
     end
 
     for example in background_testing_examples
         bias =
             evaluate(bm.left_seqbias, example.left_seq) +
             evaluate(bm.right_seqbias, example.right_seq) +
-            evaluate(bm.gc_model, example.frag_gc)
-        acc += bias < 0.0
+            evaluate(bm.gc_model, example.frag_gc) +
+            evaluate(bm.pos_model, example.tlen, example.tpdist/example.tlen)
+        bs[idx] = bias
+        idx += 1
+    end
+
+    bs .-= median(bs)
+
+    for i in 1:length(foreground_testing_examples)
+        acc += bs[i] .> 0.0
+    end
+
+    for i in 1:length(background_testing_examples)
+        acc += bs[length(foreground_testing_examples) + i] .<= 0.0
     end
 
     return acc / (length(foreground_testing_examples) + length(background_testing_examples))

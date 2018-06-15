@@ -8,13 +8,26 @@ effective_length(fm, t::Transcript)
 abstract type FragModel; end
 
 
+function fragment_length_prob(fm::FragModel, fraglen)
+    if fm.use_fallback_fraglen_dist
+        return Float32(pdf(fm.fallback_fraglen_dist, fraglen))
+    else
+        if fraglen <= MAX_FRAG_LEN
+            return fm.fraglen_pmf[fraglen]
+        else
+            return 0.0f0
+        end
+    end
+end
+
+
 """
 A simple fragment model without any bias modeling.
 """
 struct SimplisticFragModel <: FragModel
     fraglen_pmf::Vector{Float32}
     fraglen_cdf::Vector{Float32}
-    fallback_fraglen_dist::Normal{Float64}
+    fallback_fraglen_dist::Normal{Float32}
     use_fallback_fraglen_dist::Bool
     strand_specificity::Float32
 end
@@ -82,6 +95,9 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
         use_fallback_fraglen_dist, strand_specificity)
 end
 
+function compute_transcript_bias!(fm::SimplisticFragModel, ts::Transcripts)
+end
+
 
 function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
                       alnpr::AlignmentPair, effective_length::Float32)
@@ -104,16 +120,7 @@ function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
         fraglen = min(max_frag_len, round(Int, mean(fm.fallback_fraglen_dist)))
     end
 
-    if fraglen <= MAX_FRAG_LEN
-        if fm.use_fallback_fraglen_dist
-            fraglenpr = Float32(pdf(fm.fallback_fraglen_dist, fraglen))
-        else
-            fraglenpr = fm.fraglen_pmf[fraglen]
-        end
-    else
-        fraglenpr = 0.0f0
-    end
-
+    fraglenpr = fragment_length_prob(fm, fraglen)
     fragpr = fraglenpr / effective_length
 
     return fragpr
@@ -130,8 +137,14 @@ function effective_length(fm::SimplisticFragModel, t::Transcript)
 end
 
 
+
 mutable struct BiasedFragModel <: FragModel
-    # TODO:
+    fraglen_pmf::Vector{Float32}
+    fraglen_cdf::Vector{Float32}
+    fallback_fraglen_dist::Normal{Float32}
+    use_fallback_fraglen_dist::Bool
+    strand_specificity::Float32
+    bias_model::BiasModel
 end
 
 
@@ -160,68 +173,14 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
         t = ts_by_id[transcript_id]
         tseq = t.metadata.seq
 
-        fraglen = fragmentlength(t, rs, alnpr)
-        if isnull(fraglen)
-            continue
-        end
+        fragint = genomic_to_transcriptomic(t, rs, alnpr)
+        fl = length(fragint)
+        tpos = fragint.start
 
         if alnpr.strand == t.strand
             strand_match_count += 1
         elseif alnpr.strand != STRAND_BOTH
             strand_mismatch_count += 1
-        end
-
-        if get(fraglen) > 0
-            push!(fraglens, get(fraglen))
-            fl = get(fraglen)
-        else
-            fl = FALLBACK_FRAGLEN_MEAN
-        end
-
-
-        # set tpos to 5' most position of the fragment (relative to transcript)
-        if alnpr.metadata.mate1_idx > 0 && alnpr.metadata.mate2_idx > 0
-            aln1 = rs.alignments[alnpr.metadata.mate1_idx]
-            aln2 = rs.alignments[alnpr.metadata.mate2_idx]
-            if t.strand == STRAND_POS
-                gpos = min(aln1.leftpos, aln2.leftpos)
-            else
-                gpos = max(aln1.rightpos, aln2.rightpos)
-            end
-            tpos = genomic_to_transcriptomic(t, gpos)
-        else
-            # single-strand where we may have to guess
-            aln = alnpr.metadata.mate1_idx > 0 ?
-                rs.alignments[alnpr.metadata.mate1_idx] :
-                rs.alignments[alnpr.metadata.mate2_idx]
-
-            alnstrand = aln.flag & SAM.FLAG_REVERSE != 0 ?
-                STRAND_NEG : STRAND_POS
-
-            if t.strand == STRAND_POS
-                if alnstrand == STRAND_POS
-                    tpos = genomic_to_transcriptomic(t, aln.leftpos)
-                else
-                    tpos = genomic_to_transcriptomic(t, aln.rightpos) - fl
-                end
-            else
-                if alnstrand == STRAND_POS
-                    tpos = genomic_to_transcriptomic(t, aln.leftpos) - fl
-                else
-                    tpos = genomic_to_transcriptomic(t, aln.rightpos)
-                end
-            end
-
-        end
-
-        # nudge reads that overhang (due to soft-clipping typically)
-        if tpos <= 0
-            fl += tpos - 1
-            tpos = 1
-        end
-
-        if tpos+fl-1 > length(tseq)
-            fl = length(tseq) - tpos + 1
         end
 
         if fl <= 0 || tpos < 1 || tpos + fl - 1 > length(tseq)
@@ -288,6 +247,7 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
         bias_foreground_testing_examples,
         bias_background_testing_examples)
 
+    #=
     open("bias-foreground.csv", "w") do output
         for example in bias_foreground_examples
             println(
@@ -321,9 +281,87 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
                 ',', join(example.t_freqs, ','))
         end
     end
+    =#
 
-    # TODO: construct sequence bias models
-
+    return BiasedFragModel(
+        fraglen_pmf, fraglen_cdf, Normal(200, 100),
+        use_fallback_fraglen_dist, strand_specificity,
+        bias_model)
 end
 
 
+function compute_transcript_bias!(fm::BiasedFragModel, ts::Transcripts)
+    for t in ts
+        compute_transcript_bias!(fm.bias_model, t)
+    end
+end
+
+
+function effective_length(fm::BiasedFragModel, t::Transcript)
+    tseq = t.metadata.seq
+    tlen = length(tseq)
+    efflen = 0.0f0
+
+    left_bias = t.metadata.left_bias
+    right_bias = t.metadata.right_bias
+
+    for fraglen in 1:tlen
+        fraglenpr = fragment_length_prob(fm, fraglen)
+        if fraglenpr < BIAS_MIN_FRAGLEN_PR
+            continue
+        end
+
+        frag_gc_count = 0
+        for pos in 1:fraglen
+            nt = tseq[pos]
+            frag_gc_count += isGC(nt)
+        end
+
+        c = 0f0
+        for pos in 1:tlen-fraglen+1
+            if pos > 1
+                frag_gc_count -= isGC(tseq[pos-1])
+                frag_gc_count += isGC(tseq[pos+fraglen-1])
+            end
+
+            c += exp(
+                left_bias[pos] +
+                right_bias[pos+fraglen-1] +
+                evaluate(fm.bias_model.gc_model, frag_gc_count/fraglen))
+        end
+        efflen += c * fraglenpr
+    end
+
+    return efflen
+end
+
+
+function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
+                      alnpr::AlignmentPair, effective_length::Float32)
+    tseq = t.metadata.seq
+    tlen = length(tseq)
+    fragint = genomic_to_transcriptomic(t, rs, alnpr)
+    fraglenpr = fragment_length_prob(fm, length(fragint))
+    frag_gc = gc_content(tseq[fragint])
+
+    fragbias = exp(
+        t.metadata.left_bias[fragint.start],
+        t.metadata.right_bias[fragint.stop],
+        # evaluate(
+        #     fm.bias_model.left_seqbias,
+        #     extract_padded_seq(
+        #         tseq,
+        #         fragint.start - BIAS_SEQ_OUTER_CTX,
+        #         fragint.start + BIAS_SEQ_INNER_CTX - 1)) +
+        # evaluate(
+        #     fm.bias_model.right_seqbias,
+        #     extract_padded_seq(
+        #         tseq,
+        #         fragint.stop - BIAS_SEQ_OUTER_CTX,
+        #         fragint.stop + BIAS_SEQ_OUTER_CTX - 1)) +
+        # evaluate(fm.bias_model.pos_model, tlen, fragint.start/tlen) +
+        evaluate(fm.bias_model.gc_model, frag_gc))
+
+    fragpr = fraglenpr * fragbias / effective_length
+    return fragpr
+end

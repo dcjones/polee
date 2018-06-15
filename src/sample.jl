@@ -245,9 +245,7 @@ function RNASeqSample(ts::Transcripts,
 
     fm = BiasedFragModel(rs_train, ts, read_assignments)
 
-    exit()
-
-    # TODO: construct full sample using trained fragment model
+    return RNASeqSample(fm, rs, ts, ts_metadata, output)
 end
 
 
@@ -287,6 +285,7 @@ function RNASeqSample(fm::FragModel,
         end
     end
 
+    compute_transcript_bias!(fm, ts)
     effective_lengths = Float32[effective_length(fm, t) for t in ts]
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 

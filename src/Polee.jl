@@ -52,8 +52,8 @@ import YAML
 
 include("constants.jl")
 include("sparse.jl")
-include("transcripts.jl")
 include("reads.jl")
+include("transcripts.jl")
 include("bias.jl")
 include("fragmodel.jl")
 include("model.jl")

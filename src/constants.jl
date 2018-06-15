@@ -64,3 +64,7 @@ const BIAS_SEQ_OUTER_CTX  = 10
 
 # Number of bins to divide sequence fragments into for counting nucleotide frequencies
 const BIAS_NUM_FREQ_BINS = 4
+
+# Don't consider sequence bias when the fragment length probability is lower than
+# this number.
+const BIAS_MIN_FRAGLEN_PR = 1e-5

@@ -477,19 +477,19 @@ struct PositionalBiasModel
 end
 
 
-function fit_interpolation(tpdists, tlens, numlenbins, lenbinsize, numposbins, weights)
+function fit_interpolation(poss, tlens, numlenbins, lenbinsize, numposbins, weights)
     lenbins = collect(lenbinsize:lenbinsize:(lenbinsize * numlenbins))
 
     posbins = collect(linspace(0.0, 1.0, numposbins+1))[2:end]
     posbinsize = length(posbins) > 1 ? posbins[2] - posbins[1] : 1.0
 
     A = fill(1.f0, (numlenbins, numposbins))
-    for (tlen, tpdist, w) in zip(tlens, tpdists, weights)
+    for (tlen, pos, w) in zip(tlens, poss, weights)
         if tlen > lenbins[end]
             continue
         end
         i = min(numlenbins, searchsorted(lenbins, tlen).start)
-        j = min(numposbins, searchsorted(posbins, tpdist).start)
+        j = min(numposbins, searchsorted(posbins, pos).start)
         A[i, j] += w
     end
 
@@ -509,16 +509,16 @@ end
 
 function compute_cross_entropy(
         model::PositionalBiasModel,
-        tpdists_fg_test, tlens_fg_test,
-        tpdists_bg_test, tlens_bg_test)
+        poss_fg_test, tlens_fg_test,
+        poss_bg_test, tlens_bg_test)
     entropy = 0.0
-    for (tlen, tpdist) in zip(tlens_fg_test, tpdists_fg_test)
-        p = logistic(evaluate(model, tlen, tpdist))
+    for (tlen, pos) in zip(tlens_fg_test, poss_fg_test)
+        p = logistic(evaluate(model, tlen, pos))
         entropy -= log(p)
     end
 
-    for (tlen, tpdist) in zip(tlens_bg_test, tpdists_bg_test)
-        p = logistic(evaluate(model, tlen, tpdist))
+    for (tlen, pos) in zip(tlens_bg_test, poss_bg_test)
+        p = logistic(evaluate(model, tlen, pos))
         entropy -= log(1 - p)
     end
 
@@ -533,25 +533,25 @@ function PositionalBiasModel(
         weights::Vector{Float32})
 
     # copy relavent data from examples to flat arrays
-    tpdists_fg_train = Vector{Float32}(length(foreground_training_examples))
+    poss_fg_train = Vector{Float32}(length(foreground_training_examples))
     tlens_fg_train   = Vector{Float32}(length(foreground_training_examples))
 
-    tpdists_bg_train = Vector{Float32}(length(background_training_examples))
+    poss_bg_train = Vector{Float32}(length(background_training_examples))
     tlens_bg_train   = Vector{Float32}(length(background_training_examples))
 
-    tpdists_fg_test = Vector{Float32}(length(foreground_testing_examples))
+    poss_fg_test = Vector{Float32}(length(foreground_testing_examples))
     tlens_fg_test   = Vector{Float32}(length(foreground_testing_examples))
 
-    tpdists_bg_test = Vector{Float32}(length(background_testing_examples))
+    poss_bg_test = Vector{Float32}(length(background_testing_examples))
     tlens_bg_test   = Vector{Float32}(length(background_testing_examples))
 
-    for (tpdists, tlens, examples) in
-                [(tpdists_fg_train, tlens_fg_train, foreground_training_examples),
-                 (tpdists_bg_train, tlens_bg_train, background_training_examples),
-                 (tpdists_fg_test, tlens_fg_test, foreground_testing_examples),
-                 (tpdists_bg_test, tlens_bg_test, background_testing_examples) ]
+    for (poss, tlens, examples) in
+                [(poss_fg_train, tlens_fg_train, foreground_training_examples),
+                 (poss_bg_train, tlens_bg_train, background_training_examples),
+                 (poss_fg_test, tlens_fg_test, foreground_testing_examples),
+                 (poss_bg_test, tlens_bg_test, background_testing_examples) ]
         for (i, example) in enumerate(examples)
-            tpdists[i] = example.tpdist / example.tlen
+            poss[i] = example.fpdist / example.tlen
             tlens[i] = example.tlen
         end
     end
@@ -566,15 +566,15 @@ function PositionalBiasModel(
     # search for a good number of bins in the histogram
     for numlenbins in 1:10, numposbins in 1:10
         intp_fg = fit_interpolation(
-            tpdists_fg_train, tlens_fg_train, numlenbins, lenbinsize, numposbins, weights)
+            poss_fg_train, tlens_fg_train, numlenbins, lenbinsize, numposbins, weights)
         intp_bg = fit_interpolation(
-            tpdists_bg_train, tlens_bg_train, numlenbins, lenbinsize, numposbins, weights)
+            poss_bg_train, tlens_bg_train, numlenbins, lenbinsize, numposbins, weights)
         model = PositionalBiasModel(intp_fg, intp_bg)
 
         entropy = compute_cross_entropy(
             model,
-            tpdists_fg_test, tlens_fg_test,
-            tpdists_bg_test, tlens_bg_test)
+            poss_fg_test, tlens_fg_test,
+            poss_bg_test, tlens_bg_test)
 
         if entropy < best_entropy
             best_entropy = entropy
@@ -591,9 +591,9 @@ function PositionalBiasModel(
 end
 
 
-function evaluate(posmodel::PositionalBiasModel, tlen, tpdist)
-    p_fg = clamp(posmodel.intp_fg[tlen, tpdist], 0.01, 0.99)
-    p_bg = clamp(posmodel.intp_bg[tlen, tpdist], 0.01, 0.99)
+function evaluate(posmodel::PositionalBiasModel, tlen, pos)
+    p_fg = clamp(posmodel.intp_fg[tlen, pos], 0.01, 0.99)
+    p_bg = clamp(posmodel.intp_bg[tlen, pos], 0.01, 0.99)
     return log(p_fg / p_bg)
 end
 
@@ -734,7 +734,7 @@ function accuracy(
             evaluate(bm.left_seqbias, example.left_seq) +
             evaluate(bm.right_seqbias, example.right_seq) +
             evaluate(bm.gc_model, example.frag_gc) +
-            evaluate(bm.pos_model, example.tlen, example.tpdist/example.tlen)
+            evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
         bs[idx] = bias
         idx += 1
     end
@@ -744,7 +744,7 @@ function accuracy(
             evaluate(bm.left_seqbias, example.left_seq) +
             evaluate(bm.right_seqbias, example.right_seq) +
             evaluate(bm.gc_model, example.frag_gc) +
-            evaluate(bm.pos_model, example.tlen, example.tpdist/example.tlen)
+            evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
         bs[idx] = bias
         idx += 1
     end
@@ -761,3 +761,42 @@ function accuracy(
 
     return acc / (length(foreground_testing_examples) + length(background_testing_examples))
 end
+
+
+"""
+Compute bias for fragment left and right ends.
+"""
+function compute_transcript_bias!(bm::BiasModel, t::Transcript)
+
+    tlen = exonic_length(t)
+    padlen = max(BIAS_SEQ_OUTER_CTX, BIAS_SEQ_INNER_CTX-1)
+
+    left_bias = t.metadata.left_bias
+    right_bias = t.metadata.right_bias
+
+    resize!(left_bias, tlen)
+    resize!(right_bias, tlen)
+
+    # pad transcript sequence
+    tseq = DNASequence(
+        repeat(dna"N", padlen),
+        t.metadata.seq,
+        repeat(dna"N", padlen))
+
+    # left bias
+    for pos in 1:tlen
+        first = pos + padlen - BIAS_SEQ_OUTER_CTX
+        left_bias[pos] = evaluate(
+            bm.left_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
+        left_bias[pos] += evaluate(
+            bm.pos_model, tlen, pos/tlen)
+    end
+
+    # right bias
+    for pos in 1:tlen
+        first = pos + padlen - (BIAS_SEQ_INNER_CTX - 1)
+        right_bias[pos] = evaluate(
+            bm.right_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
+    end
+end
+

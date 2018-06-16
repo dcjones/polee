@@ -67,4 +67,4 @@ const BIAS_NUM_FREQ_BINS = 4
 
 # Don't consider sequence bias when the fragment length probability is lower than
 # this number.
-const BIAS_MIN_FRAGLEN_PR = 1e-5
+const BIAS_MIN_FRAGLEN_PR = 1e-4

@@ -390,7 +390,7 @@ end
 function evaluate(sb::SeqBiasModel, seq::DNASequence)
     @assert length(seq) == length(sb.orders)
     bias = 0.0
-    for i in 1:length(seq)
+    @inbounds for i in 1:length(seq)
         if sb.orders[i] > 0
             c = nt2bit(seq[i])
             ctx = 0
@@ -400,6 +400,24 @@ function evaluate(sb::SeqBiasModel, seq::DNASequence)
             bias += sb.ps[i, 2, c+1, ctx+1] - sb.ps[i, 1, c+1, ctx+1]
         end
     end
+    return bias
+end
+
+
+function evaluate(sb::SeqBiasModel, seq::DNASequence, pos)
+    bias = 0.0
+    seqlen = length(seq)
+    @inbounds for (i, j) in enumerate(pos-BIAS_SEQ_OUTER_CTX:pos+BIAS_SEQ_INNER_CTX-1)
+        if sb.orders[i] > 0
+            c = nt2bit(1 <= j <= seqlen ? seq[j] : DNA_N)
+            ctx = 0
+            for l in 1:sb.orders[i]
+                ctx = (ctx << 2) | nt2bit(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)
+            end
+            bias += sb.ps[i, 2, c+1, ctx+1] - sb.ps[i, 1, c+1, ctx+1]
+        end
+    end
+
     return bias
 end
 
@@ -768,8 +786,11 @@ Compute bias for fragment left and right ends.
 """
 function compute_transcript_bias!(bm::BiasModel, t::Transcript)
 
-    tlen = exonic_length(t)
-    padlen = max(BIAS_SEQ_OUTER_CTX, BIAS_SEQ_INNER_CTX-1)
+    # tlen = exonic_length(t)
+    # padlen = max(BIAS_SEQ_OUTER_CTX, BIAS_SEQ_INNER_CTX-1)
+
+    tseq = t.metadata.seq
+    tlen = length(tseq)
 
     left_bias = t.metadata.left_bias
     right_bias = t.metadata.right_bias
@@ -778,25 +799,28 @@ function compute_transcript_bias!(bm::BiasModel, t::Transcript)
     resize!(right_bias, tlen)
 
     # pad transcript sequence
-    tseq = DNASequence(
-        repeat(dna"N", padlen),
-        t.metadata.seq,
-        repeat(dna"N", padlen))
+    # tseq = DNASequence(
+    #     repeat(dna"N", padlen),
+    #     t.metadata.seq,
+    #     repeat(dna"N", padlen))
 
     # left bias
     for pos in 1:tlen
-        first = pos + padlen - BIAS_SEQ_OUTER_CTX
-        left_bias[pos] = evaluate(
-            bm.left_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
-        left_bias[pos] += evaluate(
-            bm.pos_model, tlen, pos/tlen)
+        # first = pos + padlen - BIAS_SEQ_OUTER_CTX
+        # left_bias[pos] = evaluate(
+        #     bm.left_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
+
+        left_bias[pos] =
+            evaluate(bm.left_seqbias, tseq, pos) +
+            evaluate(bm.pos_model, tlen, pos/tlen)
     end
 
     # right bias
     for pos in 1:tlen
-        first = pos + padlen - (BIAS_SEQ_INNER_CTX - 1)
-        right_bias[pos] = evaluate(
-            bm.right_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
+        # first = pos + padlen - (BIAS_SEQ_INNER_CTX - 1)
+        # right_bias[pos] = evaluate(
+        #     bm.right_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
+        right_bias[pos] = evaluate(bm.right_seqbias, tseq, pos)
     end
 end
 

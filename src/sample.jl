@@ -285,8 +285,30 @@ function RNASeqSample(fm::FragModel,
         end
     end
 
-    compute_transcript_bias!(fm, ts)
-    effective_lengths = Float32[effective_length(fm, t) for t in ts]
+    # @time compute_transcript_bias!(fm, ts)
+    @profile compute_transcript_bias!(fm, ts)
+    Profile.print()
+
+    # effective_lengths = Float32[effective_length(fm, t) for t in ts]
+    effective_lengths = Float32[]
+    for t in ts
+        push!(effective_lengths, effective_length(fm, t))
+
+        if isa(fm, BiasedFragModel)
+            @show length(t.metadata.seq)
+        end
+
+        # if length(effective_lengths) % 1000 == 0
+            # @show length(effective_lengths)
+        # end
+
+        # if isa(fm, BiasedFragModel) && length(t.metadata.seq) > 5000
+        #     @show @code_warntype effective_length(fm, t)
+        #     @profile effective_length(fm, t)
+        #     Profile.print()
+        #     exit()
+        # end
+    end
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 
     # reverse index (mapping matrix index to read id)

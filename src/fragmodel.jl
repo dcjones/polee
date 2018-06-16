@@ -78,6 +78,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     fraglen_pmf_count = sum(fraglen_pmf) - MAX_FRAG_LEN
     fraglen_pmf ./= sum(fraglen_pmf)
 
+
     # out = open("fraglen.csv", "w")
     # println(out, "fraglen,freq")
     # for (fl, freq) in enumerate(fraglen_pmf)
@@ -186,6 +187,8 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
         if fl <= 0 || tpos < 1 || tpos + fl - 1 > length(tseq)
             continue
         end
+
+        push!(fraglens, fl)
 
         # fraqseq = extract_padded_seq(
         #     tseq, tpos - BIAS_SEQ_FRAG_PAD_LEFT, tpos + fl - 1 + BIAS_SEQ_FRAG_PAD_RIGHT)
@@ -307,9 +310,15 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
 
     for fraglen in 1:tlen
         fraglenpr = fragment_length_prob(fm, fraglen)
+
+        # TODO: this can be O(tlen^2) depending on the fragment length
+        # distribution. That's something we should consider how to avoid. Like
+        # limit to 100 or so highest prob. fragment lengths.
         if fraglenpr < BIAS_MIN_FRAGLEN_PR
             continue
         end
+
+        @show (fraglen, fraglenpr)
 
         frag_gc_count = 0
         for pos in 1:fraglen
@@ -327,10 +336,12 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
             c += exp(
                 left_bias[pos] +
                 right_bias[pos+fraglen-1] +
-                evaluate(fm.bias_model.gc_model, frag_gc_count/fraglen))
+                evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen)))
         end
         efflen += c * fraglenpr
     end
+
+    exit()
 
     return efflen
 end

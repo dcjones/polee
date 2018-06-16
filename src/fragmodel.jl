@@ -9,15 +9,7 @@ abstract type FragModel; end
 
 
 function fragment_length_prob(fm::FragModel, fraglen)
-    if fm.use_fallback_fraglen_dist
-        return Float32(pdf(fm.fallback_fraglen_dist, fraglen))
-    else
-        if fraglen <= MAX_FRAG_LEN
-            return fm.fraglen_pmf[fraglen]
-        else
-            return 0.0f0
-        end
-    end
+    return fraglen <= MAX_FRAG_LEN ? fm.fraglen_pmf[fraglen] : 0.0f0
 end
 
 
@@ -27,8 +19,7 @@ A simple fragment model without any bias modeling.
 struct SimplisticFragModel <: FragModel
     fraglen_pmf::Vector{Float32}
     fraglen_cdf::Vector{Float32}
-    fallback_fraglen_dist::Normal{Float32}
-    use_fallback_fraglen_dist::Bool
+    fraglen_median::Int
     strand_specificity::Float32
 end
 
@@ -69,31 +60,32 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     println("Strand specificity: ", round(100.0 * (1 + negentropy), 1), "%")
 
     # compute fragment length frequencies
-    fraglen_pmf = fill(1.0, MAX_FRAG_LEN) # init with pseudocount
-    for fl in values(alnpr_fraglen)
-        if fl <= MAX_FRAG_LEN
-            fraglen_pmf[fl] += 1
+    fraglen_pmf = Vector{Float32}(MAX_FRAG_LEN)
+    fraglens_count = sum(ifelse(fl <= MAX_FRAG_LEN, 0, 1) for fl in values(alnpr_fraglen))
+    if fraglens_count < MIN_FRAG_LEN_COUNT
+        # use fallback distribution
+        for fl in 1:MAX_FRAG_LEN
+            fraglen_pmf[fl] = pdf(BIAS_FALLBACK_FRAGLEN_DIST, fl)
         end
+        fraglen_pmf ./= sum(fraglen_pmf)
+    else
+        fill!(fraglen_pmf, 1.0f0)
+        for fl in values(alnpr_fraglen)
+            if fl <= MAX_FRAG_LEN
+                fraglen_pmf[fl] += 1
+            end
+        end
+        fraglen_pmf ./= sum(fraglen_pmf)
     end
-    fraglen_pmf_count = sum(fraglen_pmf) - MAX_FRAG_LEN
-    fraglen_pmf ./= sum(fraglen_pmf)
-
-
-    # out = open("fraglen.csv", "w")
-    # println(out, "fraglen,freq")
-    # for (fl, freq) in enumerate(fraglen_pmf)
-    #     println(out, fl, ",", freq)
-    # end
 
     fraglen_cdf = copy(fraglen_pmf)
     for i in 2:length(fraglen_cdf)
         fraglen_cdf[i] += fraglen_cdf[i-1]
     end
+    fraglen_median = searchsorted(fraglen_cdf, 0.5).start
 
-    use_fallback_fraglen_dist = fraglen_pmf_count < MIN_FRAG_LEN_COUNT
     return SimplisticFragModel(
-        fraglen_pmf, fraglen_cdf, Normal(200, 100),
-        use_fallback_fraglen_dist, strand_specificity)
+        fraglen_pmf, fraglen_cdf, fraglen_median, strand_specificity)
 end
 
 function compute_transcript_bias!(fm::SimplisticFragModel, ts::Transcripts)
@@ -118,7 +110,7 @@ function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
             max_frag_len = t.last - aln.leftpos + 1
         end
 
-        fraglen = min(max_frag_len, round(Int, mean(fm.fallback_fraglen_dist)))
+        fraglen = min(max_frag_len, fm.fraglen_median)
     end
 
     fraglenpr = fragment_length_prob(fm, fraglen)
@@ -142,8 +134,8 @@ end
 mutable struct BiasedFragModel <: FragModel
     fraglen_pmf::Vector{Float32}
     fraglen_cdf::Vector{Float32}
-    fallback_fraglen_dist::Normal{Float32}
-    use_fallback_fraglen_dist::Bool
+    fraglen_median::Int
+    high_prob_fraglens::Vector{Int}
     strand_specificity::Float32
     bias_model::BiasModel
 end
@@ -176,6 +168,9 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
 
         fragint = genomic_to_transcriptomic(t, rs, alnpr)
         fl = length(fragint)
+        if fl <= 0
+            continue
+        end
         tpos = fragint.start
 
         if alnpr.strand == t.strand
@@ -213,26 +208,28 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
     println("Strand specificity: ", round(100.0 * (1 + negentropy), 1), "%")
 
     # compute fragment length frequencies
-    fraglen_pmf = fill(1.0, MAX_FRAG_LEN) # init with pseudocount
-    for fl in fraglens
-        if fl <= MAX_FRAG_LEN
-            fraglen_pmf[fl] += 1
+    fraglen_pmf = Vector{Float32}(MAX_FRAG_LEN)
+    if length(fraglens) < MIN_FRAG_LEN_COUNT
+        # use fallback distribution
+        for fl in 1:MAX_FRAG_LEN
+            fraglen_pmf[fl] = pdf(BIAS_FALLBACK_FRAGLEN_DIST, fl)
         end
+        fraglen_pmf ./= sum(fraglen_pmf)
+    else
+        fill!(fraglen_pmf, 1.0f0)
+        for fl in fraglens
+            if fl <= MAX_FRAG_LEN
+                fraglen_pmf[fl] += 1
+            end
+        end
+        fraglen_pmf ./= sum(fraglen_pmf)
     end
-    fraglen_pmf ./= sum(fraglen_pmf)
-
-    # out = open("fraglen.csv", "w")
-    # println(out, "fraglen,freq")
-    # for (fl, freq) in enumerate(fraglen_pmf)
-    #     println(out, fl, ",", freq)
-    # end
 
     fraglen_cdf = copy(fraglen_pmf)
     for i in 2:length(fraglen_cdf)
         fraglen_cdf[i] += fraglen_cdf[i-1]
     end
-
-    use_fallback_fraglen_dist = length(fraglens) < MIN_FRAG_LEN_COUNT
+    fraglen_median = searchsorted(fraglen_cdf, 0.5).start
 
     p = shuffle(1:length(bias_foreground_examples))
     bias_foreground_examples = bias_foreground_examples[p]
@@ -286,9 +283,14 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
     end
     =#
 
+    fraglen_by_prob = collect(1:MAX_FRAG_LEN)[sortperm(fraglen_pmf, rev=true)]
+    high_prob_fraglens = fraglen_by_prob[1:BIAS_EFFLEN_NUM_FRAGLENS]
+    @show high_prob_fraglens
+
     return BiasedFragModel(
-        fraglen_pmf, fraglen_cdf, Normal(200, 100),
-        use_fallback_fraglen_dist, strand_specificity,
+        fraglen_pmf, fraglen_cdf, fraglen_median,
+        high_prob_fraglens,
+        strand_specificity,
         bias_model)
 end
 
@@ -309,17 +311,12 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
     left_bias = t.metadata.left_bias
     right_bias = t.metadata.right_bias
 
-    for fraglen in 1:tlen
-        fraglenpr = fragment_length_prob(fm, fraglen)
-
-        # TODO: this can be O(tlen^2) depending on the fragment length
-        # distribution. That's something we should consider how to avoid. Like
-        # limit to 100 or so highest prob. fragment lengths.
-        if fraglenpr < BIAS_MIN_FRAGLEN_PR
+    for fraglen in fm.high_prob_fraglens
+        if fraglen > tlen
             continue
         end
 
-        @show (fraglen, fraglenpr)
+        fraglenpr = fragment_length_prob(fm, fraglen)
 
         frag_gc_count = 0
         for pos in 1:fraglen
@@ -334,6 +331,7 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
                 frag_gc_count += isGC(tseq[pos+fraglen-1])
             end
 
+            # TODO: maybe this would be faster if we avoid computing exponents
             c += exp(
                 left_bias[pos] +
                 right_bias[pos+fraglen-1] +
@@ -350,9 +348,13 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
                       alnpr::AlignmentPair, effective_length::Float32)
     tseq = t.metadata.seq
     tlen = length(tseq)
-    fragint = genomic_to_transcriptomic(t, rs, alnpr)
+    fragint = genomic_to_transcriptomic(t, rs, alnpr, fm.fraglen_median)
     fraglenpr = fragment_length_prob(fm, length(fragint))
-    frag_gc = gc_content(tseq[fragint])
+    frag_gc_count = 0
+    for pos in fragint
+        frag_gc_count += isGC(tseq[pos])
+    end
+    frag_gc = frag_gc_count / length(fragint)
 
     fragbias = exp(
         t.metadata.left_bias[fragint.start],

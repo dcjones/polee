@@ -55,8 +55,8 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
     Js = [UInt32[] for _ in 1:Threads.nthreads()]
     Vs = [Float32[] for _ in 1:Threads.nthreads()]
 
-    Threads.@threads for treepair_idx in 1:length(treepairs)
-    # for treepair_idx in 1:length(treepairs)
+    # Threads.@threads for treepair_idx in 1:length(treepairs)
+    for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
@@ -289,35 +289,55 @@ function RNASeqSample(fm::FragModel,
     # @profile compute_transcript_bias!(fm, ts)
     # Profile.print()
 
-    if isa(fm, BiasedFragModel)
-        @time compute_transcript_bias!(fm, ts)
+    # if isa(fm, BiasedFragModel)
+        # @time compute_transcript_bias!(fm, ts)
         # @profile compute_transcript_bias!(fm, ts)
         # Profile.print()
-        exit()
-    else
+        # exit()
+    # else
         compute_transcript_bias!(fm, ts)
-    end
+    # end
 
     # effective_lengths = Float32[effective_length(fm, t) for t in ts]
-    effective_lengths = Float32[]
-    for t in ts
-        push!(effective_lengths, effective_length(fm, t))
+    effective_lengths = Vector{Float32}(length(ts))
+    ts_arr = collect(ts)
+    println("computing effective lengths")
 
-        if isa(fm, BiasedFragModel)
-            @show length(t.metadata.seq)
+    # 196 seconds (3.2 minutes) TOO SLOW!!!
+    # @time Threads.@threads for t in ts_arr
+    #     effective_lengths[t.metadata.id] = effective_length(fm, t)
+    # end
+
+    if isa(fm, BiasedFragModel)
+        @profile for t in ts_arr[1:1000]
+            effective_lengths[t.metadata.id] = effective_length(fm, t)
         end
-
-        # if length(effective_lengths) % 1000 == 0
-            # @show length(effective_lengths)
-        # end
-
-        # if isa(fm, BiasedFragModel) && length(t.metadata.seq) > 5000
-        #     @show @code_warntype effective_length(fm, t)
-        #     @profile effective_length(fm, t)
-        #     Profile.print()
-        #     exit()
-        # end
+        Profile.print()
+        exit()
+    else
+        for t in ts_arr
+            effective_lengths[t.metadata.id] = effective_length(fm, t)
+        end
     end
+
+    # @time for t in ts
+    #     push!(effective_lengths, effective_length(fm, t))
+
+    #     if isa(fm, BiasedFragModel)
+    #         @show length(t.metadata.seq)
+    #     end
+
+    #     # if length(effective_lengths) % 1000 == 0
+    #         # @show length(effective_lengths)
+    #     # end
+
+    #     # if isa(fm, BiasedFragModel) && length(t.metadata.seq) > 5000
+    #     #     @show @code_warntype effective_length(fm, t)
+    #     #     @profile effective_length(fm, t)
+    #     #     Profile.print()
+    #     #     exit()
+    #     # end
+    # end
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 
     # reverse index (mapping matrix index to read id)

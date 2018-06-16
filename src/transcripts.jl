@@ -447,7 +447,8 @@ end
 """
 Return the fragments interval in transcript coordinates.
 """
-function genomic_to_transcriptomic(t::Transcript, rs::Reads, alnpr::AlignmentPair)
+function genomic_to_transcriptomic(
+        t::Transcript, rs::Reads, alnpr::AlignmentPair, fraglen_median::Int=0)
 
     tlen = length(t.metadata.seq)
 
@@ -460,7 +461,10 @@ function genomic_to_transcriptomic(t::Transcript, rs::Reads, alnpr::AlignmentPai
     if get(fraglen_) > 0
         fraglen = get(fraglen_)
     else
-        fraglen = FALLBACK_FRAGLEN_MEAN
+        fraglen = fraglen_median
+        if fraglen <= 0
+            return 1:0
+        end
     end
 
     # set tpos to 5' most position of the fragment (relative to transcript)

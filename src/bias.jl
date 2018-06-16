@@ -621,8 +621,8 @@ end
 
 
 function evaluate(posmodel::PositionalBiasModel, tlen, pos)
-    p_fg = clamp(posmodel.intp_fg[tlen, pos], 0.01, 0.99)
-    p_bg = clamp(posmodel.intp_bg[tlen, pos], 0.01, 0.99)
+    p_fg = clamp(Float32(posmodel.intp_fg[tlen, pos]), 0.01f0, 0.99f0)
+    p_bg = clamp(Float32(posmodel.intp_bg[tlen, pos]), 0.01f0, 0.99f0)
     return log(p_fg / p_bg)
 end
 

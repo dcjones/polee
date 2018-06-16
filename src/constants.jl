@@ -65,6 +65,11 @@ const BIAS_SEQ_OUTER_CTX  = 10
 # Number of bins to divide sequence fragments into for counting nucleotide frequencies
 const BIAS_NUM_FREQ_BINS = 4
 
-# Don't consider sequence bias when the fragment length probability is lower than
-# this number.
-const BIAS_MIN_FRAGLEN_PR = 1e-4
+# Number of fragment lengths to sum over when estimating effective length
+# (larger number is more accurate but slower)
+const BIAS_EFFLEN_NUM_FRAGLENS = 100
+
+# Fragment length distribution to use when there are too few usable pair-end
+# reads to reasonably estimate.
+const BIAS_FALLBACK_FRAGLEN_DIST = Normal(200, 100)
+

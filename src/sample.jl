@@ -286,8 +286,17 @@ function RNASeqSample(fm::FragModel,
     end
 
     # @time compute_transcript_bias!(fm, ts)
-    @profile compute_transcript_bias!(fm, ts)
-    Profile.print()
+    # @profile compute_transcript_bias!(fm, ts)
+    # Profile.print()
+
+    if isa(fm, BiasedFragModel)
+        @time compute_transcript_bias!(fm, ts)
+        # @profile compute_transcript_bias!(fm, ts)
+        # Profile.print()
+        exit()
+    else
+        compute_transcript_bias!(fm, ts)
+    end
 
     # effective_lengths = Float32[effective_length(fm, t) for t in ts]
     effective_lengths = Float32[]

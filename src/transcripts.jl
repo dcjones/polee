@@ -25,12 +25,12 @@ type TranscriptMetadata
     name::String
     id::Int
     exons::Vector{Exon}
-    seq::DNASequence
+    seq::Vector{DNA}
     left_bias::Vector{Float32}
     right_bias::Vector{Float32}
 
     function TranscriptMetadata(name, id)
-        return new(name, id, Exon[], DNASequence(), Float32[], Float32[])
+        return new(name, id, Exon[], DNA[], Float32[], Float32[])
     end
 
     function TranscriptMetadata(name, id, exons, seq)

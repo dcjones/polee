@@ -294,7 +294,8 @@ end
 
 
 function compute_transcript_bias!(fm::BiasedFragModel, ts::Transcripts)
-    for t in ts
+    ts_arr = collect(ts)
+    Threads.@threads for t in ts_arr
         compute_transcript_bias!(fm.bias_model, t)
     end
 end
@@ -340,8 +341,6 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
         end
         efflen += c * fraglenpr
     end
-
-    exit()
 
     return efflen
 end

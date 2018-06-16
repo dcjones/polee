@@ -4,8 +4,8 @@
 One training example for bias models.
 """
 struct BiasTrainingExample
-    left_seq::DNASequence
-    right_seq::DNASequence
+    left_seq::Vector{DNA}
+    right_seq::Vector{DNA}
     frag_gc::Float64
     tpdist::Float64
     fpdist::Float64
@@ -88,7 +88,7 @@ function extract_padded_seq(tseq, first, last)
     if leftpad == 0 && rightpad == 0
         return fragseq
     else
-        return DNASequence(repeat(dna"N", leftpad), fragseq, repeat(dna"N", rightpad))
+        return vcat(fill(DNA_N, leftpad), fragseq, fill(DNA_N, rightpad))
     end
 end
 
@@ -170,22 +170,29 @@ end
 
 struct SeqBiasModel
     orders::Vector{Int}
-    ps::Array{Float32, 4}
+    ps::Array{Float32, 3}
 end
 
 
 # some helper functions for training seqbiasmodel
 
 
-function nt2bit(nt::DNA)
-    c = nt == DNA_A ? UInt8(0) :
-        nt == DNA_C ? UInt8(1) :
-        nt == DNA_G ? UInt8(2) :
-        nt == DNA_T ? UInt8(3) :
-        rand(UInt8(0):UInt8(3))
-    return c
-end
+# function nt2bit(nt::DNA)
+#     c = nt == DNA_A ? UInt8(0) :
+#         nt == DNA_C ? UInt8(1) :
+#         nt == DNA_G ? UInt8(2) :
+#         nt == DNA_T ? UInt8(3) :
+#         rand(UInt8(0):UInt8(3))
+#     return c
+# end
 
+
+const nt2bit = UInt8[
+    0,                   # A
+    1, 0,                # C
+    2, 0, 0, 0,          # C
+    3, 0, 0, 0, 0, 0, 0, # G
+    0 ]                  # N
 
 # update position j in the markov chain parameters ps
 function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order)
@@ -279,7 +286,7 @@ function SeqBiasModel(
         for (i, example) in enumerate(examples)
             seq = fragend == :left ? example.left_seq : example.right_seq
             for j in 1:k
-                c = nt2bit(seq[j])
+                c = nt2bit[Int(seq[j])]
                 seqarr[offset + i, j] = c
                 ys[offset + i] = y
             end
@@ -383,43 +390,47 @@ function SeqBiasModel(
     # TODO: I can make this faster by storing foreground/background ratios in ps
     # instead of having two separate arrays
 
-    return SeqBiasModel(orders, ps)
+    return SeqBiasModel(orders, ps[:,2,:,:] .- ps[:,1,:,:])
 end
 
 
-function evaluate(sb::SeqBiasModel, seq::DNASequence)
+function evaluate(sb::SeqBiasModel, seq)
     @assert length(seq) == length(sb.orders)
     bias = 0.0
     @inbounds for i in 1:length(seq)
         if sb.orders[i] > 0
-            c = nt2bit(seq[i])
+            c = nt2bit[Int(seq[i])]
             ctx = 0
             for l in 1:sb.orders[i]
-                ctx = (ctx << 2) | nt2bit(seq[i+l])
+                ctx = (ctx << 2) | nt2bit[Int(seq[i+l])]
             end
-            bias += sb.ps[i, 2, c+1, ctx+1] - sb.ps[i, 1, c+1, ctx+1]
+            bias += sb.ps[i, c+1, ctx+1]
         end
     end
     return bias
 end
 
 
-function evaluate(sb::SeqBiasModel, seq::DNASequence, pos)
+function evaluate(sb::SeqBiasModel, seq, pos)
     bias = 0.0
     seqlen = length(seq)
     @inbounds for (i, j) in enumerate(pos-BIAS_SEQ_OUTER_CTX:pos+BIAS_SEQ_INNER_CTX-1)
         if sb.orders[i] > 0
-            c = nt2bit(1 <= j <= seqlen ? seq[j] : DNA_N)
+            c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : DNA_N)]
             ctx = 0
             for l in 1:sb.orders[i]
-                ctx = (ctx << 2) | nt2bit(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)
+                ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)]
             end
-            bias += sb.ps[i, 2, c+1, ctx+1] - sb.ps[i, 1, c+1, ctx+1]
+            bias += sb.ps[i, c+1, ctx+1]
         end
     end
 
     return bias
 end
+
+# TODO: I'm afraid the only real solution is to 2-bit encode the sequences so
+# we can avoid the overhead of of decoding. I don't really understand why this
+# is so slow though.
 
 
 struct SimpleHistogramModel

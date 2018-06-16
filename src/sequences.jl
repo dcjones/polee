@@ -23,7 +23,7 @@ function read_transcript_sequences_from_fasta!(ts, filename)
         if haskey(ts.trees, seqname)
             entryseq = FASTA.sequence(entry)
             for t in ts.trees[seqname]
-                seq = t.metadata.seq
+                seq = DNASequence()
                 for exon in t.metadata.exons
                     if exon.last <= length(entryseq)
                         append!(seq, entryseq[exon.first:exon.last])
@@ -32,6 +32,8 @@ function read_transcript_sequences_from_fasta!(ts, filename)
                 if t.strand == STRAND_NEG
                     reverse_complement!(seq)
                 end
+
+                t.metadata.seq = Vector{DNA}(seq)
             end
         end
     end
@@ -53,15 +55,17 @@ function read_transcript_sequences_from_twobit!(ts, filename)
         end
 
         for t in tree
-            seq = t.metadata.seq
+            seq = DNASequence()
             for exon in t.metadata.exons
                 if exon.last <= length(refseq)
-                    append!(seq, DNASequence(refseq[exon.first:exon.last]))
+                    append!(seq, DNASequence(entryseq[exon.first:exon.last]))
                 end
             end
             if t.strand == STRAND_NEG
                 reverse_complement!(seq)
             end
+
+            t.metadata.seq = Vector{DNA}(seq)
         end
     end
 end

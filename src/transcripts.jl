@@ -511,6 +511,8 @@ function genomic_to_transcriptomic(
         fraglen = tlen - tpos + 1
     end
 
+    fragint = Int(tpos):Int(tpos+fraglen-1)
+
     return Int(tpos):Int(tpos+fraglen-1)
 end
 

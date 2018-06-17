@@ -331,11 +331,10 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
                 frag_gc_count += isGC(tseq[pos+fraglen-1])
             end
 
-            # TODO: maybe this would be faster if we avoid computing exponents
-            c += exp(
-                left_bias[pos] +
-                right_bias[pos+fraglen-1] +
-                evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen)))
+            c +=
+                left_bias[pos] *
+                right_bias[pos+fraglen-1] *
+                evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen))
         end
         efflen += c * fraglenpr
     end
@@ -349,31 +348,23 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
     tseq = t.metadata.seq
     tlen = length(tseq)
     fragint = genomic_to_transcriptomic(t, rs, alnpr, fm.fraglen_median)
-    fraglenpr = fragment_length_prob(fm, length(fragint))
+    fraglen = length(fragint)
+    if fraglen == 0 # incompatible fragment
+        return 0.0f0
+    end
+    fraglenpr = fragment_length_prob(fm, fraglen)
     frag_gc_count = 0
     for pos in fragint
         frag_gc_count += isGC(tseq[pos])
     end
     frag_gc = frag_gc_count / length(fragint)
 
-    fragbias = exp(
-        t.metadata.left_bias[fragint.start],
-        t.metadata.right_bias[fragint.stop],
-        # evaluate(
-        #     fm.bias_model.left_seqbias,
-        #     extract_padded_seq(
-        #         tseq,
-        #         fragint.start - BIAS_SEQ_OUTER_CTX,
-        #         fragint.start + BIAS_SEQ_INNER_CTX - 1)) +
-        # evaluate(
-        #     fm.bias_model.right_seqbias,
-        #     extract_padded_seq(
-        #         tseq,
-        #         fragint.stop - BIAS_SEQ_OUTER_CTX,
-        #         fragint.stop + BIAS_SEQ_OUTER_CTX - 1)) +
-        # evaluate(fm.bias_model.pos_model, tlen, fragint.start/tlen) +
-        evaluate(fm.bias_model.gc_model, frag_gc))
+    fragbias =
+        t.metadata.left_bias[fragint.start] *
+        t.metadata.right_bias[fragint.stop] *
+        evaluate(fm.bias_model.gc_model, frag_gc)
 
     fragpr = fraglenpr * fragbias / effective_length
+
     return fragpr
 end

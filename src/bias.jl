@@ -210,15 +210,12 @@ function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order)
         for ctx in 1:(4^order)
             z = sum(ps[j, i2, 1:end, ctx])
             ps[j, i2, 1:end, ctx] ./= z
-            for l in 1:4
-                ps[j, i2, l, ctx] = log(ps[j, i2, l, ctx])
-            end
         end
     end
 end
 
 
-function seqbias_update_lp!(ps, seq_test, seq_test_lp, j, order)
+function seqbias_update_p!(ps, seq_test, seq_test_p, j, order)
     if order < 0
         return
     end
@@ -230,29 +227,29 @@ function seqbias_update_lp!(ps, seq_test, seq_test_lp, j, order)
         end
 
         nt = seq_test[i, j]+1
-        seq_test_lp[i, 1, j] = ps[j, 1, nt, ctx+1]
-        seq_test_lp[i, 2, j] = ps[j, 2, nt, ctx+1]
+        seq_test_p[i, 1, j] = ps[j, 1, nt, ctx+1]
+        seq_test_p[i, 2, j] = ps[j, 2, nt, ctx+1]
     end
 end
 
 
-function seqbias_save_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
+function seqbias_save_state!(ps, tmp_ps, seq_test_p, tmp_seq_test_p, j)
     for i1 in 1:2, i2 in 1:4, i3 in 1:size(ps, 4)
         tmp_ps[i1, i2, i3] = ps[j, i1, i2, i3]
     end
 
-    for i1 in 1:size(seq_test_lp, 1), i2 in 1:2
-        tmp_seq_test_lp[i1, i2] = seq_test_lp[i1, i2, j]
+    for i1 in 1:size(seq_test_p, 1), i2 in 1:2
+        tmp_seq_test_p[i1, i2] = seq_test_p[i1, i2, j]
     end
 end
 
-function seqbias_restore_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
+function seqbias_restore_state!(ps, tmp_ps, seq_test_p, tmp_seq_test_p, j)
     for i1 in 1:2, i2 in 1:4, i3 in 1:size(ps, 4)
         ps[j, i1, i2, i3] = tmp_ps[i1, i2, i3]
     end
 
-    for i1 in 1:size(seq_test_lp, 1), i2 in 1:2
-        seq_test_lp[i1, i2, j] = tmp_seq_test_lp[i1, i2]
+    for i1 in 1:size(seq_test_p, 1), i2 in 1:2
+        seq_test_p[i1, i2, j] = tmp_seq_test_p[i1, i2]
     end
 end
 
@@ -296,8 +293,8 @@ function SeqBiasModel(
     prior = length(foreground_training_examples) /
         (length(foreground_training_examples) + length(background_training_examples))
 
-    log_prior = log(prior)
-    log_inv_prior = log(1.0 - prior)
+    # log_prior = log(prior)
+    # log_inv_prior = log(1.0 - prior)
 
     # markov chain paremeters: indexed by
     #     position, foreground/background, nucleotide, nucleotide context
@@ -307,24 +304,23 @@ function SeqBiasModel(
     tmp_ps = Array{Float32}((2, 4, maxorder_size))
 
     # probability terms, precomputed to avoid revaluating things
-    seq_test_lp = zeros(Float32, (n_test, 2, k))
+    seq_test_p = ones(Float32, (n_test, 2, k))
 
     # arrays for saving slices of seq_fg_test_lp/seq_bg_test_lp
-    tmp_seq_test_lp = zeros(Float32, (n_test, 2))
+    tmp_seq_test_p = ones(Float32, (n_test, 2))
 
     # order of the markov chain at each position, where -1 indicated an
     # excluded position
     orders = fill(-1, k)
 
     function compute_accuracy()
-        lps = sum(seq_test_lp, 3)
+        lps = prod(seq_test_p, 3)
         return mean((lps[1:end, 2] .> lps[1:end, 1]) .== ys_test)
     end
 
     function compute_cross_entropy()
-        logcondprobs = sum(seq_test_lp, 3)
-        condprobs = exp.(logcondprobs)
-        logprobs = logcondprobs .- log.(condprobs[1:end, 1] .+ condprobs[1:end, 2])
+        condprobs = prod(seq_test_p, 3)
+        logprobs = log.(condprobs ./ (condprobs[1:end, 1] .+ condprobs[1:end, 2]))
         entropy = 0.0
         for i1 in 1:size(logprobs, 1)
             entropy -= ys_test[i1] * logprobs[i1, 2] + (1 - ys_test[i1]) * logprobs[i1, 1]
@@ -343,15 +339,15 @@ function SeqBiasModel(
         for j in 1:k
             if orders[j] < maxorder && j + orders[j] < k
                 # save parameters
-                seqbias_save_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
+                seqbias_save_state!(ps, tmp_ps, seq_test_p, tmp_seq_test_p, j)
 
                 # increase order and try out the model
                 orders[j] += 1
 
                 seqbias_update_param_estimate!(
                     ps, seq_train, ys_train, j, orders[j]) # 0.0005 seconds
-                seqbias_update_lp!(
-                    ps, seq_test, seq_test_lp, j, orders[j]) # 0.0001 seconds
+                seqbias_update_p!(
+                    ps, seq_test, seq_test_p, j, orders[j]) # 0.0001 seconds
 
                 accuracy = compute_accuracy() # 0.001 seconds
                 entropy = compute_cross_entropy() # 0.001 seconds
@@ -366,7 +362,7 @@ function SeqBiasModel(
 
                 # return parameters to original state
                 orders[j] -= 1
-                seqbias_restore_state!(ps, tmp_ps, seq_test_lp, tmp_seq_test_lp, j)
+                seqbias_restore_state!(ps, tmp_ps, seq_test_p, tmp_seq_test_p, j)
             end
         end
 
@@ -377,7 +373,7 @@ function SeqBiasModel(
             orders[best_j] += 1
             seqbias_update_param_estimate!(
                 ps, seq_train, ys_train, best_j, orders[best_j])
-            seqbias_update_lp!(ps, seq_test, seq_test_lp, best_j, orders[best_j])
+            seqbias_update_p!(ps, seq_test, seq_test_p, best_j, orders[best_j])
             accuracy0 = best_accuracy
             entropy0 = best_entropy
         end
@@ -387,16 +383,13 @@ function SeqBiasModel(
     @show entropy0
     @show orders
 
-    # TODO: I can make this faster by storing foreground/background ratios in ps
-    # instead of having two separate arrays
-
-    return SeqBiasModel(orders, ps[:,2,:,:] .- ps[:,1,:,:])
+    return SeqBiasModel(orders, ps[:,2,:,:] ./ ps[:,1,:,:])
 end
 
 
 function evaluate(sb::SeqBiasModel, seq)
     @assert length(seq) == length(sb.orders)
-    bias = 0.0
+    bias = 1.0f0
     @inbounds for i in 1:length(seq)
         if sb.orders[i] > 0
             c = nt2bit[Int(seq[i])]
@@ -404,7 +397,7 @@ function evaluate(sb::SeqBiasModel, seq)
             for l in 1:sb.orders[i]
                 ctx = (ctx << 2) | nt2bit[Int(seq[i+l])]
             end
-            bias += sb.ps[i, c+1, ctx+1]
+            bias *= sb.ps[i, c+1, ctx+1]
         end
     end
     return bias
@@ -412,7 +405,7 @@ end
 
 
 function evaluate(sb::SeqBiasModel, seq, pos)
-    bias = 0.0
+    bias = 1.0f0
     seqlen = length(seq)
     @inbounds for (i, j) in enumerate(pos-BIAS_SEQ_OUTER_CTX:pos+BIAS_SEQ_INNER_CTX-1)
         if sb.orders[i] > 0
@@ -421,7 +414,7 @@ function evaluate(sb::SeqBiasModel, seq, pos)
             for l in 1:sb.orders[i]
                 ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)]
             end
-            bias += sb.ps[i, c+1, ctx+1]
+            bias *= sb.ps[i, c+1, ctx+1]
         end
     end
 
@@ -476,10 +469,12 @@ function SimpleHistogramModel(
     bins = Vector{Float32}(numbins)
     for i in 1:numbins
         bins[i] =
-            log(bincounts[2, i]/bincounts_sums[2]) -
-            log(bincounts[1, i]/bincounts_sums[1])
+            (bincounts[2, i]/bincounts_sums[2]) /
+            (bincounts[1, i]/bincounts_sums[1])
     end
     @show bins
+
+    # TODO: I could make this a bit faster by fitting the ratio of histograms.
 
     return SimpleHistogramModel(qs, bins)
 end
@@ -542,12 +537,12 @@ function compute_cross_entropy(
         poss_bg_test, tlens_bg_test)
     entropy = 0.0
     for (tlen, pos) in zip(tlens_fg_test, poss_fg_test)
-        p = logistic(evaluate(model, tlen, pos))
+        p = logistic(log(evaluate(model, tlen, pos)))
         entropy -= log(p)
     end
 
     for (tlen, pos) in zip(tlens_bg_test, poss_bg_test)
-        p = logistic(evaluate(model, tlen, pos))
+        p = logistic(log(evaluate(model, tlen, pos)))
         entropy -= log(1 - p)
     end
 
@@ -623,7 +618,7 @@ end
 function evaluate(posmodel::PositionalBiasModel, tlen, pos)
     p_fg = clamp(Float32(posmodel.intp_fg[tlen, pos]), 0.01f0, 0.99f0)
     p_bg = clamp(Float32(posmodel.intp_bg[tlen, pos]), 0.01f0, 0.99f0)
-    return log(p_fg / p_bg)
+    return p_fg / p_bg
 end
 
 
@@ -751,7 +746,6 @@ function BiasModel(
 end
 
 
-
 function accuracy(
         bm::BiasModel, foreground_testing_examples, background_testing_examples)
     acc = 0
@@ -760,9 +754,9 @@ function accuracy(
     idx = 1
     for example in foreground_testing_examples
         bias =
-            evaluate(bm.left_seqbias, example.left_seq) +
-            evaluate(bm.right_seqbias, example.right_seq) +
-            evaluate(bm.gc_model, example.frag_gc) +
+            evaluate(bm.left_seqbias, example.left_seq) *
+            evaluate(bm.right_seqbias, example.right_seq) *
+            evaluate(bm.gc_model, example.frag_gc) *
             evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
         bs[idx] = bias
         idx += 1
@@ -770,9 +764,9 @@ function accuracy(
 
     for example in background_testing_examples
         bias =
-            evaluate(bm.left_seqbias, example.left_seq) +
-            evaluate(bm.right_seqbias, example.right_seq) +
-            evaluate(bm.gc_model, example.frag_gc) +
+            evaluate(bm.left_seqbias, example.left_seq) *
+            evaluate(bm.right_seqbias, example.right_seq) *
+            evaluate(bm.gc_model, example.frag_gc) *
             evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
         bs[idx] = bias
         idx += 1
@@ -822,7 +816,7 @@ function compute_transcript_bias!(bm::BiasModel, t::Transcript)
         #     bm.left_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
 
         left_bias[pos] =
-            evaluate(bm.left_seqbias, tseq, pos) +
+            evaluate(bm.left_seqbias, tseq, pos) *
             evaluate(bm.pos_model, tlen, pos/tlen)
     end
 

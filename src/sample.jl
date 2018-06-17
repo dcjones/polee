@@ -55,8 +55,9 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
     Js = [UInt32[] for _ in 1:Threads.nthreads()]
     Vs = [Float32[] for _ in 1:Threads.nthreads()]
 
-    # Threads.@threads for treepair_idx in 1:length(treepairs)
-    for treepair_idx in 1:length(treepairs)
+    # TODO: use threads
+    Threads.@threads for treepair_idx in 1:length(treepairs)
+    # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
@@ -257,7 +258,7 @@ function RNASeqSample(fm::FragModel,
                       ts::Transcripts,
                       ts_metadata::TranscriptsMetadata,
                       output=Nullable{String}(),
-                      aln_idx_rev_map_ref=Nullable{Ref{Vector{UInt32}}})
+                      aln_idx_rev_map_ref=Nullable{Ref{Vector{UInt32}}}())
 
     println("intersecting reads and transcripts...")
 
@@ -303,22 +304,22 @@ function RNASeqSample(fm::FragModel,
     ts_arr = collect(ts)
     println("computing effective lengths")
 
-    # 196 seconds (3.2 minutes) TOO SLOW!!!
-    # @time Threads.@threads for t in ts_arr
-    #     effective_lengths[t.metadata.id] = effective_length(fm, t)
-    # end
-
-    if isa(fm, BiasedFragModel)
-        @profile for t in ts_arr[1:1000]
-            effective_lengths[t.metadata.id] = effective_length(fm, t)
-        end
-        Profile.print()
-        exit()
-    else
-        for t in ts_arr
-            effective_lengths[t.metadata.id] = effective_length(fm, t)
-        end
+    # 116 seconds (2 minutes), Still pretty fucking slow.
+    # We should see about iterating over fewer fragment sizes.
+    @time Threads.@threads for t in ts_arr
+        effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
+
+    # if isa(fm, BiasedFragModel)
+    #     for t in ts_arr[1:10]
+    #         effective_lengths[t.metadata.id] = effective_length(fm, t)
+    #     end
+    #     exit()
+    # else
+    #     Threads.@threads for t in ts_arr
+    #         effective_lengths[t.metadata.id] = effective_length(fm, t)
+    #     end
+    # end
 
     # @time for t in ts
     #     push!(effective_lengths, effective_length(fm, t))
@@ -341,7 +342,13 @@ function RNASeqSample(fm::FragModel,
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 
     # reverse index (mapping matrix index to read id)
-    aln_idx_rev_map = zeros(UInt32, maximum(I))
+    # @show Int(maximum(I))
+    # @show length(I)
+    # @show Int(maximum(J))
+    # @show length(J)
+    # @show Int(maximum(aln_idx_map))
+    # @show length(aln_idx_map)
+    aln_idx_rev_map = zeros(UInt32, maximum(aln_idx_map))
     for (i, j) in enumerate(aln_idx_map)
         if j != 0
             @assert aln_idx_rev_map[j] == 0

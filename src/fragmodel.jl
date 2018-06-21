@@ -113,6 +113,7 @@ function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
         fraglen = min(max_frag_len, fm.fraglen_median)
     end
 
+    # TODO: strand specificity
     fraglenpr = fragment_length_prob(fm, fraglen)
     fragpr = fraglenpr / effective_length
 
@@ -339,7 +340,7 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
         efflen += c * fraglenpr
     end
 
-    return efflen
+    return Float32(max(efflen, MIN_EFFECTIVE_LENGTH))
 end
 
 
@@ -364,6 +365,7 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
         t.metadata.right_bias[fragint.stop] *
         evaluate(fm.bias_model.gc_model, frag_gc)
 
+    # TODO: strand specificity
     fragpr = fraglenpr * fragbias / effective_length
 
     return fragpr

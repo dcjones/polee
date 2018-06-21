@@ -105,6 +105,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "x scale")
         x = tf.nn.softmax(self.x)
+        x = tf.Print(x, [tf.reduce_min(x), tf.reduce_max(x)], "x scale span")
 
         # effective length transform
         # --------------------------

@@ -79,6 +79,24 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String)
     params = approximate_likelihood(approximation, sample)
 
+    # TODO: delete this
+    if isa(approximation, OptimizeHSBApprox)
+        xs = params["x"]
+        xs ./= sample.effective_lengths
+        xs ./= sum(xs)
+        open("mode.csv", "w") do output
+            if isempty(sample.ts)
+                for i in 1:length(xs)
+                    println(output, "transcript", i, ",", xs[i], ",", sample.effective_lengths[i])
+                end
+            else
+                for (i, t) in enumerate(sample.ts)
+                    println(output, t.metadata.name, ",", xs[i], ",", sample.effective_lengths[i])
+                end
+            end
+        end
+    end
+
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
@@ -172,7 +190,7 @@ end
 
 
 function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, sample::RNASeqSample,
-                                          ::Type{Val{GRADONLY}}=Val{true})
+                                          ::Type{Val{GRADONLY}}=Val{false})
     X = sample.X
     efflens = sample.effective_lengths
 
@@ -243,14 +261,21 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, sample::RNASeqSam
             # log jacobian gradient
             expz = exp(zs[i])
             z_grad[i] += (1 - expz) / (1 + expz)
+
+            # TODO:
+            # equivalent to:
+            # z_grad[i] += 1 - 2*ys[i]
+            # but both of these version cause in incorrect mode to be found.
+            # this seems like it may be at the root of our issue, but I really
+            # can't see why this is happening.
+
+            # I't possible that the derivative just gets very small and too
+            # flat to effectively climb, but nevertheless it leads to a mode
+            # that is way off the mark.
         end
 
         adam_update_mv!(m_z, v_z, z_grad, step_num)
         adam_update_params!(zs, m_z, v_z, learning_rate, step_num, ss_max_z_step)
-
-        # @show xs[30896]
-        # @show xs[1]
-        # @show xs[end]
 
         next!(prog)
     end

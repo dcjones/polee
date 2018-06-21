@@ -4,6 +4,7 @@ type RNASeqSample
     n::Int
     X::SparseMatrixCSC{Float32, UInt32}
     effective_lengths::Vector{Float32}
+    ts::Transcripts
     transcript_metadata::TranscriptsMetadata
 end
 
@@ -23,7 +24,7 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
     effective_lengths = read(input["effective_lengths"])
 
-    return RNASeqSample(m, n, X, effective_lengths, TranscriptsMetadata())
+    return RNASeqSample(m, n, X, effective_lengths, Transcripts(), TranscriptsMetadata())
 end
 
 
@@ -55,7 +56,6 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
     Js = [UInt32[] for _ in 1:Threads.nthreads()]
     Vs = [Float32[] for _ in 1:Threads.nthreads()]
 
-    # TODO: use threads
     Threads.@threads for treepair_idx in 1:length(treepairs)
     # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
@@ -141,12 +141,13 @@ function RNASeqSample(transcripts_filename::String,
                       reads_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
-                      output=Nullable{String}())
+                      output=Nullable{String}();
+                      no_bias::Bool=false)
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     read_transcript_sequences!(ts, genome_filename)
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output)
+        excluded_transcripts, output, no_bias=no_bias)
 end
 
 
@@ -158,7 +159,8 @@ function RNASeqSample(transcript_sequence_filename::String,
                       reads_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
-                      output=Nullable{String}())
+                      output=Nullable{String}();
+                      no_bias::Bool=false)
 
     println("Reading transcript sequences")
     tic()
@@ -183,7 +185,7 @@ function RNASeqSample(transcript_sequence_filename::String,
 
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output)
+        excluded_transcripts, output, no_bias=no_bias)
 end
 
 
@@ -197,6 +199,7 @@ function RNASeqSample(ts::Transcripts,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
+                      no_bias::Bool=false,
                       num_training_reads::Int=100000)
 
     rs = Reads(reads_filename, excluded_seqs)
@@ -205,46 +208,51 @@ function RNASeqSample(ts::Transcripts,
     # them to transcripts, then extracting sequence context.
     rs_train      = subsample_reads(rs, num_training_reads)
     simplistic_fm = SimplisticFragModel(rs_train, ts)
-    aln_idx_rev_map_ref = Ref{Vector{UInt32}}()
-    sample_train  = RNASeqSample(
-        simplistic_fm, rs_train, ts, ts_metadata,
-        Nullable{String}(), Nullable(aln_idx_rev_map_ref))
-    aln_idx_rev_map = aln_idx_rev_map_ref.x
 
-    # assign reads to transcripts
-    xs_train = optimize_likelihood(sample_train)
-    Xt = transpose(sample_train.X)
+    if !no_bias
+        aln_idx_rev_map_ref = Ref{Vector{UInt32}}()
+        sample_train  = RNASeqSample(
+            simplistic_fm, rs_train, ts, ts_metadata,
+            Nullable{String}(), Nullable(aln_idx_rev_map_ref))
+        aln_idx_rev_map = aln_idx_rev_map_ref.x
 
-    # map read index to a transcript index
-    read_assignments = Dict{Int, Int}()
+        # assign reads to transcripts
+        xs_train = optimize_likelihood(sample_train)
+        Xt = transpose(sample_train.X)
 
-    for i in 1:size(sample_train.X, 1)
-        read_idx = aln_idx_rev_map[i]
+        # map read index to a transcript index
+        read_assignments = Dict{Int, Int}()
 
-        z_sum = 0.0
-        for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
-            j = Xt.rowval[ptr]
-            z_sum += xs_train[j] * Xt.nzval[ptr]
-        end
+        for i in 1:size(sample_train.X, 1)
+            read_idx = aln_idx_rev_map[i]
 
-        # assign read randomly according to its probability
-        r = rand()
-        read_assignment = 0
-        for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
-            j = Xt.rowval[ptr]
-            zj = xs_train[j] * Xt.nzval[ptr] / z_sum
-            if zj > r || ptr == Xt.colptr[i+1]-1
-                read_assignment = j
-            else
-                r -= zj
+            z_sum = 0.0
+            for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
+                j = Xt.rowval[ptr]
+                z_sum += xs_train[j] * Xt.nzval[ptr]
             end
-        end
-        @assert read_assignment != 0
-        @assert !haskey(read_assignments, read_idx)
-        read_assignments[read_idx] = read_assignment
-    end
 
-    fm = BiasedFragModel(rs_train, ts, read_assignments)
+            # assign read randomly according to its probability
+            r = rand()
+            read_assignment = 0
+            for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
+                j = Xt.rowval[ptr]
+                zj = xs_train[j] * Xt.nzval[ptr] / z_sum
+                if zj > r || ptr == Xt.colptr[i+1]-1
+                    read_assignment = j
+                else
+                    r -= zj
+                end
+            end
+            @assert read_assignment != 0
+            @assert !haskey(read_assignments, read_idx)
+            read_assignments[read_idx] = read_assignment
+        end
+
+        fm = BiasedFragModel(rs_train, ts, read_assignments)
+    else
+        fm = simplistic_fm
+    end
 
     return RNASeqSample(fm, rs, ts, ts_metadata, output)
 end
@@ -395,5 +403,5 @@ function RNASeqSample(fm::FragModel,
         end
     end
 
-    return RNASeqSample(m, n, M, effective_lengths, ts_metadata)
+    return RNASeqSample(m, n, M, effective_lengths, ts, ts_metadata)
 end

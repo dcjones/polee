@@ -114,9 +114,12 @@ function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
         fraglen = min(max_frag_len, fm.fraglen_median)
     end
 
-    # TODO: strand specificity
+    fragstrandpr = alnpr.strand == t.strand ?
+        fm.strand_specificity : 1.0 - fm.strand_specificity
+
     fraglenpr = fragment_length_prob(fm, fraglen)
-    fragpr = fraglenpr / effective_length
+
+    fragpr = fragstrandpr * fraglenpr / effective_length
 
     return fragpr
 end
@@ -186,22 +189,12 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
         end
 
         push!(fraglens, fl)
-
-        # fraqseq = extract_padded_seq(
-        #     tseq, tpos - BIAS_SEQ_FRAG_PAD_LEFT, tpos + fl - 1 + BIAS_SEQ_FRAG_PAD_RIGHT)
         push!(bias_foreground_examples, BiasTrainingExample(tseq, tpos, fl))
 
         # perturb fragment position and record context as a background sample
         tpos = rand(1:length(tseq)-fl+1)
-        # fraqseq = extract_padded_seq(
-        #     tseq, tpos - BIAS_SEQ_FRAG_PAD_LEFT, tpos + fl - 1 + BIAS_SEQ_FRAG_PAD_RIGHT)
         push!(bias_background_examples, BiasTrainingExample(tseq, tpos, fl))
     end
-
-    @show length(read_assignments)
-    @show length(rs.alignment_pairs)
-    @show length(fraglens)
-    @show length(bias_foreground_examples)
 
     strand_specificity = strand_match_count /
         (strand_match_count + strand_mismatch_count)
@@ -365,8 +358,10 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
         t.metadata.right_bias[fragint.stop] *
         evaluate(fm.bias_model.gc_model, frag_gc)
 
-    # TODO: strand specificity
-    fragpr = fraglenpr * fragbias / effective_length
+    fragstrandpr = alnpr.strand == t.strand ?
+        fm.strand_specificity : 1.0 - fm.strand_specificity
+
+    fragpr = fragstrandpr * fraglenpr * fragbias / effective_length
 
     return fragpr
 end

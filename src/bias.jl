@@ -114,29 +114,6 @@ function push_alignment_context!(
         return false, false
     end
 
-    # adjust position in the presense of soft-clipping
-    # TODO: doesn't leftposition already account for soft-clipping?
-    if cigar_len(aln) > 1
-        leading_clip, trailing_clip = 0, 0
-        for (i, c) in enumerate(CigarIter(reads, aln))
-            if i == 1 && c.op == OP_SOFT_CLIP
-                leading_clip = length(c)
-            else
-                if c.op == OP_SOFT_CLIP
-                    trailing_clip = length(c)
-                else
-                    trailing_clip = 0
-                end
-            end
-        end
-
-        if strand == STRAND_POS
-            pos -= leading_clip
-        else
-            pos += trailing_clip
-        end
-    end
-
     leftctx, rightctx =
         ifelse(strand == STRAND_POS, (upctx, downctx), (downctx, upctx))
 
@@ -647,14 +624,16 @@ function BiasModel(
     # train sequence bias models
     # --------------------------
 
-    @time seqbias_left = SeqBiasModel(
+    println("Fitting sequence bias model...")
+
+    seqbias_left = SeqBiasModel(
         bias_foreground_training_examples,
         bias_background_training_examples,
         bias_foreground_testing_examples,
         bias_background_testing_examples,
         :left)
 
-    @time seqbias_right = SeqBiasModel(
+    seqbias_right = SeqBiasModel(
         bias_foreground_training_examples,
         bias_background_training_examples,
         bias_foreground_testing_examples,
@@ -709,6 +688,8 @@ function BiasModel(
         ys_testing[idx] = false
     end
 
+    println("Fitting GC content bias model...")
+
     fill!(weights, 1.0f0) # seems to do better without weigths
     gc_model = SimpleHistogramModel(
         frag_gc_training, ys_training, weights)
@@ -728,6 +709,8 @@ function BiasModel(
     # train positional bias model
     # ---------------------------
 
+    println("Fitting positional bias model...")
+
     fill!(weights, 1.0f0) # seems to do better without weigths
     pos_model = PositionalBiasModel(
         bias_foreground_training_examples,
@@ -738,8 +721,9 @@ function BiasModel(
 
     bm = BiasModel(seqbias_left, seqbias_right, gc_model, pos_model)
 
-    @show accuracy(
+    acc = accuracy(
         bm, bias_foreground_testing_examples, bias_background_testing_examples)
+    @printf("Bias model accuracy: %0.2f%%\n", acc)
 
     return bm
 end

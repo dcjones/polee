@@ -294,24 +294,11 @@ function RNASeqSample(fm::FragModel,
         end
     end
 
-    # @time compute_transcript_bias!(fm, ts)
-    # @profile compute_transcript_bias!(fm, ts)
-    # Profile.print()
+    compute_transcript_bias!(fm, ts)
 
-    # if isa(fm, BiasedFragModel)
-        # @time compute_transcript_bias!(fm, ts)
-        # @profile compute_transcript_bias!(fm, ts)
-        # Profile.print()
-        # exit()
-    # else
-        compute_transcript_bias!(fm, ts)
-    # end
-
-    # effective_lengths = Float32[effective_length(fm, t) for t in ts]
+    println("computing effective lengths")
     effective_lengths = Vector{Float32}(length(ts))
     ts_arr = collect(ts)
-    println("computing effective lengths")
-
     Threads.@threads for t in ts_arr
         effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
@@ -326,47 +313,10 @@ function RNASeqSample(fm::FragModel,
     #             effective_lengths[t.metadata.id])
     #     end
     # end
-    # exit()
 
-
-    # if isa(fm, BiasedFragModel)
-    #     for t in ts_arr[1:10]
-    #         effective_lengths[t.metadata.id] = effective_length(fm, t)
-    #     end
-    #     exit()
-    # else
-    #     Threads.@threads for t in ts_arr
-    #         effective_lengths[t.metadata.id] = effective_length(fm, t)
-    #     end
-    # end
-
-    # @time for t in ts
-    #     push!(effective_lengths, effective_length(fm, t))
-
-    #     if isa(fm, BiasedFragModel)
-    #         @show length(t.metadata.seq)
-    #     end
-
-    #     # if length(effective_lengths) % 1000 == 0
-    #         # @show length(effective_lengths)
-    #     # end
-
-    #     # if isa(fm, BiasedFragModel) && length(t.metadata.seq) > 5000
-    #     #     @show @code_warntype effective_length(fm, t)
-    #     #     @profile effective_length(fm, t)
-    #     #     Profile.print()
-    #     #     exit()
-    #     # end
-    # end
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
 
     # reverse index (mapping matrix index to read id)
-    # @show Int(maximum(I))
-    # @show length(I)
-    # @show Int(maximum(J))
-    # @show length(J)
-    # @show Int(maximum(aln_idx_map))
-    # @show length(aln_idx_map)
     aln_idx_rev_map = zeros(UInt32, maximum(aln_idx_map))
     for (i, j) in enumerate(aln_idx_map)
         if j != 0

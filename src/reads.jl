@@ -398,7 +398,6 @@ function subsample_reads(rs::Reads, n::Int)
             i += 1
         end
     end
-    @show length(read_idxs_subset)
 
     # build collection containing every alignment of reads in the subset
     alignment_pairs_subset = IntervalCollection{AlignmentPairMetadata}()

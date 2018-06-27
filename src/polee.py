@@ -60,6 +60,7 @@ def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
 
 class RNASeqApproxLikelihoodDist(distributions.Distribution):
     def __init__(self, x, efflens, la_params, invhsb_params,
+                 informative_prior=True,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
@@ -79,6 +80,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         self.right_index = invhsb_params[1]
         self.leaf_index  = invhsb_params[2]
 
+        self.informative_prior = informative_prior
 
         super(RNASeqApproxLikelihoodDist, self).__init__(
               dtype=self.x.dtype,
@@ -105,6 +107,19 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "x scale")
         x = tf.nn.softmax(self.x)
+
+        # optional LogNormal regularization essentially encodes the assumption
+        # that most transcripts are not expressed.
+        # these prior values are just sort of rules of thumb that seem to do ok
+        if self.informative_prior:
+            prior_mean = np.log(1e-5 * 1/n)
+            prior_var = (np.log(1/n) - prior_mean)
+            x_prior_lp = \
+                -tf.reduce_sum(tf.log(x), axis=1) + \
+                0.5 * (-np.log(2.0*np.pi*prior_var) - \
+                tf.reduce_sum(tf.square(tf.log(x) - prior_mean) / prior_var, axis=1))
+        else:
+            x_prior_lp = 0.0
 
         # effective length transform
         # --------------------------
@@ -136,7 +151,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         lp = (-np.log(2.0*np.pi) -  tf.reduce_sum(tf.square(z), axis=1)) / 2.0
 
-        return lp
+        return lp + x_prior_lp
 
 class RNASeqApproxLikelihood(edward.RandomVariable, RNASeqApproxLikelihoodDist):
     def __init__(self, *args, **kwargs):

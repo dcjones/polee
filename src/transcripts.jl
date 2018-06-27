@@ -25,14 +25,16 @@ type TranscriptMetadata
     name::String
     id::Int
     exons::Vector{Exon}
-    seq::DNASequence
+    seq::Vector{DNA}
+    left_bias::Vector{Float32}
+    right_bias::Vector{Float32}
 
     function TranscriptMetadata(name, id)
-        return new(name, id, Exon[], DNASequence())
+        return new(name, id, Exon[], DNA[], Float32[], Float32[])
     end
 
     function TranscriptMetadata(name, id, exons, seq)
-        return new(name, id, exons, seq)
+        return new(name, id, exons, seq, Float32[], Float32[])
     end
 end
 
@@ -255,17 +257,283 @@ end
 end
 
 
+"""
+Fragment length assuming the alignment pair read was derived from the given
+transcript.
+
+Return null if the alignment is not compatible with the transcript.
+"""
+function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
+    # allow matches overhanging into introns by <= this amount
+    max_allowable_encroachment = 2
+
+    # rule out obviously incompatible alignments
+    if alnpr.first < t.first || alnpr.last > t.last
+        return Nullable{Int}()
+    end
+
+    # set a1, a2 as leftmost and rightmost alignments
+    a1 = Nullable{Alignment}()
+    a2 = Nullable{Alignment}()
+    if alnpr.metadata.mate1_idx > 0 && alnpr.metadata.mate2_idx > 0
+        mate1 = rs.alignments[alnpr.metadata.mate1_idx]
+        mate2 = rs.alignments[alnpr.metadata.mate2_idx]
+        if mate1.leftpos <= mate2.leftpos
+            a1, a2 = Nullable(mate1), Nullable(mate2)
+        else
+            a1, a2 = Nullable(mate2), Nullable(mate1)
+        end
+    elseif alnpr.metadata.mate1_idx > 0
+        a1 = Nullable(rs.alignments[alnpr.metadata.mate1_idx])
+    else
+        a1 = Nullable(rs.alignments[alnpr.metadata.mate2_idx])
+    end
+
+    c1_iter = CigarIter(rs, get(a1))
+    c1_state = start(c1_iter)
+    c1 = Nullable{CigarInterval}()
+    @next!(CigarInterval, c1, c1_iter, c1_state)
+
+    exons = t.metadata.exons
+    first_exon_idx = searchsortedlast(exons, alnpr)
+    e1_idx = first_exon_idx
+    e1_isexon = true
+    e1_first, e1_last = exons[e1_idx].first, exons[e1_idx].last
+
+    # amount of intronic dna spanned by the fragment
+    intronlen = 0
+
+    # skip any leading soft clipping
+    if !isnull(c1) && get(c1).op == OP_SOFT_CLIP
+        @next!(CigarInterval, c1, c1_iter, c1_state)
+    end
+
+    while e1_idx <= length(exons) && !isnull(c1)
+        c = get(c1)
+
+        # case 1: e entirely precedes
+        if e1_last < c.first
+            @fragmentlength_next_exonintron!(exons, e1_idx, e1_isexon,
+                                             e1_first, e1_last)
+
+        # case 2: c is contained within e
+        elseif c.last >= e1_first && c.last <= e1_last && c.first >= e1_first
+            if e1_isexon
+                if !is_exon_compatible(c.op)
+                    return Nullable{Int}()
+                end
+            else
+                if !is_intron_compatible(c.op)
+                    return Nullable{Int}()
+                end
+                intronlen += e1_last - e1_first + 1
+            end
+            @next!(CigarInterval, c1, c1_iter, c1_state)
+
+        # case 3: soft clipping partiallly overlapping an exon or intron
+        elseif c.op == OP_SOFT_CLIP
+            @next!(CigarInterval, c1, c1_iter, c1_state)
+
+        # case 4: match op overhangs into an intron a little
+        elseif c.last > e1_last && c.op == OP_MATCH
+            if e1_isexon && c.last - e1_last <= max_allowable_encroachment
+                c1 = Nullable(CigarInterval(c.first, e1_last, c.op))
+            elseif !e1_isexon && e1_last >= c.first &&
+                   e1_last - c.first < max_allowable_encroachment
+                c1 = Nullable(CigarInterval(e1_last + 1, c.last, c.op))
+            else
+                return Nullable{Int}()
+            end
+
+        # case 5: c precedes and partially overlaps e
+        else
+            return Nullable{Int}()
+        end
+    end
+
+    if !isnull(c1)
+        return Nullable{Int}()
+    end
+
+    # alignment is compatible, but single-ended
+    if isnull(a2)
+        return Nullable{Int}(0)
+    end
+
+    e2_sup_e1 = false # marks with e2 > e1
+
+    c2_iter = CigarIter(rs, get(a2))
+    c2_state = start(c2_iter)
+    c2 = Nullable{CigarInterval}()
+    @next!(CigarInterval, c2, c2_iter, c2_state)
+
+    e2_idx = first_exon_idx
+    e2_isexon = true
+    e2_first, e2_last = exons[e2_idx].first, exons[e2_idx].last
+
+    while e2_idx <= length(exons) && !isnull(c2)
+        c = get(c2)
+
+        # case 1: e entirely precedes c
+        if e2_last < c.first
+            if !e2_isexon && e2_sup_e1
+                intronlen += e2_last - e2_first + 1
+            end
+
+            if e1_idx <= length(exons) &&
+               e1_first == e2_first &&
+               e1_last == e2_last
+                e2_sup_e1 = true
+            end
+
+            @fragmentlength_next_exonintron!(exons, e2_idx, e2_isexon,
+                                             e2_first, e2_last)
+
+        # case 2: c is contained within e
+        elseif c.last >= e2_first && c.last <= e2_last && c.first >= e2_first
+            if e2_isexon
+                if !is_exon_compatible(c.op)
+                    return Nullable{Int}()
+                end
+            else
+                if !is_intron_compatible(c.op)
+                    return Nullable{Int}()
+                end
+            end
+            @next!(CigarInterval, c2, c2_iter, c2_state)
+
+        # case 3: soft clipping partially overlapping an exon or intron
+        elseif c.op == OP_SOFT_CLIP
+            @next!(CigarInterval, c2, c2_iter, c2_state)
+
+        # case 4: match op overhangs into an intron a little
+        elseif c.last > e2_last && c.op == OP_MATCH
+            if e2_isexon && c.last - e2_last <= max_allowable_encroachment
+                c2 = Nullable(CigarInterval(c.first, e2_last, c.op))
+            elseif !e2_isexon && e2_last >= c.first &&
+                e2_last - c.first < max_allowable_encroachment
+                c2 = Nullable(CigarInterval(e2_last + 1, c.last, c.op))
+            else
+                return Nullable{Int}()
+            end
+
+        # case 5: c precedes and partially overlaps e
+        else
+            return Nullable{Int}()
+        end
+    end
+
+    # skip any trailing soft clipping
+    if !isnull(c2) && get(c2).op == OP_SOFT_CLIP
+        @next!(CigarInterval, c2, c2_iter, c2_state)
+    end
+
+    if !isnull(c2)
+        return Nullable{Int}()
+    end
+
+    a1_, a2_ = get(a1), get(a2)
+    fraglen = max(a1_.rightpos, a2_.rightpos) -
+              min(a1_.leftpos, a2_.leftpos) + 1 - intronlen
+
+    if fraglen > 0
+        return Nullable{Int}(fraglen)
+    else
+        return Nullable{Int}()
+    end
+end
+
+
+"""
+Return the fragments interval in transcript coordinates.
+"""
+function genomic_to_transcriptomic(
+        t::Transcript, rs::Reads, alnpr::AlignmentPair, fraglen_median::Int=0)
+
+    tlen = length(t.metadata.seq)
+
+    fraglen_ = fragmentlength(t, rs, alnpr)
+    if isnull(fraglen_)
+        # incompatible fragment
+        return 1:0
+    end
+
+    if get(fraglen_) > 0
+        fraglen = get(fraglen_)
+    else
+        fraglen = fraglen_median
+        if fraglen <= 0
+            return 1:0
+        end
+    end
+
+    # set tpos to 5' most position of the fragment (relative to transcript)
+    if alnpr.metadata.mate1_idx > 0 && alnpr.metadata.mate2_idx > 0
+        aln1 = rs.alignments[alnpr.metadata.mate1_idx]
+        aln2 = rs.alignments[alnpr.metadata.mate2_idx]
+        if t.strand == STRAND_POS
+            gpos = min(aln1.leftpos, aln2.leftpos)
+        else
+            gpos = max(aln1.rightpos, aln2.rightpos)
+        end
+        tpos = genomic_to_transcriptomic(t, gpos)
+    else
+        # single-strand where we may have to guess
+        aln = alnpr.metadata.mate1_idx > 0 ?
+            rs.alignments[alnpr.metadata.mate1_idx] :
+            rs.alignments[alnpr.metadata.mate2_idx]
+
+        alnstrand = aln.flag & SAM.FLAG_REVERSE != 0 ?
+            STRAND_NEG : STRAND_POS
+
+        if t.strand == STRAND_POS
+            if alnstrand == STRAND_POS
+                tpos = genomic_to_transcriptomic(t, aln.leftpos)
+            else
+                tpos = genomic_to_transcriptomic(t, aln.rightpos) - fraglen
+            end
+        else
+            if alnstrand == STRAND_POS
+                tpos = genomic_to_transcriptomic(t, aln.leftpos) - fraglen
+            else
+                tpos = genomic_to_transcriptomic(t, aln.rightpos)
+            end
+        end
+    end
+
+    # nudge reads that overhang (due to soft-clipping typically)
+    if tpos <= 0
+        fraglen += tpos - 1
+        tpos = 1
+    end
+
+    if tpos+fraglen-1 > tlen
+        fraglen = tlen - tpos + 1
+    end
+
+    fragint = Int(tpos):Int(tpos+fraglen-1)
+
+    return Int(tpos):Int(tpos+fraglen-1)
+end
+
+
 function genomic_to_transcriptomic(t::Transcript, position::Integer)
     exons = t.metadata.exons
     i = searchsortedlast(exons, Exon(position, position))
     if i == 0 || exons[i].last < position
+        # @show position
+        # @show exons
         return 0
     else
         tpos = 1
         for j in 1:i-1
             tpos += exons[j].last - exons[j].first + 1
         end
-        return tpos + position - t.metadata.exons[i].first
+        tpos += position - t.metadata.exons[i].first
+        if t.strand == STRAND_NEG
+            tpos = exonic_length(t) - tpos + 1
+        end
+        return tpos
     end
 end
 

@@ -62,6 +62,12 @@ NormalALRApprox() = NormalALRApprox(-1)
 #   - Dirichlet
 #   - HSB with Beta distributed balances
 
+
+function optimize_likelihood(sample::RNASeqSample)
+    return approximate_likelihood(OptimizeHSBApprox(), sample)["x"]
+end
+
+
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 input_filename::String, output_filename::String)
     sample = read(input_filename, RNASeqSample)
@@ -72,6 +78,24 @@ end
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String)
     params = approximate_likelihood(approximation, sample)
+
+    # TODO: delete this
+    if isa(approximation, OptimizeHSBApprox)
+        xs = params["x"]
+        xs ./= sample.effective_lengths
+        xs ./= sum(xs)
+        open("mode.csv", "w") do output
+            if isempty(sample.ts)
+                for i in 1:length(xs)
+                    println(output, "transcript", i, ",", xs[i], ",", sample.effective_lengths[i])
+                end
+            else
+                for (i, t) in enumerate(sample.ts)
+                    println(output, t.metadata.name, ",", xs[i], ",", sample.effective_lengths[i])
+                end
+            end
+        end
+    end
 
     h5open(output_filename, "w") do out
         n = sample.n
@@ -165,11 +189,13 @@ end
 
 
 
-function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{true})
+function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, sample::RNASeqSample,
+                                          ::Type{Val{GRADONLY}}=Val{false})
+    X = sample.X
+    efflens = sample.effective_lengths
+
     m, n = size(X)
     Xt = transpose(X)
-
     model = Model(m, n)
 
     # cluster transcripts for hierachrical stick breaking
@@ -225,24 +251,32 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, X::SparseMatrixCS
 
         log_likelihood(model.frag_probs, model.log_frag_probs,
                        X, Xt, xs, x_grad, Val{GRADONLY})
+        effective_length_jacobian_adjustment!(efflens, xs, x_grad)
 
-        hsb_transform_gradients!(t, ys, y_grad, x_grad)
+        hsb_transform_gradients_no_ladj!(t, ys, y_grad, x_grad)
 
         for i in 1:n-1
             dy_dz = ys[i] * (1 - ys[i])
             z_grad[i] = dy_dz * y_grad[i]
 
             # log jacobian gradient
-            expz = exp(zs[i])
-            z_grad[i] += (1 - expz) / (1 + expz)
+            # expz = exp(zs[i])
+            # z_grad[i] += (1 - expz) / (1 + expz)
+
+            # TODO:
+            # equivalent to:
+            # z_grad[i] += 1 - 2*ys[i]
+            # but both of these version cause in incorrect mode to be found.
+            # this seems like it may be at the root of our issue, but I really
+            # can't see why this is happening.
+
+            # I't possible that the derivative just gets very small and too
+            # flat to effectively climb, but nevertheless it leads to a mode
+            # that is way off the mark.
         end
 
         adam_update_mv!(m_z, v_z, z_grad, step_num)
         adam_update_params!(zs, m_z, v_z, learning_rate, step_num, ss_max_z_step)
-
-        # @show xs[30896]
-        # @show xs[1]
-        # @show xs[end]
 
         next!(prog)
     end

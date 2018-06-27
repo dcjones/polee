@@ -16,6 +16,10 @@ const USED_BAM_FLAGS =
     0x040 | # read 1
     0x080   # read 2
 
+# For single-end sequencing, make some assumptions about fragment length distribution
+const FALLBACK_FRAGLEN_MEAN = 150
+const FALLBACK_FRAGLEN_STD  = 50
+
 # Disallow fragments longer than this
 const MAX_FRAG_LEN = 1500
 
@@ -53,3 +57,19 @@ const LIKAP_NUM_MC_SAMPLES = 5
 # Note: tensorflow parameterizes inverse gamma by recipricals because its a fucking sadist
 const SIGMA_ALPHA0 = 0.001f0
 const SIGMA_BETA0  = 0.001f0
+
+# amount of sequence up- and downstream of the fragment sequence to include.
+const BIAS_SEQ_INNER_CTX  = 20
+const BIAS_SEQ_OUTER_CTX  = 10
+
+# Number of bins to divide sequence fragments into for counting nucleotide frequencies
+const BIAS_NUM_FREQ_BINS = 4
+
+# Number of fragment lengths to sum over when estimating effective length
+# (larger number is more accurate but slower)
+const BIAS_EFFLEN_NUM_FRAGLENS = 100
+
+# Fragment length distribution to use when there are too few usable pair-end
+# reads to reasonably estimate.
+const BIAS_FALLBACK_FRAGLEN_DIST = Normal(200, 100)
+

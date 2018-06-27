@@ -4,6 +4,7 @@ type RNASeqSample
     n::Int
     X::SparseMatrixCSC{Float32, UInt32}
     effective_lengths::Vector{Float32}
+    ts::Transcripts
     transcript_metadata::TranscriptsMetadata
 end
 
@@ -23,7 +24,7 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
     effective_lengths = read(input["effective_lengths"])
 
-    return RNASeqSample(m, n, X, effective_lengths, TranscriptsMetadata())
+    return RNASeqSample(m, n, X, effective_lengths, Transcripts(), TranscriptsMetadata())
 end
 
 
@@ -97,21 +98,37 @@ end
 
 # reassign indexes to remove any zero rows, which would lead to a
 # -Inf log likelihood
-function compact_indexes!(I)
+function compact_indexes!(I, aln_idx_rev_map::Vector{UInt32})
     if isempty(I)
         warn("No compatible reads found.")
     else
+        numrows = 1
         last_i = I[1]
+        for k in 2:length(I)
+            if I[k] == last_i
+            else
+                numrows += 1
+                last_i = I[k]
+            end
+        end
+
+        aln_idx_rev_map2 = zeros(UInt32, numrows)
+        last_i = I[1]
+        aln_idx_rev_map2[1] = aln_idx_rev_map[I[1]]
         I[1] = 1
         for k in 2:length(I)
             if I[k] == last_i
                 I[k] = I[k-1]
             else
                 last_i = I[k]
-                I[k] = I[k-1] + 1
+                next_i = I[k-1] + 1
+                aln_idx_rev_map2[next_i] = aln_idx_rev_map[I[k]]
+                I[k] = next_i
             end
         end
     end
+
+    return aln_idx_rev_map2
 end
 
 
@@ -124,12 +141,13 @@ function RNASeqSample(transcripts_filename::String,
                       reads_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
-                      output=Nullable{String}())
+                      output=Nullable{String}();
+                      no_bias::Bool=false)
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     read_transcript_sequences!(ts, genome_filename)
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output)
+        excluded_transcripts, output, no_bias=no_bias)
 end
 
 
@@ -141,7 +159,8 @@ function RNASeqSample(transcript_sequence_filename::String,
                       reads_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
-                      output=Nullable{String}())
+                      output=Nullable{String}();
+                      no_bias::Bool=false)
 
     println("Reading transcript sequences")
     tic()
@@ -166,7 +185,7 @@ function RNASeqSample(transcript_sequence_filename::String,
 
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output)
+        excluded_transcripts, output, no_bias=no_bias)
 end
 
 
@@ -179,14 +198,80 @@ function RNASeqSample(ts::Transcripts,
                       reads_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
-                      output=Nullable{String}())
+                      output=Nullable{String}();
+                      no_bias::Bool=false,
+                      num_training_reads::Int=100000)
 
     rs = Reads(reads_filename, excluded_seqs)
-    fm = FragModel(rs, ts)
+
+    # train fragment model by selecting a random subset of reads, assigning
+    # them to transcripts, then extracting sequence context.
+    rs_train      = subsample_reads(rs, num_training_reads)
+    simplistic_fm = SimplisticFragModel(rs_train, ts)
+
+    if !no_bias
+        aln_idx_rev_map_ref = Ref{Vector{UInt32}}()
+        sample_train  = RNASeqSample(
+            simplistic_fm, rs_train, ts, ts_metadata,
+            Nullable{String}(), Nullable(aln_idx_rev_map_ref))
+        aln_idx_rev_map = aln_idx_rev_map_ref.x
+
+        # assign reads to transcripts
+        xs_train = optimize_likelihood(sample_train)
+        Xt = transpose(sample_train.X)
+
+        # map read index to a transcript index
+        read_assignments = Dict{Int, Int}()
+
+        for i in 1:size(sample_train.X, 1)
+            read_idx = aln_idx_rev_map[i]
+
+            z_sum = 0.0
+            for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
+                j = Xt.rowval[ptr]
+                z_sum += xs_train[j] * Xt.nzval[ptr]
+            end
+
+            # assign read randomly according to its probability
+            r = rand()
+            read_assignment = 0
+            for ptr in Xt.colptr[i]:Xt.colptr[i+1]-1
+                j = Xt.rowval[ptr]
+                zj = xs_train[j] * Xt.nzval[ptr] / z_sum
+                if zj > r || ptr == Xt.colptr[i+1]-1
+                    read_assignment = j
+                else
+                    r -= zj
+                end
+            end
+            @assert read_assignment != 0
+            @assert !haskey(read_assignments, read_idx)
+            read_assignments[read_idx] = read_assignment
+        end
+
+        fm = BiasedFragModel(rs_train, ts, read_assignments)
+    else
+        fm = simplistic_fm
+    end
+
+    return RNASeqSample(fm, rs, ts, ts_metadata, output)
+end
+
+
+"""
+Build a RNASeqSample from a provided fragment model and read set.
+"""
+function RNASeqSample(fm::FragModel,
+                      rs::Reads,
+                      ts::Transcripts,
+                      ts_metadata::TranscriptsMetadata,
+                      output=Nullable{String}(),
+                      aln_idx_rev_map_ref=Nullable{Ref{Vector{UInt32}}}())
 
     println("intersecting reads and transcripts...")
 
     # reassign indexes to alignments to group by position
+    # TODO: this is allocated larger than it needs to be. Use a dict?
     aln_idx_map = zeros(UInt32, length(rs.alignments))
     nextidx = 1
     # for alnpr in rs.alignment_pairs
@@ -209,8 +294,37 @@ function RNASeqSample(ts::Transcripts,
         end
     end
 
-    effective_lengths = Float32[effective_length(fm, t) for t in ts]
+    compute_transcript_bias!(fm, ts)
+
+    println("computing effective lengths")
+    effective_lengths = Vector{Float32}(length(ts))
+    ts_arr = collect(ts)
+    Threads.@threads for t in ts_arr
+        effective_lengths[t.metadata.id] = effective_length(fm, t)
+    end
+
+    # open("effective-lengths.csv", "w") do out
+    #     println(out, "transcript_id,tlen,efflen")
+    #     for t in ts
+    #         println(
+    #             out,
+    #             t.metadata.name, ",",
+    #             length(t.metadata.seq), ",",
+    #             effective_lengths[t.metadata.id])
+    #     end
+    # end
+
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
+
+    # reverse index (mapping matrix index to read id)
+    aln_idx_rev_map = zeros(UInt32, maximum(aln_idx_map))
+    for (i, j) in enumerate(aln_idx_map)
+        if j != 0
+            @assert aln_idx_rev_map[j] == 0
+            aln_idx_rev_map[j] = i
+        end
+    end
+    @assert sum(aln_idx_rev_map .== 0) == 0
 
     gc()
     p = sortperm(I)
@@ -219,10 +333,12 @@ function RNASeqSample(ts::Transcripts,
     V = V[p]
     gc()
 
-    compact_indexes!(I) # 0.000 GB
-    m = isempty(I) ? 0 : Int(maximum(I))
-    @show m
+    aln_idx_rev_map = compact_indexes!(I, aln_idx_rev_map)
+    if !isnull(aln_idx_rev_map_ref)
+        get(aln_idx_rev_map_ref).x = aln_idx_rev_map
+    end
 
+    m = isempty(I) ? 0 : Int(maximum(I))
     n = length(ts)
     M = sparse(I, J, V, m, n)
 
@@ -244,7 +360,5 @@ function RNASeqSample(ts::Transcripts,
         end
     end
 
-    return RNASeqSample(m, n, M, effective_lengths, ts_metadata)
+    return RNASeqSample(m, n, M, effective_lengths, ts, ts_metadata)
 end
-
-

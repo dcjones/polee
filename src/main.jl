@@ -126,6 +126,8 @@ function main()
             "--tree-method"
                 default = "cluster"
             "--num-threads", "-t" # handled by the wrapper script
+            "--no-bias"
+                action = :store_true
             "--no-gpu"            # handled by the wrapper script
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
@@ -158,7 +160,8 @@ function main()
                               excluded_transcripts,
                               parsed_args["likelihood-matrix"] == nothing ?
                                 Nullable{String}() :
-                                Nullable(parsed_args["likelihood-matrix"]))
+                                Nullable(parsed_args["likelihood-matrix"]),
+                              no_bias=parsed_args["no-bias"])
         approximate_likelihood(approx, sample, parsed_args["output"])
         return
 
@@ -182,6 +185,8 @@ function main()
             "--tree-method"
                 default = "cluster"
             "--num-threads", "-t" # handled by the wrapper script
+            "--no-bias"
+                action = :store_true
             "--no-gpu"            # handled by the wrapper script
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
@@ -213,7 +218,8 @@ function main()
                               excluded_transcripts,
                               parsed_args["likelihood-matrix"] == nothing ?
                                 Nullable{String}() :
-                                Nullable(parsed_args["likelihood-matrix"]))
+                                Nullable(parsed_args["likelihood-matrix"]),
+                              no_bias=parsed_args["no-bias"])
         approximate_likelihood(approx, sample, parsed_args["output"])
         return
 
@@ -380,10 +386,9 @@ function main()
         # TODO: only interested in the mean for now, but we may want to dump
         # all the samples some time.
         post_mean = mean(samples, 1)
-        @show size(post_mean)
         open(parsed_args["output"], "w") do output
-            for j in 1:length(post_mean)
-                println(output, post_mean[j])
+            for (j, t) in enumerate(ts)
+                println(output, t.metadata.name, ",", post_mean[j])
             end
         end
 

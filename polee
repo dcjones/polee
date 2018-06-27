@@ -10,6 +10,7 @@ ncpus=$([[ $(uname) = 'Darwin' ]] &&
             lscpu -p | egrep -v '^#' | sort -u -t, -k 2,4 | wc -l)
 
 export JULIA_NUM_THREADS=$ncpus
+# export JULIA_NUM_THREADS=1
 
 unused_args=()
 while [[ $# -gt 0 ]]; do

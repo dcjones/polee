@@ -142,7 +142,8 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
         end
         t = HSBTransform(node_parent_idxs, node_js)
         hsb_transform!(t, y0, x0, Val{true})
-        x0_values[i, :] = x0
+        x0_values[i, :] = x0 ./ efflen_values[i, :]
+        x0_values[i, :] ./= sum(x0_values[i, :])
 
         next!(prog)
     end

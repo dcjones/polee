@@ -42,6 +42,7 @@ using BioSequences
 using DataStructures
 using Distributions
 using HDF5
+using Interpolations
 using ProgressMeter
 using SQLite
 using StatsBase
@@ -51,8 +52,8 @@ import YAML
 
 include("constants.jl")
 include("sparse.jl")
-include("transcripts.jl")
 include("reads.jl")
+include("transcripts.jl")
 include("bias.jl")
 include("fragmodel.jl")
 include("model.jl")

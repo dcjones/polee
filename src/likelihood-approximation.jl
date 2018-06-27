@@ -251,16 +251,17 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, sample::RNASeqSam
 
         log_likelihood(model.frag_probs, model.log_frag_probs,
                        X, Xt, xs, x_grad, Val{GRADONLY})
+        effective_length_jacobian_adjustment!(efflens, xs, x_grad)
 
-        hsb_transform_gradients!(t, ys, y_grad, x_grad)
+        hsb_transform_gradients_no_ladj!(t, ys, y_grad, x_grad)
 
         for i in 1:n-1
             dy_dz = ys[i] * (1 - ys[i])
             z_grad[i] = dy_dz * y_grad[i]
 
             # log jacobian gradient
-            expz = exp(zs[i])
-            z_grad[i] += (1 - expz) / (1 + expz)
+            # expz = exp(zs[i])
+            # z_grad[i] += (1 - expz) / (1 + expz)
 
             # TODO:
             # equivalent to:

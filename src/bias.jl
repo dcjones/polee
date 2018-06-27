@@ -352,7 +352,6 @@ function SeqBiasModel(
                 accuracy = compute_accuracy() # 0.001 seconds
                 entropy = compute_cross_entropy() # 0.001 seconds
 
-                # @show (j, orders[j], accuracy)
                 # if accuracy > best_accuracy
                 if entropy < best_entropy
                     best_accuracy = accuracy
@@ -378,10 +377,6 @@ function SeqBiasModel(
             entropy0 = best_entropy
         end
     end
-
-    @show accuracy0
-    @show entropy0
-    @show orders
 
     return SeqBiasModel(orders, ps[:,2,:,:] ./ ps[:,1,:,:])
 end
@@ -472,16 +467,20 @@ function SimpleHistogramModel(
             (bincounts[2, i]/bincounts_sums[2]) /
             (bincounts[1, i]/bincounts_sums[1])
     end
-    @show bins
-
-    # TODO: I could make this a bit faster by fitting the ratio of histograms.
 
     return SimpleHistogramModel(qs, bins)
 end
 
 
 function evaluate(hist::SimpleHistogramModel, x)
-    i = searchsorted(hist.qs, x).start
+    # linear seach (faster for moderate number of bins)
+    i = 1
+    while i <= length(hist.qs) && x > hist.qs[i]
+        i += 1
+    end
+
+    # i = searchsorted(hist.qs, x).start
+
     return hist.bins[i]
 end
 
@@ -608,8 +607,6 @@ function PositionalBiasModel(
         end
     end
 
-    @show (best_numlenbins, best_numposbins, best_entropy)
-
     @assert best_model != nothing
     return best_model::PositionalBiasModel
 end
@@ -712,6 +709,7 @@ function BiasModel(
         ys_testing[idx] = false
     end
 
+    fill!(weights, 1.0f0) # seems to do better without weigths
     gc_model = SimpleHistogramModel(
         frag_gc_training, ys_training, weights)
 
@@ -730,6 +728,7 @@ function BiasModel(
     # train positional bias model
     # ---------------------------
 
+    fill!(weights, 1.0f0) # seems to do better without weigths
     pos_model = PositionalBiasModel(
         bias_foreground_training_examples,
         bias_background_training_examples,
@@ -790,10 +789,6 @@ end
 Compute bias for fragment left and right ends.
 """
 function compute_transcript_bias!(bm::BiasModel, t::Transcript)
-
-    # tlen = exonic_length(t)
-    # padlen = max(BIAS_SEQ_OUTER_CTX, BIAS_SEQ_INNER_CTX-1)
-
     tseq = t.metadata.seq
     tlen = length(tseq)
 
@@ -803,18 +798,8 @@ function compute_transcript_bias!(bm::BiasModel, t::Transcript)
     resize!(left_bias, tlen)
     resize!(right_bias, tlen)
 
-    # pad transcript sequence
-    # tseq = DNASequence(
-    #     repeat(dna"N", padlen),
-    #     t.metadata.seq,
-    #     repeat(dna"N", padlen))
-
     # left bias
     for pos in 1:tlen
-        # first = pos + padlen - BIAS_SEQ_OUTER_CTX
-        # left_bias[pos] = evaluate(
-        #     bm.left_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
-
         left_bias[pos] =
             evaluate(bm.left_seqbias, tseq, pos) *
             evaluate(bm.pos_model, tlen, pos/tlen)
@@ -822,9 +807,6 @@ function compute_transcript_bias!(bm::BiasModel, t::Transcript)
 
     # right bias
     for pos in 1:tlen
-        # first = pos + padlen - (BIAS_SEQ_INNER_CTX - 1)
-        # right_bias[pos] = evaluate(
-        #     bm.right_seqbias, tseq[first:first+BIAS_SEQ_OUTER_CTX+BIAS_SEQ_INNER_CTX-1])
         right_bias[pos] = evaluate(bm.right_seqbias, tseq, pos)
     end
 end

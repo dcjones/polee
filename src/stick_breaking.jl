@@ -562,6 +562,31 @@ function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
 end
 
 
+function hsb_transform_gradients_no_ladj!(t::HSBTransform, ys::Vector,
+                                          y_grad::Vector,
+                                          x_grad::Vector)
+    nodes = t.nodes
+    k = length(y_grad)
+    for i in length(nodes):-1:1
+        node = nodes[i]
+
+        if node.j != 0 # leaf node
+            node.grad = x_grad[node.j]
+        else
+            # get derivative wrt y by multiplying children's derivatives by y's
+            # contribution to their input values
+            y_grad[k] = node.input_value * (node.left_child.grad - node.right_child.grad)
+
+            # store derivative wrt this nodes input_value
+            node.grad = ys[k] * node.left_child.grad + (1 - ys[k]) * node.right_child.grad
+            k -= 1
+        end
+
+    end
+    @assert k == 0
+end
+
+
 """
 This are used by the tenorflow implementation of inverse HSB. It's faster to
 build these matrices in julia than in python, so it's done here.

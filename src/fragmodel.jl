@@ -28,7 +28,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     examples = rs.alignment_pairs
 
     # alignment pair fragment lengths
-    alnpr_fraglen = ObjectIdDict()
+    alnpr_fraglen = Dict{UInt64, Int}()
 
     strand_match_count = 0
     strand_mismatch_count = 0
@@ -44,11 +44,12 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
         fraglen = fragmentlength(t, rs, alnpr)
 
         if !isnull(fraglen) && get(fraglen) > 0
+            h = hash(alnpr)
             fl = get(fraglen)
-            if haskey(alnpr_fraglen, alnpr)
-                alnpr_fraglen[alnpr] = min(alnpr_fraglen[alnpr], fl)
+            if haskey(alnpr_fraglen, h)
+                alnpr_fraglen[h] = min(alnpr_fraglen[h], fl)
             else
-                alnpr_fraglen[alnpr] = fl
+                alnpr_fraglen[h] = fl
             end
         end
     end
@@ -61,7 +62,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
 
     # compute fragment length frequencies
     fraglen_pmf = Vector{Float32}(MAX_FRAG_LEN)
-    fraglens_count = sum(ifelse(fl <= MAX_FRAG_LEN, 0, 1) for fl in values(alnpr_fraglen))
+    fraglens_count = sum(ifelse(fl <= MAX_FRAG_LEN, 1, 0) for fl in values(alnpr_fraglen))
     if fraglens_count < MIN_FRAG_LEN_COUNT
         # use fallback distribution
         for fl in 1:MAX_FRAG_LEN
@@ -286,7 +287,6 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
 
     fraglen_by_prob = collect(1:MAX_FRAG_LEN)[sortperm(fraglen_pmf, rev=true)]
     high_prob_fraglens = fraglen_by_prob[1:BIAS_EFFLEN_NUM_FRAGLENS]
-    @show high_prob_fraglens
 
     return BiasedFragModel(
         fraglen_pmf, fraglen_cdf, fraglen_median,

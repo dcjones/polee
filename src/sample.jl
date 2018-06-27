@@ -312,11 +312,22 @@ function RNASeqSample(fm::FragModel,
     ts_arr = collect(ts)
     println("computing effective lengths")
 
-    # 116 seconds (2 minutes), Still pretty fucking slow.
-    # We should see about iterating over fewer fragment sizes.
-    @time Threads.@threads for t in ts_arr
+    Threads.@threads for t in ts_arr
         effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
+
+    # open("effective-lengths.csv", "w") do out
+    #     println(out, "transcript_id,tlen,efflen")
+    #     for t in ts
+    #         println(
+    #             out,
+    #             t.metadata.name, ",",
+    #             length(t.metadata.seq), ",",
+    #             effective_lengths[t.metadata.id])
+    #     end
+    # end
+    # exit()
+
 
     # if isa(fm, BiasedFragModel)
     #     for t in ts_arr[1:10]
@@ -372,16 +383,12 @@ function RNASeqSample(fm::FragModel,
     V = V[p]
     gc()
 
-    @show maximum(I)
-
     aln_idx_rev_map = compact_indexes!(I, aln_idx_rev_map)
     if !isnull(aln_idx_rev_map_ref)
         get(aln_idx_rev_map_ref).x = aln_idx_rev_map
     end
 
     m = isempty(I) ? 0 : Int(maximum(I))
-    @show m
-
     n = length(ts)
     M = sparse(I, J, V, m, n)
 

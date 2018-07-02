@@ -15,9 +15,6 @@ function gibbs_sampler(input_filename, output_filename)
 
     # gibbs sampler needs these probs weighted by effective length
     Is, Js, Vs = findnz(sample.X)
-    for k in 1:length(Is)
-        Vs[k] *= els[Js[k]]
-    end
 
     # X = convert(SparseMatrixCSC{Float32}, sample.X)
     X = sparse(Is, Js, Vs)
@@ -57,6 +54,7 @@ function gibbs_sampler(input_filename, output_filename)
         wlen = max(wlen, Xt.colptr[i+1] - Xt.colptr[i])
     end
     ws = Array{Float64}(nthreads, wlen)
+    fill!(ws, 0.0f0)
 
     samples = Array{Float32}(nthreads, sample_per_chain, n)
 
@@ -90,7 +88,7 @@ function gibbs_sampler(input_filename, output_filename)
                     stored_sample_num += 1
                 end
 
-                generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, xs, ys, zs,
+                generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, ys, zs,
                                         samples, stored_sample_num)
             end
         end
@@ -157,7 +155,8 @@ function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, ys, zs,
     ys_sum = 0.0f0
     for j in 1:n
         # ys[t, j] = rand(Gamma(1.0 + cs[t, j], 1.0))
-        ys[t, j] = rand_gamma(rng, 1.0 + cs[t, j], 1.0 / (1.0 + els[j]))
+        # ys[t, j] = rand_gamma(rng, 1.0 + cs[t, j], 1.0 / (1.0 + els[j]))
+        ys[t, j] = rand_gamma(rng, 1.0 + cs[t, j], 1.0)
         ys_sum += ys[t, j]
     end
     ys[t,:] ./= ys_sum

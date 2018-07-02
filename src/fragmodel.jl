@@ -188,6 +188,11 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
             continue
         end
 
+        # not enough sequence to train bias
+        if fl < BIAS_SEQ_INNER_CTX + BIAS_SEQ_OUTER_CTX
+            continue
+        end
+
         push!(fraglens, fl)
         push!(bias_foreground_examples, BiasTrainingExample(tseq, tpos, fl))
 

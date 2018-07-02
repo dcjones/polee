@@ -107,6 +107,7 @@ struct Reads
     alignments::Vector{Alignment}
     alignment_pairs::IntervalCollection{AlignmentPairMetadata}
     cigardata::Vector{UInt32}
+    num_reads::Int
 end
 
 
@@ -244,7 +245,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     trees = Array{GenomicFeatures.ICTree{AlignmentPairMetadata}}(length(blocks))
     alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees, cigardata)
 
-    return Reads(alignments, alignment_pairs, cigardata)
+    return Reads(alignments, alignment_pairs, cigardata, length(readnames))
 end
 
 
@@ -408,7 +409,7 @@ function subsample_reads(rs::Reads, n::Int)
         end
     end
 
-    return Reads(rs.alignments, alignment_pairs_subset, rs.cigardata)
+    return Reads(rs.alignments, alignment_pairs_subset, rs.cigardata, length(read_idxs_subset))
 end
 
 

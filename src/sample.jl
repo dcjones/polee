@@ -343,6 +343,8 @@ function RNASeqSample(fm::FragModel,
     M = sparse(I, J, V, m, n)
 
     println(length(V), " intersections")
+    @printf("%0.1f%% reads accounted for (compatible with at least one transcript)\n",
+        100.0 * (m / rs.num_reads))
 
     if !isnull(output)
         h5open(get(output), "w") do out

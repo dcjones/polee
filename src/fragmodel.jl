@@ -147,7 +147,9 @@ end
 
 
 
-function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int, Int})
+function BiasedFragModel(
+    rs::Reads, ts::Transcripts, read_assignments::Dict{Int, Int},
+    dump_bias_training_examples::Bool)
 
     ts_by_id = collect(Transcript, ts)
 
@@ -247,41 +249,41 @@ function BiasedFragModel(rs::Reads, ts::Transcripts, read_assignments::Dict{Int,
         bias_foreground_testing_examples,
         bias_background_testing_examples)
 
-    #=
-    open("bias-foreground.csv", "w") do output
-        for example in bias_foreground_examples
-            println(
-                output, example.left_seq,
-                ',', example.right_seq,
-                ',', example.frag_gc,
-                ',', example.tpdist,
-                ',', example.fpdist,
-                ',', example.tlen,
-                ',', example.fl,
-                ',', join(example.a_freqs, ','),
-                ',', join(example.c_freqs, ','),
-                ',', join(example.g_freqs, ','),
-                ',', join(example.t_freqs, ','))
+    if dump_bias_training_examples
+        open("bias-foreground.csv", "w") do output
+            for example in bias_foreground_examples
+                println(
+                    output, DNASequence(example.left_seq),
+                    ',', DNASequence(example.right_seq),
+                    ',', example.frag_gc,
+                    ',', example.tpdist,
+                    ',', example.fpdist,
+                    ',', example.tlen,
+                    ',', example.fl,
+                    ',', join(example.a_freqs, ','),
+                    ',', join(example.c_freqs, ','),
+                    ',', join(example.g_freqs, ','),
+                    ',', join(example.t_freqs, ','))
+            end
         end
-    end
 
-    open("bias-background.csv", "w") do output
-        for example in bias_background_examples
-            println(
-                output, example.left_seq,
-                ',', example.right_seq,
-                ',', example.frag_gc,
-                ',', example.tpdist,
-                ',', example.fpdist,
-                ',', example.tlen,
-                ',', example.fl,
-                ',', join(example.a_freqs, ','),
-                ',', join(example.c_freqs, ','),
-                ',', join(example.g_freqs, ','),
-                ',', join(example.t_freqs, ','))
+        open("bias-background.csv", "w") do output
+            for example in bias_background_examples
+                println(
+                    output, DNASequence(example.left_seq),
+                    ',', DNASequence(example.right_seq),
+                    ',', example.frag_gc,
+                    ',', example.tpdist,
+                    ',', example.fpdist,
+                    ',', example.tlen,
+                    ',', example.fl,
+                    ',', join(example.a_freqs, ','),
+                    ',', join(example.c_freqs, ','),
+                    ',', join(example.g_freqs, ','),
+                    ',', join(example.t_freqs, ','))
+            end
         end
     end
-    =#
 
     fraglen_by_prob = collect(1:MAX_FRAG_LEN)[sortperm(fraglen_pmf, rev=true)]
     high_prob_fraglens = fraglen_by_prob[1:BIAS_EFFLEN_NUM_FRAGLENS]

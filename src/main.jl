@@ -128,6 +128,8 @@ function main()
             "--num-threads", "-t" # handled by the wrapper script
             "--no-bias"
                 action = :store_true
+            "--dump-bias-training-examples"
+                action = :store_true
             "--no-gpu"            # handled by the wrapper script
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
@@ -153,15 +155,17 @@ function main()
             end
         end
 
-        sample = RNASeqSample(parsed_args["transcripts_filename"],
-                              parsed_args["genome_filename"],
-                              parsed_args["reads_filename"],
-                              excluded_seqs,
-                              excluded_transcripts,
-                              parsed_args["likelihood-matrix"] == nothing ?
-                                Nullable{String}() :
-                                Nullable(parsed_args["likelihood-matrix"]),
-                              no_bias=parsed_args["no-bias"])
+        sample = RNASeqSample(
+            parsed_args["transcripts_filename"],
+            parsed_args["genome_filename"],
+            parsed_args["reads_filename"],
+            excluded_seqs,
+            excluded_transcripts,
+            parsed_args["likelihood-matrix"] == nothing ?
+              Nullable{String}() :
+              Nullable(parsed_args["likelihood-matrix"]),
+            no_bias=parsed_args["no-bias"],
+            dump_bias_training_examples=parsed_args["dump-bias-training-examples"])
         approximate_likelihood(approx, sample, parsed_args["output"])
         return
 
@@ -386,6 +390,7 @@ function main()
         # TODO: only interested in the mean for now, but we may want to dump
         # all the samples some time.
         post_mean = mean(samples, 1)
+
         open(parsed_args["output"], "w") do output
             for (j, t) in enumerate(ts)
                 println(output, t.metadata.name, ",", post_mean[j])

@@ -142,12 +142,14 @@ function RNASeqSample(transcripts_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
-                      no_bias::Bool=false)
+                      no_bias::Bool=false,
+                      dump_bias_training_examples::Bool=false)
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     read_transcript_sequences!(ts, genome_filename)
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output, no_bias=no_bias)
+        excluded_transcripts, output, no_bias=no_bias,
+        dump_bias_training_examples=dump_bias_training_examples)
 end
 
 
@@ -160,7 +162,8 @@ function RNASeqSample(transcript_sequence_filename::String,
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
-                      no_bias::Bool=false)
+                      no_bias::Bool=false,
+                      dump_bias_training_examples::Bool=false)
 
     println("Reading transcript sequences")
     tic()
@@ -185,7 +188,8 @@ function RNASeqSample(transcript_sequence_filename::String,
 
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output, no_bias=no_bias)
+        excluded_transcripts, output, no_bias=no_bias,
+        dump_bias_training_examples=dump_bias_training_examples)
 end
 
 
@@ -200,7 +204,8 @@ function RNASeqSample(ts::Transcripts,
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
                       no_bias::Bool=false,
-                      num_training_reads::Int=100000)
+                      num_training_reads::Int=100000,
+                      dump_bias_training_examples::Bool=false)
 
     rs = Reads(reads_filename, excluded_seqs)
 
@@ -249,7 +254,8 @@ function RNASeqSample(ts::Transcripts,
             read_assignments[read_idx] = read_assignment
         end
 
-        fm = BiasedFragModel(rs_train, ts, read_assignments)
+        fm = BiasedFragModel(
+            rs_train, ts, read_assignments, dump_bias_training_examples)
     else
         fm = simplistic_fm
     end

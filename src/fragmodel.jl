@@ -62,7 +62,8 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
 
     # compute fragment length frequencies
     fraglen_pmf = Vector{Float32}(MAX_FRAG_LEN)
-    fraglens_count = sum(ifelse(fl <= MAX_FRAG_LEN, 1, 0) for fl in values(alnpr_fraglen))
+    fraglens_count = isempty(alnpr_fraglen) ?
+        0 : sum(ifelse(fl <= MAX_FRAG_LEN, 1, 0) for fl in values(alnpr_fraglen))
     if fraglens_count < MIN_FRAG_LEN_COUNT
         # use fallback distribution
         for fl in 1:MAX_FRAG_LEN
@@ -173,7 +174,7 @@ function BiasedFragModel(
         t = ts_by_id[transcript_id]
         tseq = t.metadata.seq
 
-        fragint = genomic_to_transcriptomic(t, rs, alnpr)
+        fragint = genomic_to_transcriptomic(t, rs, alnpr, FALLBACK_FRAGLEN_MEAN)
         fl = length(fragint)
         if fl <= 0
             continue
@@ -195,7 +196,10 @@ function BiasedFragModel(
             continue
         end
 
-        push!(fraglens, fl)
+        # record the fragment length only if it was observed and not guessed
+        if alnpr.metadata.mate1_idx != 0 && alnpr.metadata.mate1_idx != 0
+            push!(fraglens, fl)
+        end
         push!(bias_foreground_examples, BiasTrainingExample(tseq, tpos, fl))
 
         # perturb fragment position and record context as a background sample

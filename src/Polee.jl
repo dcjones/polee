@@ -40,12 +40,13 @@ using GenomicFeatures
 using BioAlignments
 using BioSequences
 using DataStructures
-using Distributions
+# using Distributions
 using HDF5
 using Interpolations
 using ProgressMeter
 using SQLite
 using StatsBase
+using Nullables
 import IntervalTrees
 import SHA
 import YAML

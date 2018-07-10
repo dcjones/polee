@@ -18,7 +18,7 @@ const USED_BAM_FLAGS =
 
 # For single-end sequencing, make some assumptions about fragment length distribution
 const FALLBACK_FRAGLEN_MEAN = 150
-const FALLBACK_FRAGLEN_STD  = 50
+const FALLBACK_FRAGLEN_SD  = 50
 
 # Disallow fragments longer than this
 const MAX_FRAG_LEN = 1500
@@ -68,8 +68,4 @@ const BIAS_NUM_FREQ_BINS = 4
 # Number of fragment lengths to sum over when estimating effective length
 # (larger number is more accurate but slower)
 const BIAS_EFFLEN_NUM_FRAGLENS = 100
-
-# Fragment length distribution to use when there are too few usable pair-end
-# reads to reasonably estimate.
-const BIAS_FALLBACK_FRAGLEN_DIST = Normal(200, 100)
 

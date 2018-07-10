@@ -31,4 +31,4 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-julia -e 'import Polee; Polee.main()' ${unused_args[@]}
+julia --depwarn=no -e 'import Polee; Polee.main()' ${unused_args[@]}

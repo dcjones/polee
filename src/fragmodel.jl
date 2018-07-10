@@ -13,6 +13,11 @@ function fragment_length_prob(fm::FragModel, fraglen)
 end
 
 
+function normal_pdf(mu, sd, x)
+    return inv(sqrt(2 * pi) * sd) * exp((x - mu)^2 / (2*sd^2))
+end
+
+
 """
 A simple fragment model without any bias modeling.
 """
@@ -67,7 +72,8 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     if fraglens_count < MIN_FRAG_LEN_COUNT
         # use fallback distribution
         for fl in 1:MAX_FRAG_LEN
-            fraglen_pmf[fl] = pdf(BIAS_FALLBACK_FRAGLEN_DIST, fl)
+            fraglen_pmf[fl] = normal_pdf(
+                FALLBACK_FRAGLEN_MEAN, FALLBACK_FRAGLEN_SD, fl)
         end
         fraglen_pmf ./= sum(fraglen_pmf)
     else
@@ -218,7 +224,8 @@ function BiasedFragModel(
     if length(fraglens) < MIN_FRAG_LEN_COUNT
         # use fallback distribution
         for fl in 1:MAX_FRAG_LEN
-            fraglen_pmf[fl] = pdf(BIAS_FALLBACK_FRAGLEN_DIST, fl)
+            fraglen_pmf[fl] = normal_pdf(
+                FALLBACK_FRAGLEN_MEAN, FALLBACK_FRAGLEN_SD, fl)
         end
         fraglen_pmf ./= sum(fraglen_pmf)
     else

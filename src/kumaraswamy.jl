@@ -1,6 +1,6 @@
 
 
-immutable Kumaraswamy{T<:Real} <: Distributions.ContinuousUnivariateDistribution
+immutable Kumaraswamy{T<:Real}
     a::T
     b::T
 end
@@ -19,21 +19,6 @@ end
 
 function harmonic_deriv(x)
     return trigamma(x+1)
-end
-
-
-function Distributions.entropy(d::Kumaraswamy)
-    return (1 - 1/d.a) + (1 - 1/d.b) * harmonic(b) + log(d.a * d.b)
-end
-
-
-function Distributions.logpdf(d::Kumaraswamy, x::Real)
-    return d.a * d.b * x^(d.a - 1) * (1 - x^d.a)^(d.b - 1)
-end
-
-
-function logpdf_grad(d::Kumaraswamy, x::Real)
-
 end
 
 

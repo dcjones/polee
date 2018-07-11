@@ -138,7 +138,7 @@ Build an RNASeqSample from scratch.
 """
 function RNASeqSample(transcripts_filename::String,
                       genome_filename::String,
-                      reads_filename::String,
+                      reads_filename::Union{IO, String},
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
@@ -158,7 +158,7 @@ Build an RNASeqSample from scratch where transcript sequences and alignments
 are given instead of genome sequence and alginments.
 """
 function RNASeqSample(transcript_sequence_filename::String,
-                      reads_filename::String,
+                      reads_filename::Union{IO, String},
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
@@ -199,7 +199,7 @@ field set.
 """
 function RNASeqSample(ts::Transcripts,
                       ts_metadata::TranscriptsMetadata,
-                      reads_filename::String,
+                      reads_filename::Union{IO, String},
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();

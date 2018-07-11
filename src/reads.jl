@@ -133,6 +133,15 @@ function Reads(filename::String, excluded_seqs::Set{String})
 end
 
 
+function Reads(input::IO, excluded_seqs::Set{String})
+    reader = BAM.Reader(input)
+    prog = Progress(0, 0.25, "Reading BAM file ", 60)
+    from_file = false
+    return Reads(reader, prog, from_file, excluded_seqs)
+end
+
+
+
 function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
                excluded_seqs::Set{String})
     prog_step = 1000

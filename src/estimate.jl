@@ -32,10 +32,19 @@ Input:
     * experiment_spec_filename: filename of YAML experiment specification
     * ts_metadata: transcript metadata
 """
-function load_samples_from_specification(experiment_spec, ts, ts_metadata)
-    sample_names = [entry["name"] for entry in experiment_spec]
-    filenames = [entry["file"] for entry in experiment_spec]
-    sample_factors = [get(entry, "factors", String[]) for entry in experiment_spec]
+function load_samples_from_specification(spec, ts, ts_metadata)
+
+    prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
+    sample_names = String[]
+    filenames = String[]
+    sample_factors = Vector{String}[]
+    for sample in spec["samples"]
+        push!(sample_names, sample["name"])
+        push!(filenames,
+            get(sample, "file", string(sample["name"], prep_file_suffix)))
+        push!(sample_factors, get(sample, "factors", String[]))
+    end
+
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 

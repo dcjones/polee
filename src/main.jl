@@ -5,6 +5,7 @@ function print_usage()
     println("  likelihood-matrix")
     println("  likelihood-approx")
     println("  prepare-sample")
+    println("  prepare-experiment")
     println("  estimate")
 end
 
@@ -105,7 +106,116 @@ function main()
                                parsed_args["output"])
         return
 
-    elseif subcmd == "prepare-sample" || subcmd == "prep"
+
+    elseif subcmd == "prepare-experiment" || subcmd == "prep"
+        @add_arg_table arg_settings begin
+            "experiment"
+                required = true
+            "--force"
+                action = :store_true
+            "--num-threads", "-t" # handled by the wrapper script
+        end
+
+        parsed_args = parse_args(subcmd_args, arg_settings)
+        force_overwrite = parsed_args["force"]
+        spec = YAML.load_file(parsed_args["experiment"])
+
+        excluded_transcripts = Set{String}() # TODO: read this
+        excluded_seqs = Set{String}() # TODO: read this
+        no_bias = false # TODO: read this
+
+        approximation_method_name =
+            get(spec, "approximation", "logit_skew_normal_hsb")
+        approximation_tree_method =
+            Symbol(get(spec, "approximation_tree_method", "cluster"))
+        approximation = select_approx_method(
+            approximation_method_name, approximation_tree_method)
+
+        reads_file_suffix = get(spec, "reads_file_suffix", nothing)
+        prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
+
+        if haskey(spec, "reads_decompress_cmd")
+            reads_decompress_cmd = split(spec["reads_decompress_cmd"])
+        else
+            reads_decompress_cmd = nothing
+        end
+
+        if haskey(spec, "genome") && haskey(spec, "annotations")
+            ts, ts_metadata = Transcripts(spec["annotations"], excluded_transcripts)
+            read_transcript_sequences!(ts, spec["genome"])
+        elseif haskey(spec, "transcripts")
+            reader = open(FASTA.Reader, transcript_sequence_filename)
+            entry = eltype(reader)()
+            transcripts = Transcript[]
+            while !isnull(tryread!(reader, entry))
+                seqname = FASTA.identifier(entry)
+                seq = FASTA.sequence(entry)
+                id = length(transcripts) + 1
+                t = Transcript(seqname, 1, length(seq), STRAND_POS,
+                        TranscriptMetadata(seqname, id, [Exon(1, length(seq))], seq))
+                push!(transcripts, t)
+            end
+
+            ts = Transcripts(transcripts, true)
+            ts_metadata = TranscriptsMetadata()
+        else
+            error(
+                """
+                Either 'transcripts' or 'genome' and 'annotations' must be specified
+                in the experiment specification.
+                """)
+        end
+
+        if !haskey(spec, "samples")
+            warn("No samples specified the experiment specification.")
+            exit()
+        end
+
+        samples = spec["samples"]
+        for sample in samples
+            if !haskey(sample, "name")
+                error("Sample missing a 'name' field")
+            end
+            sample_name = sample["name"]
+            println(sample_name)
+            println(repeat("-", length(sample_name)))
+
+            if haskey(sample, "reads_file")
+                reads_file = sample["reads_file"]
+            elseif reads_file_suffix !== nothing
+                reads_file = string(sample_name, reads_file_suffix)
+            else
+                error("Sample has no 'reads_file' and there is no 'reads_file_suffix'")
+            end
+
+            if haskey(sample, "file")
+                output_file = sample["file"]
+            else
+                output_file = string(sample_name, prep_file_suffix)
+            end
+
+            if !force_overwrite && stat(output_file).mtime > stat(reads_file).mtime
+                println("Output file is newer than input. Skipping. (Use '--force' to override.")
+                continue
+            end
+
+            if reads_decompress_cmd !== nothing
+                reads_input, reads_cmd_proc =
+                    open(Cmd(vcat(reads_decompress_cmd, reads_file)))
+            else
+                reads_input = reads_file
+            end
+
+            sample = RNASeqSample(
+                ts, ts_metadata, reads_input,
+                excluded_seqs, excluded_transcripts,
+                no_bias=no_bias)
+
+            approximate_likelihood(approximation, sample, output_file)
+        end
+
+
+    elseif subcmd == "prepare-sample"
         @add_arg_table arg_settings begin
             "--output", "-o"
                 default = "sample-data.h5"
@@ -266,16 +376,34 @@ function main()
             end
         end
 
-        experiment_spec = YAML.load_file(parsed_args["experiment"])
-        if isempty(experiment_spec)
+        spec = YAML.load_file(parsed_args["experiment"])
+        if isempty(spec)
             error("Experiment specification is empty.")
         end
 
+        if !haskey(spec, "samples")
+            error("Experiment specification has no samples.")
+        end
+
+        prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
+
         if "transcripts" ∈ keys(parsed_args) && parsed_args["transcripts"] != nothing
             transcripts_filename = parsed_args["transcripts"]
+        elseif haskey(spec, "annotations")
+            transcripts_filename = spec["annotations"]
         else
+            first_sample = first(spec["samples"])
+            if haskey(first_sample, "file")
+                first_sample_file = first_sample["file"]
+            else
+                if !haskey(first_sample, "name")
+                    error("Sample in experiment specification is missing a 'name' field.")
+                end
+                first_sample_file = string(first_sample["name"], prep_file_suffix)
+            end
+
             transcripts_filename =
-                read_transcripts_filename_from_prepared(first(experiment_spec)["file"])
+                read_transcripts_filename_from_prepared(first_sample_file)
             println("Using transcripts file: ", transcripts_filename)
         end
 
@@ -283,7 +411,7 @@ function main()
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
         loaded_samples =
-            load_samples_from_specification(experiment_spec, ts, ts_metadata)
+            load_samples_from_specification(spec, ts, ts_metadata)
 
         inference = Symbol(parsed_args["inference"])
         feature = Symbol(parsed_args["feature"])

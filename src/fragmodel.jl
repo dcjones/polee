@@ -14,7 +14,9 @@ end
 
 
 function normal_pdf(mu, sd, x)
-    return inv(sqrt(2 * pi) * sd) * exp((x - mu)^2 / (2*sd^2))
+    invsqrt2pi = 0.3989422804014326779
+    z = (x - mu) / sd
+    return exp(-abs2(z)/2) * invsqrt2pi / sd
 end
 
 
@@ -39,14 +41,17 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     strand_mismatch_count = 0
 
     for (t, alnpr) in eachoverlap(ts, examples)
+        fraglen = fragmentlength(t, rs, alnpr)
+
+        if !isnull(fraglen)
+            continue
+        end
+
         if alnpr.strand == t.strand
             strand_match_count += 1
         elseif alnpr.strand != STRAND_BOTH
             strand_mismatch_count += 1
         end
-
-        # collect fragment lengths
-        fraglen = fragmentlength(t, rs, alnpr)
 
         if !isnull(fraglen) && get(fraglen) > 0
             h = hash(alnpr)
@@ -73,7 +78,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
         # use fallback distribution
         for fl in 1:MAX_FRAG_LEN
             fraglen_pmf[fl] = normal_pdf(
-                FALLBACK_FRAGLEN_MEAN, FALLBACK_FRAGLEN_SD, fl)
+                FALLBACK_FRAGLEN_MEAN, FALLBACK_FRAGLEN_SD, Float64(fl))
         end
         fraglen_pmf ./= sum(fraglen_pmf)
     else

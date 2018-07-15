@@ -52,10 +52,11 @@ end
 
 
 function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, aln_idx_map)
-    Is = [UInt32[] for _ in 1:Threads.nthreads()]
-    Js = [UInt32[] for _ in 1:Threads.nthreads()]
-    Vs = [Float32[] for _ in 1:Threads.nthreads()]
+    I = UInt32[]
+    J = UInt32[]
+    V = Float32[]
 
+    mut = Threads.Mutex()
     Threads.@threads for treepair_idx in 1:length(treepairs)
     # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
@@ -68,28 +69,13 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
                         rs.alignments[alnpr.metadata.mate2_idx].id
                 i = aln_idx_map[Int(i_)]
 
-                thrid = Threads.threadid()
-                push!(Is[thrid], i)
-                push!(Js[thrid], t.metadata.id)
-                push!(Vs[thrid], fragpr)
+                lock(mut)
+                push!(I, i)
+                push!(J, t.metadata.id)
+                push!(V, fragpr)
+                unlock(mut)
             end
         end
-    end
-
-    N = 0
-    for Ii in Is
-        N += length(Ii)
-    end
-
-    I = Array{UInt32}(N)
-    J = Array{UInt32}(N)
-    V = Array{Float32}(N)
-    j = 1
-    for i in 1:length(Is)
-        copy!(I, j, Is[i])
-        copy!(J, j, Js[i])
-        copy!(V, j, Vs[i])
-        j += length(Is[i])
     end
 
     return (I, J, V)
@@ -274,8 +260,6 @@ function RNASeqSample(fm::FragModel,
                       output=Nullable{String}(),
                       aln_idx_rev_map_ref=Nullable{Ref{Vector{UInt32}}}())
 
-    println("intersecting reads and transcripts...")
-
     # reassign indexes to alignments to group by position
     # TODO: this is allocated larger than it needs to be. Use a dict?
     aln_idx_map = zeros(UInt32, length(rs.alignments))
@@ -308,6 +292,8 @@ function RNASeqSample(fm::FragModel,
     Threads.@threads for t in ts_arr
         effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
+
+    println("intersecting reads and transcripts...")
 
     # open("effective-lengths.csv", "w") do out
     #     println(out, "transcript_id,tlen,efflen")

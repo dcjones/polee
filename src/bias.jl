@@ -399,7 +399,6 @@ end
 
 
 struct SimpleHistogramModel
-    qs::Vector{Float32} # quantiles
     bins::Vector{Float32} # log-probability ratios
 end
 
@@ -444,20 +443,22 @@ function SimpleHistogramModel(
             (bincounts[2, i]/bincounts_sums[2]) /
             (bincounts[1, i]/bincounts_sums[1])
     end
+    # return SimpleHistogramModel(qs, bins)
 
-    return SimpleHistogramModel(qs, bins)
+    # expand bins into finer grained uniformly spaced bins for faster lookup
+    expanded_bins = Vector{Float32}(100)
+    for i in 1:length(expanded_bins)
+        q = (i - 0.5) / length(expanded_bins)
+        j = searchsorted(qs, q).start
+        expanded_bins[i] = bins[j]
+    end
+
+    return SimpleHistogramModel(expanded_bins)
 end
 
 
 function evaluate(hist::SimpleHistogramModel, x)
-    # linear seach (faster for moderate number of bins)
-    i = 1
-    while i <= length(hist.qs) && x > hist.qs[i]
-        i += 1
-    end
-
-    # i = searchsorted(hist.qs, x).start
-
+    i = clamp(round(Int, x * length(hist.bins)), 1, length(hist.bins))
     return hist.bins[i]
 end
 

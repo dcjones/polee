@@ -353,6 +353,9 @@ function main()
                 arg_type = Float64
             "--inference"
                 default = "variational"
+            "--max-num-samples"
+                required = false
+                arg_type = Int
             "--transcripts"
                 required = false
             "--num-threads", "-t" # handled by the wrapper script
@@ -410,8 +413,9 @@ function main()
         ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
-        loaded_samples =
-            load_samples_from_specification(spec, ts, ts_metadata)
+        max_num_samples =  get(parsed_args, "max-num-samples", nothing)
+        loaded_samples = load_samples_from_specification(
+            spec, ts, ts_metadata, max_num_samples)
 
         inference = Symbol(parsed_args["inference"])
         feature = Symbol(parsed_args["feature"])

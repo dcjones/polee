@@ -32,7 +32,7 @@ Input:
     * experiment_spec_filename: filename of YAML experiment specification
     * ts_metadata: transcript metadata
 """
-function load_samples_from_specification(spec, ts, ts_metadata)
+function load_samples_from_specification(spec, ts, ts_metadata, max_num_samples)
 
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
     sample_names = String[]
@@ -47,6 +47,14 @@ function load_samples_from_specification(spec, ts, ts_metadata)
 
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
+
+    if max_num_samples !== nothing
+        max_num_samples = min(max_num_samples, num_samples)
+        p = shuffle(1:num_samples)[1:max_num_samples]
+        filenames = filenames[p]
+        sample_names = sample_names[p]
+        sample_factors = sample_factors[p]
+    end
 
     loaded_samples = load_samples(filenames, ts, ts_metadata)
     println("Sample data loaded")
@@ -212,7 +220,8 @@ function RNASeqApproxLikelihood(input::ModelInput, x)
 end
 
 
-function RNASeqApproxLikelihood(loaded_samples::LoadedSamples, x)
+function RNASeqApproxLikelihood(
+        loaded_samples::LoadedSamples, x; informative_prior::Bool=false)
     invhsb_params = [
         loaded_samples.variables[:left_index],
         loaded_samples.variables[:right_index],
@@ -223,6 +232,7 @@ function RNASeqApproxLikelihood(loaded_samples::LoadedSamples, x)
             x=x,
             efflens=loaded_samples.variables[:efflen],
             la_params=loaded_samples.variables[:la_param],
+            informative_prior=informative_prior,
             invhsb_params=invhsb_params,
             value=Float32[])
 end

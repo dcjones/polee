@@ -134,38 +134,38 @@ function estimate_transcript_pca(input::ModelInput; num_components::Int=2,
 
     likapprox = RNASeqApproxLikelihood(input, x)
 
-    x_init = log.(input.loaded_samples.x0_values)
-    qmu_init, qz_init, qw_init = simple_pca(input, x_init)
+    qx_init = log.(input.loaded_samples.x0_values)
+    qmu_init, qz_init, qw_init = simple_pca(input, qx_init)
 
     # inference
     # ---------
 
     if input.inference == :map || input.inference == :default
-        vars = Dict(
+        var_approximations = Dict(
             mu_bias =>
                 edmodels.PointMass(tf.Variable(qmu_init, name="qmu_bias_param")),
             x_sigma_sq =>
                 edmodels.PointMass(tf.nn[:softplus](tf.Variable(
                     tf.fill([n], -2.0f0), name="qx_sigma_q_param"))),
             x =>
-                edmodels.PointMass(tf.Variable(qmu_init, name="qmu_param")),
+                edmodels.PointMass(tf.Variable(qx_init, name="qmu_param")),
             w =>
                 edmodels.PointMass(tf.Variable(qw_init, name="qw_param")),
             z =>
                 edmodels.PointMass(tf.Variable(qz_init, name="qz_param")))
 
         if correct_batch_effects
-            vars[w_batch] = edmodels.PointMass(
+            var_approximations[w_batch] = edmodels.PointMass(
                 tf.Variable(fill(0.0f0, (num_factors, n)), name="qw_batch_parlam") )
         end
 
-        inference = ed.MAP(vars, data=Dict(likapprox => Float32[]))
+        inference = ed.MAP(var_approximations, data=Dict(likapprox => Float32[]))
         optimizer = tf.train[:AdamOptimizer](5e-2)
         run_inference(input, inference, 1000, optimizer)
 
         sess = ed.get_session()
-        qz_loc_values = sess[:run](qz)
-        qw_loc_values = sess[:run](qw)
+        qz_loc_values = sess[:run](var_approximations[z])
+        qw_loc_values = sess[:run](var_approximations[w])
     else
         error("Inference method $(input.inference) not supported for PCA.")
     end

@@ -467,9 +467,12 @@ function model_disjoint_feature_expression(input::ModelInput, feature_idxs,
                                                dense_shape=[num_features, n])
         x_constituent_matrix_softmax = tf.sparse_softmax(x_constituent_matrix)
 
-        x_i = tf.log(tf.sparse_tensor_dense_matmul(x_constituent_matrix_softmax,
-                                                   tf.expand_dims(tf.exp(x_feature_i), -1),
-                                                   adjoint_a=true))
+        x_i_exp = tf.sparse_tensor_dense_matmul(
+            x_constituent_matrix_softmax,
+            tf.expand_dims(tf.exp(x_feature_i), -1),
+            adjoint_a=true)
+        x_i_exp = tf.clip_by_value(x_i_exp, 1f-16, Inf32)
+        x_i = tf.log(x_i_exp)
 
         push!(xs, x_i)
     end
@@ -493,40 +496,63 @@ function model_disjoint_feature_expression(input::ModelInput, feature_idxs,
         end
     end
 
-    map!(log, feature_mu_initial, feature_mu_initial)
-    map!(log, constituent_mu_initial, constituent_mu_initial)
-    feature_mu_initial_mean = reshape(mean(feature_mu_initial, 1), (num_features,))
-    constituent_mu_initial_mean = reshape(mean(constituent_mu_initial, 1), (n,))
-
-    qx_constituent_mu_mu_param = tf.Variable(constituent_mu_initial_mean)
-    qx_constituent_mu_softplus_sigma_param = tf.Variable(tf.fill([n], -1.0f0))
-    qx_constituent_mu = edmodels.NormalWithSoftplusScale(loc=qx_constituent_mu_mu_param,
-                                                         scale=qx_constituent_mu_softplus_sigma_param)
-
-    qx_constituent_sigma_sq_mu_param    = tf.Variable(tf.fill([n], 0.0f0), name="qx_sigma_sq_mu_param")
-    qx_constituent_sigma_sq_sigma_param = tf.Variable(tf.fill([n], 1.0f0), name="qx_sigma_sq_sigma_param")
-    qx_constituent_sigma_sq = edmodels.TransformedDistribution(
-        distribution=edmodels.NormalWithSoftplusScale(loc=qx_constituent_sigma_sq_mu_param,
-                                                      scale=qx_constituent_sigma_sq_sigma_param),
-        bijector=tfdist.bijectors[:Exp](),
-        name="LogNormalTransformedDistribution")
-
-    qx_constituent_mu_param = tf.Variable(constituent_mu_initial)
-    qx_constituent_softplus_sigma_param = tf.Variable(tf.fill([num_samples, n], -1.0f0))
-    qx_constituent = edmodels.NormalWithSoftplusScale(loc=qx_constituent_mu_param,
-                                                      scale=qx_constituent_softplus_sigma_param)
-
     vars = Dict(
         :x_constituent => x_constituent,
         :x_constituent_mu => x_constituent_mu,
         :x_constituent_sigma_sq => x_constituent_sigma_sq
     )
 
+    map!(log, feature_mu_initial, feature_mu_initial)
+    map!(log, constituent_mu_initial, constituent_mu_initial)
+    feature_mu_initial_mean = reshape(mean(feature_mu_initial, 1), (num_features,))
+    constituent_mu_initial_mean = reshape(mean(constituent_mu_initial, 1), (n,))
+
+    # @show extrema(feature_mu_initial)
+    # @show extrema(constituent_mu_initial)
+    # @show extrema(feature_mu_initial_mean)
+    # @show extrema(constituent_mu_initial_mean)
+    # exit()
+
+    if input.inference == :map
+        qx_constituent_mu_param = tf.Variable(
+            constituent_mu_initial_mean, name="qx_constituent_mu_param")
+        qx_constituent_mu = edmodels.PointMass(qx_constituent_mu_param)
+
+        qx_constituent_sigma_sq_param = tf.Variable(
+            tf.fill([n], 0.0f0), name="qx_sigma_sq_mu_param")
+        qx_constituent_sigma_sq = edmodels.PointMass(
+            tf.nn[:softplus](qx_constituent_sigma_sq_param))
+
+        qx_constituent_param = tf.Variable(
+            constituent_mu_initial, name="qx_constituent_param")
+        qx_constituent = edmodels.PointMass(qx_constituent_param)
+
+    elseif input.inference == :variational
+        qx_constituent_mu_mu_param = tf.Variable(constituent_mu_initial_mean)
+        qx_constituent_mu_softplus_sigma_param = tf.Variable(tf.fill([n], -1.0f0))
+        qx_constituent_mu = edmodels.NormalWithSoftplusScale(loc=qx_constituent_mu_mu_param,
+                                                            scale=qx_constituent_mu_softplus_sigma_param)
+
+        qx_constituent_sigma_sq_mu_param    = tf.Variable(tf.fill([n], 0.0f0), name="qx_sigma_sq_mu_param")
+        qx_constituent_sigma_sq_sigma_param = tf.Variable(tf.fill([n], 1.0f0), name="qx_sigma_sq_sigma_param")
+        qx_constituent_sigma_sq = edmodels.TransformedDistribution(
+            distribution=edmodels.NormalWithSoftplusScale(loc=qx_constituent_sigma_sq_mu_param,
+                                                        scale=qx_constituent_sigma_sq_sigma_param),
+            bijector=tfdist.bijectors[:Exp](),
+            name="LogNormalTransformedDistribution")
+
+        qx_constituent_mu_param = tf.Variable(constituent_mu_initial)
+        qx_constituent_softplus_sigma_param = tf.Variable(tf.fill([num_samples, n], -1.0f0))
+        qx_constituent = edmodels.NormalWithSoftplusScale(loc=qx_constituent_mu_param,
+                                                        scale=qx_constituent_softplus_sigma_param)
+    else
+        error("Inference method $(input.inference) not supported by the disjoint feature model.")
+    end
+
     var_approximations = Dict(
         x_constituent          => qx_constituent,
         x_constituent_mu       => qx_constituent_mu,
-        x_constituent_sigma_sq => qx_constituent_sigma_sq
-    )
+        x_constituent_sigma_sq => qx_constituent_sigma_sq)
 
     data = Dict(likapprox => Float32[])
 

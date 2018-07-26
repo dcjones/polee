@@ -122,7 +122,7 @@ function main()
 
         excluded_transcripts = Set{String}() # TODO: read this
         excluded_seqs = Set{String}() # TODO: read this
-        no_bias = false # TODO: read this
+        no_bias = Bool(get(spec, "no_bias", false))
 
         approximation_method_name =
             get(spec, "approximation", "logit_skew_normal_hsb")
@@ -352,7 +352,7 @@ function main()
                 default = 0.975
                 arg_type = Float64
             "--inference"
-                default = "variational"
+                default = "default"
             "--max-num-samples"
                 required = false
                 arg_type = Int

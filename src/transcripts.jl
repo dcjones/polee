@@ -174,11 +174,14 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
             metadata.gene_name[entry_id]        = getfirst_else_empty(entry, "Name")
             metadata.gene_biotype[entry_id]     = getfirst_else_empty(entry, "biotype")
             metadata.gene_description[entry_id] = getfirst_else_empty(entry, "description")
-        else
+        elseif typ != "CDS"
             # If this entry is neither a gene nor an exon, assume it's some
             # sort of transcript entry
             entry_id = getfirst_else_empty(entry, "ID")
             parent_name = getfirst_else_empty(entry, "Parent")
+            if isempty(parent_name)
+                parent_name = getfirst_else_empty(entry, "geneID")
+            end
             metadata.gene_id[entry_id] = parent_name
             metadata.transcript_kind[entry_id] = typ
         end

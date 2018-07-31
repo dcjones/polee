@@ -15,14 +15,12 @@ using YAML
 @pyimport edward.models as edmodels
 
 
-const baseline_treatment = "2"
-# const baseline_treatment = nothing
+baseline_treatment = nothing
 
 function main()
-    # Which treatment to use as the baseline. 3 is serum starvation.
-
     model_name = ARGS[1]
-    ortholog_groups_filename = ARGS[2]
+    baseline_treatment = ARGS[2] == "nothing" ? nothing : ARGS[2]
+    ortholog_groups_filename = ARGS[3]
 
     species_loaded_samples       = Polee.LoadedSamples[]
     species_transcripts          = Polee.Transcripts[]
@@ -30,7 +28,7 @@ function main()
 
     # Load samples and transcripts for every species
     num_samples = 0
-    i = 3
+    i = 4
     while i <= length(ARGS)
         if i + 1 > length(ARGS)
             error("Last gff filename needs to be matches with an experiment")
@@ -52,6 +50,7 @@ function main()
 
         i += 2
     end
+
     num_taxons = length(species_loaded_samples)
 
     # Load orthoMCL ortholog groups

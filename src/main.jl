@@ -358,6 +358,8 @@ function main()
                 arg_type = Int
             "--transcripts"
                 required = false
+            "--no-gff-hash-check"
+                action = :store_true
             "--num-threads", "-t" # handled by the wrapper script
             "--no-gpu"            # handled by the wrapper script
             "feature"
@@ -415,7 +417,8 @@ function main()
 
         max_num_samples =  get(parsed_args, "max-num-samples", nothing)
         loaded_samples = load_samples_from_specification(
-            spec, ts, ts_metadata, max_num_samples)
+            spec, ts, ts_metadata, max_num_samples,
+            check_gff_hash=!parsed_args["no-gff-hash-check"])
 
         inference = Symbol(parsed_args["inference"])
         feature = Symbol(parsed_args["feature"])

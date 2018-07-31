@@ -17,14 +17,25 @@ function estimate_expression(input::ModelInput)
 end
 
 
-function estimate_transcript_expression(input::ModelInput, write_results::Bool=true)
+function estimate_simple_expression(input::ModelInput)
+    if input.feature == :transcript
+        return estimate_transcript_expression(input, pooled_means=false)
+    else
+        error("Expression estimates for $(input.feature) not supported")
+    end
+end
+
+
+function estimate_transcript_expression(
+        input::ModelInput, write_results::Bool=true;
+        pooled_means::Bool=true)
 
     num_samples, n = size(input.loaded_samples.x0_values)
 
     x0_log = log.(input.loaded_samples.x0_values)
 
     x, x_sigma_sq, x_mu_param, x_mu, likapprox =
-        transcript_quantification_model(input)
+        transcript_quantification_model(input, pooled_means=pooled_means)
 
     println("Estimating...")
 
@@ -300,51 +311,32 @@ end
 """
 Build basic transcript quantification model with some shrinkage towards a pooled mean.
 """
-function transcript_quantification_model(input::ModelInput, pooled_means::Bool=true)
+function transcript_quantification_model(input::ModelInput; pooled_means::Bool=true)
     num_samples, n = size(input.loaded_samples.x0_values)
 
     x_mu_mu0 = tf.constant(log(1f0/n), shape=[n])
     x_mu_sigma0 = tf.constant(4.0f0, shape=[n])
     x_mu = edmodels.Normal(loc=x_mu_mu0, scale=x_mu_sigma0)
 
-    # x_mu_mu0a = tf.constant(log(0.01 * 1/n), shape=[n])
-    # x_mu_sigma0a = tf.constant(0.5, shape=[n])
-
-    # x_mu_mu0b = tf.constant(log(0.1 * 1/n), shape=[n])
-    # x_mu_sigma0b = tf.constant(5.0, shape=[n])
-
-    # x_mu_probs = tf.stack([tf.constant(0.80, shape=[n]),
-    #                        tf.constant(0.20, shape=[n])], -1)
-
-    # x_mu = edmodels.Mixture(
-    #     cat=tfdist.Categorical(probs=x_mu_probs),
-    #     components=[
-    #         edmodels.Normal(loc=x_mu_mu0a, scale=x_mu_sigma0a),
-    #         edmodels.Normal(loc=x_mu_mu0b, scale=x_mu_sigma0b)])
-
-        # components=[
-        #     edmodels.MultivariateNormalDiag(x_mu_mu0a, x_mu_sigma0a),
-        #     edmodels.MultivariateNormalDiag(x_mu_mu0b, x_mu_sigma0b)])
-
     x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n])
     x_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[n])
     x_sigma_sq = edmodels.InverseGamma(x_sigma_alpha0, x_sigma_beta0)
     x_sigma = tf.sqrt(x_sigma_sq)
 
-    # y: quantification
-    x_mu_param = tf.matmul(tf.ones([num_samples, 1]),
-                           tf.expand_dims(x_mu, 0))
+    x_mu_param = tf.matmul(
+        tf.ones([num_samples, 1]), tf.expand_dims(x_mu, 0))
 
-    # x_sigma_param = tf.matmul(tf.ones([num_samples, 1]),
-    #                           tf.expand_dims(x_sigma, 0))
+    if pooled_means
+        x = edmodels.Normal(loc=x_mu_param, scale=x_sigma)
+    else
+        x = edmodels.Normal(
+            loc=tf.fill([num_samples, n], log(1f0/n)),
+            scale=4.0f0)
+    end
 
-    x = edmodels.Normal(loc=x_mu_param, scale=x_sigma)
     likapprox = RNASeqApproxLikelihood(input, x)
 
     return x, x_sigma_sq, x_mu_param, x_mu, likapprox
-
-
-
 end
 
 
@@ -561,3 +553,4 @@ end
 
 
 POLEE_MODELS["expression"] = estimate_expression
+POLEE_MODELS["simple-expression"] = estimate_simple_expression

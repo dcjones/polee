@@ -7,9 +7,9 @@ struct BiasTrainingExample
     left_seq::Vector{DNA}
     right_seq::Vector{DNA}
     frag_gc::Float64
-    tpdist::Float64
-    fpdist::Float64
-    tlen::Float64
+    tpdist::Int
+    fpdist::Int
+    tlen::Int
     fl::Float64
     a_freqs::NTuple{BIAS_NUM_FREQ_BINS, Float64}
     c_freqs::NTuple{BIAS_NUM_FREQ_BINS, Float64}
@@ -465,237 +465,107 @@ function evaluate(hist::SimpleHistogramModel, x)
 end
 
 
-const PosInterType =
-    ScaledInterpolation{Float32,2,
-        Interpolations.BSplineInterpolation{Float32,2,Array{Float32,2},BSpline{Linear},OnGrid,0},
-        BSpline{Linear},
-        OnGrid,
-        Tuple{
-            StepRangeLen{Float32,Base.TwicePrecision{Float32},Base.TwicePrecision{Float32}},
-            StepRangeLen{Float32,Base.TwicePrecision{Float32},Base.TwicePrecision{Float32}}}}
-
 struct PositionalBiasModel
-    intp::PosInterType
-    max_len::Int
+    p_fg::Float64
+    terms_fg::Vector{Float64}
+
+    p_bg::Float64
+    terms_bg::Vector{Float64}
 end
 
 
-function smooth_rows(xs)
-    c = 0.1
-    ys = similar(xs)
-    for i in 1:size(xs, 1)
-        for j in 1:size(xs, 2)
-            if j == 1
-                ys[i, j] =
-                    (1.0 - c) * xs[i, j] +
-                    c * xs[i, j+1]
-            elseif j == size(xs, 2)
-                ys[i, j] =
-                    c * xs[i, j-1] +
-                    (1.0 - c) * xs[i, j]
-            else
-                ys[i, j] =
-                    c * xs[i, j-1] +
-                    (1.0 - 2*c) * xs[i, j] +
-                    c * xs[i, j+1]
-            end
+"""
+Fit geometric 3' bias model by gradient ascent on the likelihood.
+"""
+function fit_pos_bias(tlens, fpdists, maxtlen)
+    logprob_terms = Vector{Float64}(maxtlen)
+    logprob_grad_terms = Vector{Float64}(maxtlen)
+
+    adam_rm = 0.9
+    adam_rv = 0.9
+    adam_m = 0.0
+    adam_v = 0.0
+    adam_eps = 1e-10
+
+    logit_p = logit(1e-10)
+    for it in 1:1000
+        step_size = 0.1 * exp(-5e-3 * it)
+        p = logistic(logit_p)
+
+        logprob_terms[1] = 0.0
+        logprob_grad_terms[1] = 0.0
+        for k in 1:maxtlen-1
+            # TODO: replace (1/k) with fraglen aware factor
+            logprob_terms[k+1] = (1/k) * p * (1-p)^k
+            logprob_grad_terms[k+1] = - (1/k) * (1 - p)^(k-1) * (k*p + p - 1)
         end
+        cumsum!(logprob_terms, logprob_terms)
+        cumsum!(logprob_grad_terms, logprob_grad_terms)
+
+        lp = 0.0
+        lp_grad = 0.0
+        for (fpdist, tlen) in zip(fpdists, tlens)
+            term = logprob_terms[tlen] - logprob_terms[fpdist]
+            prob = term + (1/tlen) * (1-p)^tlen
+            lp += log(prob)
+
+            term_grad = logprob_grad_terms[tlen] - logprob_grad_terms[fpdist]
+            # TODO: replace (1/tlen) with fraglen aware factor
+            prob_grad = term_grad - (1/tlen) * tlen * (1-p)^(tlen - 1)
+            lp_grad += (1/prob) * prob_grad
+        end
+
+        dlogisticp_dp = p * logistic(-logit_p)
+        lp_logit_p_grad = lp_grad * dlogisticp_dp
+
+        # adam update
+        if it == 1
+            adam_m = lp_logit_p_grad
+            adam_v = lp_logit_p_grad^2
+        else
+            adam_m = adam_rm * adam_m + (1 - adam_rm) * lp_logit_p_grad
+            adam_v = adam_rv * adam_v + (1 - adam_rv) * lp_logit_p_grad^2
+        end
+
+        m_denom = (1 - adam_rm^it)
+        v_denom = (1 - adam_rv^it)
+        param_m = adam_m / m_denom
+        param_v = adam_v / v_denom
+        delta = step_size * param_m / (sqrt(param_v) + adam_eps)
+
+        logit_p += delta
     end
-    return ys
+
+    return logistic(logit_p), logprob_terms
 end
 
-
-function fit_interpolation(
-        poss_fg, tlens_fg, poss_bg, tlens_bg,
-        numlenbins, lenbinsize, numposbins;
-        normalize_to_mode::Bool=false)
-    lenbins = collect(lenbinsize:lenbinsize:(lenbinsize * numlenbins))
-
-    kd_sd = 0.05
-
-    posbins = collect(linspace(0.0, 1.0, numposbins+1))[2:end]
-    posbinsize = length(posbins) > 1 ? posbins[2] - posbins[1] : 1.0
-
-    weights_fg = ones(Float64, length(tlens_fg))
-    A = fill(1.0f0, (numlenbins, numposbins))
-    # for (tlen, pos, w) in zip(tlens_fg, poss_fg, weights_fg)
-    #     if tlen > lenbins[end]
-    #         continue
-    #     end
-    #     i = min(numlenbins, searchsorted(lenbins, tlen).start)
-    #     j = min(numposbins, searchsorted(posbins, pos).start)
-    #     A[i, j] += w
-    # end
-    for (tlen, pos, w) in zip(tlens_fg, poss_fg, weights_fg)
-        if tlen > lenbins[end]
-            continue
-        end
-        i = min(numlenbins, searchsorted(lenbins, tlen).start)
-
-        d_sum = 0.0
-        for j in 1:numposbins
-            binpos = (j - 0.5) / numposbins
-            d = exp(-(binpos - pos)^2 / (2*kd_sd))
-            d_sum += d
-        end
-
-        for j in 1:numposbins
-            binpos = (j - 0.5) / numposbins
-            d = exp(-(binpos - pos)^2 / (2*kd_sd))
-            A[i, j] += d/d_sum * w
-        end
-    end
-    A ./= sum(A, 2)
-
-    weights_bg = ones(Float64, length(tlens_bg))
-    B = fill(1.0f0, (numlenbins, numposbins))
-    # for (tlen, pos, w) in zip(tlens_bg, poss_bg, weights_bg)
-    #     if tlen > lenbins[end]
-    #         continue
-    #     end
-    #     i = min(numlenbins, searchsorted(lenbins, tlen).start)
-    #     j = min(numposbins, searchsorted(posbins, pos).start)
-    #     B[i, j] += w
-    # end
-    for (tlen, pos, w) in zip(tlens_fg, poss_bg, weights_bg)
-        if tlen > lenbins[end]
-            continue
-        end
-        i = min(numlenbins, searchsorted(lenbins, tlen).start)
-
-        d_sum = 0.0
-        for j in 1:numposbins
-            binpos = (j - 0.5) / numposbins
-            d = exp(-(binpos - pos)^2 / (2*kd_sd))
-            d_sum += d
-        end
-
-        for j in 1:numposbins
-            binpos = (j - 0.5) / numposbins
-            d = exp(-(binpos - pos)^2 / (2*kd_sd))
-            B[i, j] += (d/d_sum) * w
-        end
-    end
-    B ./= sum(B, 2)
-
-    # if normalize_to_mode
-        # println("-----------------------------")
-        # @show lenbins
-        # @show posbins
-
-        # for i in 1:size(A, 1)
-        #     @show (i, A[i, :])
-        # end
-
-        # for i in 1:size(A, 1)
-        #     @show (i, B[i, :])
-        # end
-    # end
-
-    for i in 1:size(A, 1)
-        for j in 1:size(A, 2)
-            A[i, j] = A[i, j] / B[i, j]
-        end
-    end
-
-    # normalize to mode
-    if normalize_to_mode
-        for i in 1:size(A, 1)
-            max_bin = 0
-            max_bin_prob = 0.0
-            for j in 1:size(A, 2)
-                if A[i, j] > max_bin_prob
-                    max_bin = j
-                    max_bin_prob = A[i, j]
-                end
-            end
-
-            @show (i, max_bin, max_bin_prob)
-            A_adj = A[i, max_bin]
-            # B_adj = B[i, max_bin]
-            for j in 1:size(A, 2)
-                # A[i, j] = (A[i, j] / A_adj) / (B[i, j] / B_adj)
-                A[i, j] = (A[i, j] / A_adj)
-            end
-        end
-    end
-
-    println("-----------------------------")
-    @show lenbins
-    @show posbins
-
-    for i in 1:size(A, 1)
-        @show (i, A[i, :])
-    end
-
-
-    if normalize_to_mode
-        for i in 1:size(A, 1)
-            @show (i, A[i, :])
-        end
-    end
-
-    # itp = interpolate(A, BSpline(Constant()), OnGrid())
-    itp = interpolate(A, BSpline(Linear()), OnGrid())
-    # itp = interpolate(A, BSpline(Quadratic(Flat())), OnGrid())
-    # itp = interpolate(A, BSpline(Cubic(Natural())), OnGrid())
-
-    lenscale = Float32(lenbins[1] - lenbinsize/2):Float32(lenbinsize):Float32(lenbins[end] - lenbinsize/2)
-    posscale = Float32(posbins[1] - posbinsize/2):Float32(posbinsize):Float32(posbins[end] - posbinsize/2)
-    sitp = Interpolations.scale(itp, lenscale, posscale)
-
-    return sitp
-end
-
-
-function compute_loss(
-        model::PositionalBiasModel,
-        poss_fg_test, tlens_fg_test,
-        poss_bg_test, tlens_bg_test)
-    # entropy = 0.0
-    # for (tlen, pos) in zip(tlens_fg_test, poss_fg_test)
-    #     p = logistic(log(evaluate(model, tlen, pos)))
-    #     entropy -= log(p)
-    # end
-
-    # for (tlen, pos) in zip(tlens_bg_test, poss_bg_test)
-    #     p = logistic(log(evaluate(model, tlen, pos)))
-    #     entropy -= log(1 - p)
-    # end
-
-    # return entropy/(length(tlens_fg_test) + length(tlens_bg_test))
-
-    loss = 0.0
-    for (tlen, pos) in zip(tlens_fg_test, poss_fg_test)
-        loss += (1.0 - 1 * (evaluate(model, tlen, pos) > 1.0 ? 1.0 : -1.0))^2
-    end
-
-    for (tlen, pos) in zip(tlens_bg_test, poss_bg_test)
-        loss += (-1.0 - 1 * (evaluate(model, tlen, pos) > 1.0 ? 1.0 : -1.0))^2
-    end
-
-    return loss
-end
 
 function PositionalBiasModel(
+        ts::Transcripts, fraglen_pmf::Vector{Float32},
         foreground_training_examples::Vector{BiasTrainingExample},
         background_training_examples::Vector{BiasTrainingExample},
         foreground_testing_examples::Vector{BiasTrainingExample},
         background_testing_examples::Vector{BiasTrainingExample},
         weights::Vector{Float32})
 
+    maxtlen = 0
+    for t in ts
+        maxtlen = max(maxtlen, exonic_length(t))
+    end
+    @show maxtlen
+
     # copy relavent data from examples to flat arrays
-    poss_fg_train = Vector{Float32}(length(foreground_training_examples))
-    tlens_fg_train   = Vector{Float32}(length(foreground_training_examples))
+    poss_fg_train = Vector{Int}(length(foreground_training_examples))
+    tlens_fg_train   = Vector{Int}(length(foreground_training_examples))
 
-    poss_bg_train = Vector{Float32}(length(background_training_examples))
-    tlens_bg_train   = Vector{Float32}(length(background_training_examples))
+    poss_bg_train = Vector{Int}(length(background_training_examples))
+    tlens_bg_train   = Vector{Int}(length(background_training_examples))
 
-    poss_fg_test = Vector{Float32}(length(foreground_testing_examples))
-    tlens_fg_test   = Vector{Float32}(length(foreground_testing_examples))
+    poss_fg_test = Vector{Int}(length(foreground_testing_examples))
+    tlens_fg_test   = Vector{Int}(length(foreground_testing_examples))
 
-    poss_bg_test = Vector{Float32}(length(background_testing_examples))
-    tlens_bg_test   = Vector{Float32}(length(background_testing_examples))
+    poss_bg_test = Vector{Int}(length(background_testing_examples))
+    tlens_bg_test   = Vector{Int}(length(background_testing_examples))
 
     for (poss, tlens, examples) in
                 [(poss_fg_train, tlens_fg_train, foreground_training_examples),
@@ -703,66 +573,29 @@ function PositionalBiasModel(
                  (poss_fg_test, tlens_fg_test, foreground_testing_examples),
                  (poss_bg_test, tlens_bg_test, background_testing_examples) ]
         for (i, example) in enumerate(examples)
-            poss[i] = example.fpdist / example.tlen
+            poss[i] = example.fpdist
             tlens[i] = example.tlen
         end
     end
 
-    lenbinsize = 250
+    p_fg, terms_fg = fit_pos_bias(tlens_fg_train, poss_fg_train, maxtlen)
+    p_bg, terms_bg = fit_pos_bias(tlens_bg_train, poss_bg_train, maxtlen)
 
-    best_loss = Inf
-    best_numlenbins = 0
-    best_numposbins = 0
+    @show p_fg
+    @show p_bg
 
-    # search for a good number of bins in the histogram
-    # for numlenbins in 1:10, numposbins in 1:10
-    # for numlenbins in 1:20, numposbins in 1:20
-    for numlenbins in 2:10, numposbins in 2:10
-        intp = fit_interpolation(
-            poss_fg_train, tlens_fg_train,
-            poss_bg_train, tlens_bg_train,
-            numlenbins, lenbinsize, numposbins)
-
-        model = PositionalBiasModel(intp, numlenbins * lenbinsize)
-
-        loss = compute_loss(
-            model,
-            poss_fg_test, tlens_fg_test,
-            poss_bg_test, tlens_bg_test)
-
-        @show (numlenbins, numposbins, loss)
-
-        if loss < best_loss
-            best_loss = loss
-            best_numlenbins = numlenbins
-            best_numposbins = numposbins
-        end
-    end
-
-    @show (best_numlenbins, best_numposbins)
-
-    best_numlenbins = 15
-    best_numposbins = 15
-
-    intp = fit_interpolation(
-        poss_fg_train, tlens_fg_train,
-        poss_bg_train, tlens_bg_train,
-        best_numlenbins, lenbinsize, best_numposbins,
-        normalize_to_mode=true)
-    best_model = PositionalBiasModel(intp, best_numlenbins * lenbinsize)
-
-    return best_model::PositionalBiasModel
+    return PositionalBiasModel(p_fg, terms_fg, p_bg, terms_bg)
 end
 
 
 function evaluate(posmodel::PositionalBiasModel, tlen, pos; classification::Bool=false)
-    # tlen = min(posmodel.max_len, tlen)
-    p = Float32(posmodel.intp[tlen, pos])
-    # if tlen > 10000 && p < 0.01
-    #     @show (tlen, pos, p)
-    # end
-    p = clamp(p, 0.01f0, 10.0f0)
-    return p
+
+    # TODO: is there a difference between classification score and absolute score here?
+    # I dunno...
+    p_fg = (1/tlen) * (1-posmodel.p_fg)^tlen + posmodel.terms_fg[tlen] - posmodel.terms_fg[pos]
+    p_bg = (1/tlen) * (1-posmodel.p_bg)^tlen + posmodel.terms_bg[tlen] - posmodel.terms_bg[pos]
+
+    return p_fg/p_bg
 end
 
 
@@ -778,6 +611,7 @@ end
 Train ensemble bias model.
 """
 function BiasModel(
+        ts::Transcripts, fraglen_pmf::Vector{Float32},
         bias_foreground_training_examples::Vector{BiasTrainingExample},
         bias_background_training_examples::Vector{BiasTrainingExample},
         bias_foreground_testing_examples::Vector{BiasTrainingExample},
@@ -883,6 +717,7 @@ function BiasModel(
 
     fill!(weights, 1.0f0) # seems to do better without weigths
     pos_model = PositionalBiasModel(
+        ts, fraglen_pmf,
         bias_foreground_training_examples,
         bias_background_training_examples,
         bias_foreground_testing_examples,
@@ -893,12 +728,12 @@ function BiasModel(
 
 
     for (i, example) in enumerate(bias_foreground_training_examples)
-        weights[i] = evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
+        weights[i] = evaluate(bm.pos_model, example.tlen, example.fpdist)
     end
 
     for (i, example) in enumerate(bias_foreground_training_examples)
         idx = length(bias_foreground_training_examples) + i
-        weights[idx] = evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
+        weights[idx] = evaluate(bm.pos_model, example.tlen, example.fpdist)
     end
     @show median(weights)
     @show extrema(weights)
@@ -913,7 +748,6 @@ function BiasModel(
     end
     @show median(weights)
     @show extrema(weights)
-
 
     @show accuracy1(bm, bias_foreground_testing_examples, bias_background_testing_examples)
     @show accuracy2(bm, bias_foreground_testing_examples, bias_background_testing_examples)
@@ -939,7 +773,7 @@ function accuracy(
             evaluate(bm.left_seqbias, example.left_seq) *
             evaluate(bm.right_seqbias, example.right_seq) *
             evaluate(bm.gc_model, example.frag_gc) *
-            evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
+            evaluate(bm.pos_model, example.tlen, example.fpdist)
         bs[idx] = bias
         idx += 1
     end
@@ -949,7 +783,7 @@ function accuracy(
             evaluate(bm.left_seqbias, example.left_seq) *
             evaluate(bm.right_seqbias, example.right_seq) *
             evaluate(bm.gc_model, example.frag_gc) *
-            evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
+            evaluate(bm.pos_model, example.tlen, example.fpdist)
         bs[idx] = bias
         idx += 1
     end
@@ -1078,14 +912,14 @@ function accuracy4(
     idx = 1
     for example in foreground_testing_examples
         bias =
-            evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
+            evaluate(bm.pos_model, example.tlen, example.fpdist)
         bs[idx] = bias
         idx += 1
     end
 
     for example in background_testing_examples
         bias =
-            evaluate(bm.pos_model, example.tlen, example.fpdist/example.tlen)
+            evaluate(bm.pos_model, example.tlen, example.fpdist)
         bs[idx] = bias
         idx += 1
     end
@@ -1124,8 +958,7 @@ function compute_transcript_bias!(bm::BiasModel, t::Transcript)
         # left_bias[pos] =
         #     evaluate(bm.left_seqbias, tseq, pos) *
         #     evaluate(bm.pos_model, tlen, pos/tlen)
-        left_bias[pos] =
-            evaluate(bm.pos_model, tlen, pos/tlen)
+        left_bias[pos] = evaluate(bm.pos_model, tlen, tlen - pos + 1)
         # left_bias[pos] =
         #     evaluate(bm.left_seqbias, tseq, pos)
         # left_bias[pos] = 1.0

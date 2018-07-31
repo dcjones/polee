@@ -260,6 +260,7 @@ function BiasedFragModel(
     bias_background_testing_examples = bias_background_examples[n_training+1:end]
 
     bias_model = BiasModel(
+        ts, fraglen_pmf,
         bias_foreground_training_examples,
         bias_background_training_examples,
         bias_foreground_testing_examples,

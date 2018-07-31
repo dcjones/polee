@@ -32,7 +32,8 @@ Input:
     * experiment_spec_filename: filename of YAML experiment specification
     * ts_metadata: transcript metadata
 """
-function load_samples_from_specification(spec, ts, ts_metadata, max_num_samples)
+function load_samples_from_specification(
+        spec, ts, ts_metadata, max_num_samples; check_gff_hash::Bool=true)
 
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
     sample_names = String[]
@@ -56,7 +57,8 @@ function load_samples_from_specification(spec, ts, ts_metadata, max_num_samples)
         sample_factors = sample_factors[p]
     end
 
-    loaded_samples = load_samples(filenames, ts, ts_metadata)
+    loaded_samples = load_samples(
+        filenames, ts, ts_metadata, check_gff_hash=check_gff_hash)
     println("Sample data loaded")
 
     loaded_samples.sample_factors = sample_factors
@@ -83,12 +85,14 @@ Input:
     * filenames: vector of filenames
     * ts_metadata: transcript metadata
 """
-function load_samples(filenames, ts, ts_metadata::TranscriptsMetadata)
-    return load_samples_hdf5(filenames, ts, ts_metadata)
+function load_samples(
+        filenames, ts, ts_metadata::TranscriptsMetadata; check_gff_hash::Bool=true)
+    return load_samples_hdf5(filenames, ts, ts_metadata, check_gff_hash=check_gff_hash)
 end
 
 
-function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
+function load_samples_hdf5(
+        filenames, ts, ts_metadata::TranscriptsMetadata; check_gff_hash::Bool=true)
     num_samples = length(filenames)
     n = length(ts)
 
@@ -115,7 +119,7 @@ function load_samples_hdf5(filenames, ts, ts_metadata::TranscriptsMetadata)
 
         check_prepared_sample_version(input_metadata)
 
-        if base64decode(read(attrs(input_metadata)["gffhash"])) != ts_metadata.gffhash
+        if check_gff_hash && base64decode(read(attrs(input_metadata)["gffhash"])) != ts_metadata.gffhash
             true_filename = read(attrs(input_metadata)["gfffilename"])
             error(
                 """
@@ -221,7 +225,7 @@ end
 
 
 function RNASeqApproxLikelihood(
-        loaded_samples::LoadedSamples, x; informative_prior::Bool=false)
+        loaded_samples::LoadedSamples, x; informative_prior::Bool=true)
     invhsb_params = [
         loaded_samples.variables[:left_index],
         loaded_samples.variables[:right_index],

@@ -190,7 +190,7 @@ function RNASeqSample(ts::Transcripts,
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
                       no_bias::Bool=false,
-                      num_training_reads::Int=100000,
+                      num_training_reads::Int=200000,
                       dump_bias_training_examples::Bool=false)
 
     rs = Reads(reads_filename, excluded_seqs)

@@ -265,7 +265,7 @@ function BiasedFragModel(
         bias_foreground_testing_examples,
         bias_background_testing_examples)
 
-    if dump_bias_training_examples
+    # if dump_bias_training_examples
         open("bias-foreground.csv", "w") do output
             for example in bias_foreground_examples
                 println(
@@ -299,7 +299,7 @@ function BiasedFragModel(
                     ',', join(example.t_freqs, ','))
             end
         end
-    end
+    # end
 
     fraglen_by_prob = collect(1:MAX_FRAG_LEN)[sortperm(fraglen_pmf, rev=true)]
     high_prob_fraglens = fraglen_by_prob[1:BIAS_EFFLEN_NUM_FRAGLENS]
@@ -315,6 +315,7 @@ end
 function compute_transcript_bias!(fm::BiasedFragModel, ts::Transcripts)
     ts_arr = collect(ts)
     Threads.@threads for t in ts_arr
+    # for t in ts_arr
         compute_transcript_bias!(fm.bias_model, t)
     end
 end
@@ -348,10 +349,13 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
                 frag_gc_count += isGC(tseq[pos+fraglen-1])
             end
 
+            # c +=
+            #     left_bias[pos] *
+            #     right_bias[pos+fraglen-1] *
+            #     evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen))
             c +=
                 left_bias[pos] *
-                right_bias[pos+fraglen-1] *
-                evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen))
+                right_bias[pos+fraglen-1]
         end
         efflen += c * fraglenpr
     end
@@ -376,10 +380,13 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
     end
     frag_gc = frag_gc_count / length(fragint)
 
+    # fragbias =
+    #     t.metadata.left_bias[fragint.start] *
+    #     t.metadata.right_bias[fragint.stop] *
+    #     evaluate(fm.bias_model.gc_model, frag_gc)
     fragbias =
         t.metadata.left_bias[fragint.start] *
-        t.metadata.right_bias[fragint.stop] *
-        evaluate(fm.bias_model.gc_model, frag_gc)
+        t.metadata.right_bias[fragint.stop]
 
     fragstrandpr = alnpr.strand == t.strand ?
         fm.strand_specificity : 1.0 - fm.strand_specificity

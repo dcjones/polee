@@ -16,6 +16,7 @@ unused_args=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-gpu)
+        echo NO GPU
         export CUDA_VISIBLE_DEVICES=''
         shift
         ;;

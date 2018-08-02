@@ -42,7 +42,6 @@ using BioSequences
 using DataStructures
 using Distributions
 using HDF5
-using Interpolations
 using ProgressMeter
 using SQLite
 using StatsBase

@@ -234,6 +234,23 @@ function seqbias_restore_state!(ps, tmp_ps, seq_test_p, tmp_seq_test_p, j)
 end
 
 
+function compute_seqbias_loss(seq_test_p, ys_test)
+    n_test, _, k = size(seq_test_p)
+    loss = 0.0
+    for i in 1:n_test
+        p_fg = 1.0
+        p_bg = 1.0
+        for j in 1:k
+            p_fg *= seq_test_p[i, 2, j]
+            p_bg *= seq_test_p[i, 1, j]
+        end
+        p = p_fg / (p_fg + p_bg)
+        loss += ifelse(ys_test[i], 1.0 - p, p)
+    end
+    return loss
+end
+
+
 function SeqBiasModel(
         foreground_training_examples::Vector{BiasTrainingExample},
         background_training_examples::Vector{BiasTrainingExample},
@@ -273,9 +290,6 @@ function SeqBiasModel(
     prior = length(foreground_training_examples) /
         (length(foreground_training_examples) + length(background_training_examples))
 
-    # log_prior = log(prior)
-    # log_inv_prior = log(1.0 - prior)
-
     # markov chain paremeters: indexed by
     #     position, foreground/background, nucleotide, nucleotide context
     ps = zeros(Float32, (k, 2, 4, maxorder_size))
@@ -293,27 +307,9 @@ function SeqBiasModel(
     # excluded position
     orders = fill(-1, k)
 
-    function compute_accuracy()
-        lps = prod(seq_test_p, 3)
-        return mean((lps[1:end, 2] .> lps[1:end, 1]) .== ys_test)
-    end
-
-    function compute_cross_entropy()
-        condprobs = prod(seq_test_p, 3)
-        logprobs = log.(condprobs ./ (condprobs[1:end, 1] .+ condprobs[1:end, 2]))
-        entropy = 0.0
-        for i1 in 1:size(logprobs, 1)
-            entropy -= ys_test[i1] * logprobs[i1, 2] + (1 - ys_test[i1]) * logprobs[i1, 1]
-        end
-        entropy /= size(logprobs, 1)
-        return entropy
-    end
-
-    accuracy0 = compute_accuracy()
-    entropy0 = compute_cross_entropy()
+    loss0 = compute_seqbias_loss(seq_test_p, ys_test)
     while true
-        best_accuracy = accuracy0
-        best_entropy = entropy0
+        best_loss = loss0
         best_j = 0
 
         for j in 1:k
@@ -329,13 +325,11 @@ function SeqBiasModel(
                 seqbias_update_p!(
                     ps, seq_test, seq_test_p, j, orders[j]) # 0.0001 seconds
 
-                accuracy = compute_accuracy() # 0.001 seconds
-                entropy = compute_cross_entropy() # 0.001 seconds
+                loss = compute_seqbias_loss(seq_test_p, ys_test)
 
                 # if accuracy > best_accuracy
-                if entropy < best_entropy
-                    best_accuracy = accuracy
-                    best_entropy = entropy
+                if loss < best_loss
+                    best_loss = loss
                     best_j = j
                 end
 
@@ -345,16 +339,14 @@ function SeqBiasModel(
             end
         end
 
-        # if best_accuracy <= accuracy0
-        if best_entropy >= entropy0
+        if best_loss >= loss0
             break
         else
             orders[best_j] += 1
             seqbias_update_param_estimate!(
                 ps, seq_train, ys_train, best_j, orders[best_j])
             seqbias_update_p!(ps, seq_test, seq_test_p, best_j, orders[best_j])
-            accuracy0 = best_accuracy
-            entropy0 = best_entropy
+            loss0 = best_loss
         end
     end
 
@@ -728,7 +720,6 @@ function BiasModel(
         weights)
 
     bm = BiasModel(seqbias_left, seqbias_right, gc_model, pos_model)
-
 
     for (i, example) in enumerate(bias_foreground_training_examples)
         weights[i] = evaluate(bm.pos_model, example.tlen, example.fpdist)

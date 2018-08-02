@@ -350,13 +350,10 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
                 frag_gc_count += isGC(tseq[pos+fraglen-1])
             end
 
-            # c +=
-            #     left_bias[pos] *
-            #     right_bias[pos+fraglen-1] *
-            #     evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen))
             c +=
                 left_bias[pos] *
-                right_bias[pos+fraglen-1]
+                right_bias[pos+fraglen-1] *
+                evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen))
         end
         efflen += c * fraglenpr
     end
@@ -381,13 +378,10 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
     end
     frag_gc = frag_gc_count / length(fragint)
 
-    # fragbias =
-    #     t.metadata.left_bias[fragint.start] *
-    #     t.metadata.right_bias[fragint.stop] *
-    #     evaluate(fm.bias_model.gc_model, frag_gc)
     fragbias =
         t.metadata.left_bias[fragint.start] *
-        t.metadata.right_bias[fragint.stop]
+        t.metadata.right_bias[fragint.stop] *
+        evaluate(fm.bias_model.gc_model, frag_gc)
 
     fragstrandpr = alnpr.strand == t.strand ?
         fm.strand_specificity : 1.0 - fm.strand_specificity

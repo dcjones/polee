@@ -915,14 +915,14 @@ function accuracy4(
     idx = 1
     for example in foreground_testing_examples
         bias =
-            evaluate(bm.pos_model, example.tlen, example.fpdist)
+            evaluate(bm.pos_model, example.tlen, example.fpdist, classification=true)
         bs[idx] = bias
         idx += 1
     end
 
     for example in background_testing_examples
         bias =
-            evaluate(bm.pos_model, example.tlen, example.fpdist)
+            evaluate(bm.pos_model, example.tlen, example.fpdist, classification=true)
         bs[idx] = bias
         idx += 1
     end
@@ -956,33 +956,15 @@ function compute_transcript_bias!(bm::BiasModel, t::Transcript)
 
     # left bias
     for pos in 1:tlen
-        # left_bias[pos] =
-        #     evaluate(bm.left_seqbias, tseq, pos)
-        # left_bias[pos] =
-        #     evaluate(bm.left_seqbias, tseq, pos) *
-        #     evaluate(bm.pos_model, tlen, pos/tlen)
         left_bias[pos] =
-            evaluate(bm.pos_model, tlen, tlen - pos + 1)
-        #     evaluate(bm.left_seqbias, tseq, pos)
-        # left_bias[pos] =
-        #     evaluate(bm.left_seqbias, tseq, pos)
-        # left_bias[pos] = 1.0
+            evaluate(bm.pos_model, tlen, tlen - pos + 1) *
+            evaluate(bm.left_seqbias, tseq, pos)
     end
-
-    # if tlen > 10000
-    #     println("-----------------------------------------------")
-    #     @show tlen
-    #     @show left_bias
-    # end
 
     # right bias
     for pos in 1:tlen
-        # right_bias[pos] =
-        #     evaluate(bm.right_seqbias, tseq, pos)
-        right_bias[pos] = 1.0
+        right_bias[pos] =
+            evaluate(bm.right_seqbias, tseq, pos)
     end
-
-    # @show extrema(left_bias)
-    # @show extrema(right_bias)
 end
 

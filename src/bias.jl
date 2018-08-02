@@ -466,11 +466,8 @@ end
 
 
 struct PositionalBiasModel
-    p_fg::Float64
-    terms_fg::Vector{Float64}
-
-    p_bg::Float64
-    terms_bg::Vector{Float64}
+    p::Float64
+    terms::Vector{Float64}
 end
 
 
@@ -495,9 +492,6 @@ function fit_pos_bias(tlens, fpdists, flens, maxtlen, efflens, fraglen_pmf)
         logprob_terms[1] = 0.0
         logprob_grad_terms[1] = 0.0
         for k in 1:maxtlen-1
-            # logprob_terms[k+1] = (1/k) * p * (1-p)^k
-            # logprob_grad_terms[k+1] = - (1/k) * (1 - p)^(k-1) * (k*p + p - 1)
-            # TODO: replace (1/k) with fraglen aware factor
             logprob_terms[k+1] = (1/efflens[k]) * p * (1-p)^k
             logprob_grad_terms[k+1] = - (1/efflens[k]) * (1 - p)^(k-1) * (k*p + p - 1)
         end
@@ -508,13 +502,10 @@ function fit_pos_bias(tlens, fpdists, flens, maxtlen, efflens, fraglen_pmf)
         lp_grad = 0.0
         for (fpdist, tlen) in zip(fpdists, tlens)
             term = logprob_terms[tlen] - logprob_terms[fpdist]
-            # prob = term + (1/tlen) * (1-p)^tlen
             prob = term + (1/efflens[tlen]) * (1-p)^tlen
             lp += log(prob)
 
             term_grad = logprob_grad_terms[tlen] - logprob_grad_terms[fpdist]
-            # TODO: replace (1/tlen) with fraglen aware factor
-            # prob_grad = term_grad - (1/tlen) * tlen * (1-p)^(tlen - 1)
             prob_grad = term_grad - (1/efflens[tlen]) * tlen * (1-p)^(tlen - 1)
             lp_grad += (1/prob) * prob_grad
         end
@@ -540,6 +531,7 @@ function fit_pos_bias(tlens, fpdists, flens, maxtlen, efflens, fraglen_pmf)
         logit_p += delta
     end
 
+    # recompute terms without fragment length adjustment
     p = logistic(logit_p)
     for k in 1:maxtlen-1
         logprob_terms[k+1] = (1/k) * p * (1-p)^k
@@ -562,38 +554,20 @@ function PositionalBiasModel(
     for t in ts
         maxtlen = max(maxtlen, exonic_length(t))
     end
-    @show maxtlen
 
     # copy relavent data from examples to flat arrays
     poss_fg_train  = Vector{Int}(length(foreground_training_examples))
     tlens_fg_train = Vector{Int}(length(foreground_training_examples))
     flens_fg_train = Vector{Int}(length(foreground_training_examples))
 
-    poss_bg_train  = Vector{Int}(length(background_training_examples))
-    tlens_bg_train = Vector{Int}(length(background_training_examples))
-    flens_bg_train = Vector{Int}(length(background_training_examples))
-
-    poss_fg_test  = Vector{Int}(length(foreground_testing_examples))
-    tlens_fg_test = Vector{Int}(length(foreground_testing_examples))
-    flens_fg_test = Vector{Int}(length(foreground_testing_examples))
-
-    poss_bg_test  = Vector{Int}(length(background_testing_examples))
-    tlens_bg_test = Vector{Int}(length(background_testing_examples))
-    flens_bg_test = Vector{Int}(length(background_testing_examples))
-
-    for (poss, tlens, flens, examples) in
-                [(poss_fg_train, tlens_fg_train, flens_fg_train, foreground_training_examples),
-                 (poss_bg_train, tlens_bg_train, flens_bg_train, background_training_examples),
-                 (poss_fg_test, tlens_fg_test, flens_fg_test, foreground_testing_examples),
-                 (poss_bg_test, tlens_bg_test, flens_bg_test, background_testing_examples) ]
-        for (i, example) in enumerate(examples)
-            poss[i] = example.fpdist
-            tlens[i] = example.tlen
-            flens[i] = example.flen
-        end
+    for (i, example) in enumerate(foreground_training_examples)
+        poss_fg_train[i]  = example.fpdist
+        tlens_fg_train[i] = example.tlen
+        flens_fg_train[i] = example.flen
     end
 
     # need effective lengths to compute positional bias accounting for
+    # fragment lengths
     efflens = Vector{Float64}(maxtlen)
     for tlen in 1:maxtlen
         efflen = 0.0
@@ -606,33 +580,25 @@ function PositionalBiasModel(
         efflens[tlen] = efflen
     end
 
-    p_fg, terms_fg = fit_pos_bias(
+    p, terms = fit_pos_bias(
         tlens_fg_train, poss_fg_train, flens_fg_train,
         maxtlen, efflens, fraglen_pmf)
-    p_bg, terms_bg = fit_pos_bias(
-        tlens_bg_train, poss_bg_train, flens_bg_train,
-        maxtlen, efflens, fraglen_pmf)
 
-    @show p_fg
-    @show p_bg
+    println("Positional bias rate: ", p)
 
-    return PositionalBiasModel(p_fg, terms_fg, p_bg, terms_bg)
+    return PositionalBiasModel(p, terms)
 end
 
 
 function evaluate(posmodel::PositionalBiasModel, tlen, pos; classification::Bool=false)
-
-    # TODO: is there a difference between classification score and absolute score here?
-    # I dunno...
-
-    p_fg = (1/tlen) * (1-posmodel.p_fg)^tlen + posmodel.terms_fg[tlen] - posmodel.terms_fg[pos]
-    p_bg = (1/tlen) * (1-posmodel.p_bg)^tlen + posmodel.terms_bg[tlen] - posmodel.terms_bg[pos]
-
-    c = (1/tlen) * (1-posmodel.p_fg)^tlen + posmodel.terms_fg[tlen]
-    return p_fg / c
-
-    # return p_fg/p_bg
-    # return 1000 * p_fg
+    prob = (1/tlen) * (1-posmodel.p)^tlen + posmodel.terms[tlen] - posmodel.terms[pos]
+    if classification
+        return tlen * prob
+    else
+        # adjust so the 3' end has bias 1.0.
+        c = (1/tlen) * (1-posmodel.p)^tlen + posmodel.terms[tlen]
+        return prob / c
+    end
 end
 
 
@@ -810,7 +776,7 @@ function accuracy(
             evaluate(bm.left_seqbias, example.left_seq) *
             evaluate(bm.right_seqbias, example.right_seq) *
             evaluate(bm.gc_model, example.frag_gc) *
-            evaluate(bm.pos_model, example.tlen, example.fpdist)
+            evaluate(bm.pos_model, example.tlen, example.fpdist, classification=true)
         bs[idx] = bias
         idx += 1
     end
@@ -820,7 +786,7 @@ function accuracy(
             evaluate(bm.left_seqbias, example.left_seq) *
             evaluate(bm.right_seqbias, example.right_seq) *
             evaluate(bm.gc_model, example.frag_gc) *
-            evaluate(bm.pos_model, example.tlen, example.fpdist)
+            evaluate(bm.pos_model, example.tlen, example.fpdist, classification=true)
         bs[idx] = bias
         idx += 1
     end

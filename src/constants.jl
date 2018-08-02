@@ -67,5 +67,5 @@ const BIAS_NUM_FREQ_BINS = 4
 
 # Number of fragment lengths to sum over when estimating effective length
 # (larger number is more accurate but slower)
-const BIAS_EFFLEN_NUM_FRAGLENS = 200
+const BIAS_EFFLEN_NUM_FRAGLENS = 300
 

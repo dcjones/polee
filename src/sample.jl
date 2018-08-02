@@ -293,6 +293,8 @@ function RNASeqSample(fm::FragModel,
         effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
 
+    @show quantile(effective_lengths, [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0])
+
     println("intersecting reads and transcripts...")
 
     # open("effective-lengths.csv", "w") do out

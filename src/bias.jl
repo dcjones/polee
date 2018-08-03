@@ -175,7 +175,7 @@ const nt2bit = UInt8[
     0 ]                  # N
 
 # update position j in the markov chain parameters ps
-function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order)
+function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order, weights)
     ps[j,1:end,1:end,1:end] = 1 # pseudocount
 
     for i in 1:size(seq_train, 1) # 0.22 seconds
@@ -183,7 +183,7 @@ function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order)
         for l in 1:order
             ctx = (ctx << 2) | seq_train[i, j+l]
         end
-        ps[j, ys_train[i]+1, seq_train[i, j]+1, ctx+1] += 1
+        ps[j, ys_train[i]+1, seq_train[i, j]+1, ctx+1] += weights[i]
     end
 
     for i2 in 1:2 # 0.0001 seconds
@@ -256,6 +256,7 @@ function SeqBiasModel(
         background_training_examples::Vector{BiasTrainingExample},
         foreground_testing_examples::Vector{BiasTrainingExample},
         background_testing_examples::Vector{BiasTrainingExample},
+        weights::Vector{Float32},
         fragend::Symbol)
 
     @assert fragend == :left || fragend == :right
@@ -268,15 +269,15 @@ function SeqBiasModel(
     seq_train = Array{UInt8}((n_train, k))
     ys_train  = Array{Bool}(n_train)
 
-    n_test    = length(foreground_testing_examples) + length(background_testing_examples)
-    seq_test  = Array{UInt8}((n_test, k))
-    ys_test   = Array{Bool}(n_test)
+    n_test   = length(foreground_testing_examples) + length(background_testing_examples)
+    seq_test = Array{UInt8}((n_test, k))
+    ys_test  = Array{Bool}(n_test)
 
     for (seqarr, ys, offset, y, examples) in
             [(seq_train, ys_train,                                    0,  true, foreground_training_examples),
              (seq_train, ys_train, length(foreground_training_examples), false, background_training_examples),
              (seq_test,  ys_test,                                     0,  true, foreground_testing_examples),
-             (seq_test,  ys_test,   length(foreground_testing_examples), false, background_testing_examples)]
+             (seq_test,  ys_test,  length(foreground_testing_examples), false, background_testing_examples)]
         for (i, example) in enumerate(examples)
             seq = fragend == :left ? example.left_seq : example.right_seq
             for j in 1:k
@@ -287,8 +288,9 @@ function SeqBiasModel(
         end
     end
 
-    prior = length(foreground_training_examples) /
-        (length(foreground_training_examples) + length(background_training_examples))
+    # assuming this is 0.5
+    # prior = length(foreground_training_examples) /
+    #     (length(foreground_training_examples) + length(background_training_examples))
 
     # markov chain paremeters: indexed by
     #     position, foreground/background, nucleotide, nucleotide context
@@ -321,7 +323,7 @@ function SeqBiasModel(
                 orders[j] += 1
 
                 seqbias_update_param_estimate!(
-                    ps, seq_train, ys_train, j, orders[j]) # 0.0005 seconds
+                    ps, seq_train, ys_train, j, orders[j], weights) # 0.0005 seconds
                 seqbias_update_p!(
                     ps, seq_test, seq_test_p, j, orders[j]) # 0.0001 seconds
 
@@ -344,7 +346,7 @@ function SeqBiasModel(
         else
             orders[best_j] += 1
             seqbias_update_param_estimate!(
-                ps, seq_train, ys_train, best_j, orders[best_j])
+                ps, seq_train, ys_train, best_j, orders[best_j], weights)
             seqbias_update_p!(ps, seq_test, seq_test_p, best_j, orders[best_j])
             loss0 = best_loss
         end
@@ -387,10 +389,6 @@ function evaluate(sb::SeqBiasModel, seq, pos)
 
     return bias
 end
-
-# TODO: I'm afraid the only real solution is to 2-bit encode the sequences so
-# we can avoid the overhead of of decoding. I don't really understand why this
-# is so slow though.
 
 
 struct SimpleHistogramModel
@@ -539,8 +537,7 @@ function PositionalBiasModel(
         foreground_training_examples::Vector{BiasTrainingExample},
         background_training_examples::Vector{BiasTrainingExample},
         foreground_testing_examples::Vector{BiasTrainingExample},
-        background_testing_examples::Vector{BiasTrainingExample},
-        weights::Vector{Float32})
+        background_testing_examples::Vector{BiasTrainingExample})
 
     maxtlen = 0
     for t in ts
@@ -620,6 +617,33 @@ function BiasModel(
         length(bias_foreground_testing_examples) +
         length(bias_background_testing_examples)
 
+    weights = ones(Float32, n_training)
+
+    # train positional bias model
+    # ---------------------------
+
+    println("Fitting positional bias model...")
+
+    pos_model = PositionalBiasModel(
+        ts, fraglen_pmf,
+        bias_foreground_training_examples,
+        bias_background_training_examples,
+        bias_foreground_testing_examples,
+        bias_background_testing_examples)
+
+    # for (i, example) in enumerate(bias_foreground_training_examples)
+    #     weights[i] = 1.0 - logistic(log(evaluate(
+    #         pos_model, example.tlen, example.fpdist, classification=true)))
+    # end
+
+    # for (i, example) in enumerate(bias_foreground_training_examples)
+    #     idx = length(bias_foreground_training_examples) + i
+    #     weights[idx] = logistic(log(evaluate(
+    #         pos_model, example.tlen, example.fpdist, classification=true)))
+    # end
+
+    # @show quantile(weights, [0.0, 0.1, 0.25, 0.5, 0.9, 1.0])
+
     # train sequence bias models
     # --------------------------
 
@@ -630,34 +654,31 @@ function BiasModel(
         bias_background_training_examples,
         bias_foreground_testing_examples,
         bias_background_testing_examples,
-        :left)
+        weights, :left)
 
     seqbias_right = SeqBiasModel(
         bias_foreground_training_examples,
         bias_background_training_examples,
         bias_foreground_testing_examples,
         bias_background_testing_examples,
-        :right)
+        weights, :right)
 
     # weight training examples
     # ------------------------
 
-    weights = Vector{Float32}(n_training)
-    bs = Float32[]
-
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        b = evaluate(seqbias_left, example.left_seq) +
-            evaluate(seqbias_right, example.right_seq)
-        push!(bs, b)
-        weights[i] = 1.0 - logistic(b)
-    end
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        b = evaluate(seqbias_left, example.left_seq) +
-            evaluate(seqbias_right, example.right_seq)
-        push!(bs, b)
-        idx = length(bias_foreground_training_examples) + i
-        weights[idx] = logistic(b)
-    end
+    # for (i, example) in enumerate(bias_foreground_training_examples)
+    #     b = evaluate(seqbias_left, example.left_seq) *
+    #         evaluate(seqbias_right, example.right_seq) *
+    #         logistic(log(evaluate(
+    #             pos_model, example.tlen, example.fpdist, classification=true)))
+    #     weights[i] = 1.0 - logistic(log(b))
+    # end
+    # for (i, example) in enumerate(bias_foreground_training_examples)
+    #     b = evaluate(seqbias_left, example.left_seq) *
+    #         evaluate(seqbias_right, example.right_seq)
+    #     idx = length(bias_foreground_training_examples) + i
+    #     weights[idx] *= logistic(log(b))
+    # end
 
     # train fragment GC model
     # -----------------------
@@ -689,64 +710,23 @@ function BiasModel(
 
     println("Fitting GC content bias model...")
 
-    fill!(weights, 1.0f0) # seems to do better without weigths
+    # fill!(weights, 1.0f0) # seems to do better without weigths
     gc_model = SimpleHistogramModel(
         frag_gc_training, ys_training, weights)
 
     # re-weight training examples
     # ---------------------------
 
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        weights[i] *= 1.0 - logistic(evaluate(gc_model, example.frag_gc))
-    end
+    # for (i, example) in enumerate(bias_foreground_training_examples)
+    #     weights[i] *= 1.0 - logistic(log(evaluate(gc_model, example.frag_gc)))
+    # end
 
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        idx = length(bias_foreground_training_examples) + i
-        weights[idx] *= logistic(evaluate(gc_model, example.frag_gc))
-    end
-
-    # train positional bias model
-    # ---------------------------
-
-    println("Fitting positional bias model...")
-
-    fill!(weights, 1.0f0) # seems to do better without weigths
-    pos_model = PositionalBiasModel(
-        ts, fraglen_pmf,
-        bias_foreground_training_examples,
-        bias_background_training_examples,
-        bias_foreground_testing_examples,
-        bias_background_testing_examples,
-        weights)
+    # for (i, example) in enumerate(bias_foreground_training_examples)
+    #     idx = length(bias_foreground_training_examples) + i
+    #     weights[idx] *= logistic(log(evaluate(gc_model, example.frag_gc)))
+    # end
 
     bm = BiasModel(seqbias_left, seqbias_right, gc_model, pos_model)
-
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        weights[i] = evaluate(bm.pos_model, example.tlen, example.fpdist)
-    end
-
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        idx = length(bias_foreground_training_examples) + i
-        weights[idx] = evaluate(bm.pos_model, example.tlen, example.fpdist)
-    end
-    @show median(weights)
-    @show extrema(weights)
-
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        weights[i] = evaluate(bm.gc_model, example.frag_gc)
-    end
-
-    for (i, example) in enumerate(bias_foreground_training_examples)
-        idx = length(bias_foreground_training_examples) + i
-        weights[idx] = evaluate(bm.gc_model, example.frag_gc)
-    end
-    @show median(weights)
-    @show extrema(weights)
-
-    @show accuracy1(bm, bias_foreground_testing_examples, bias_background_testing_examples)
-    @show accuracy2(bm, bias_foreground_testing_examples, bias_background_testing_examples)
-    @show accuracy3(bm, bias_foreground_testing_examples, bias_background_testing_examples)
-    @show accuracy4(bm, bias_foreground_testing_examples, bias_background_testing_examples)
 
     acc = accuracy(
         bm, bias_foreground_testing_examples, bias_background_testing_examples)
@@ -777,142 +757,6 @@ function accuracy(
             evaluate(bm.left_seqbias, example.left_seq) *
             evaluate(bm.right_seqbias, example.right_seq) *
             evaluate(bm.gc_model, example.frag_gc) *
-            evaluate(bm.pos_model, example.tlen, example.fpdist, classification=true)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    bs .-= median(bs)
-
-    for i in 1:length(foreground_testing_examples)
-        acc += bs[i] .> 0.0
-    end
-
-    for i in 1:length(background_testing_examples)
-        acc += bs[length(foreground_testing_examples) + i] .<= 0.0
-    end
-
-    return acc / (length(foreground_testing_examples) + length(background_testing_examples))
-end
-
-
-function accuracy1(
-        bm::BiasModel, foreground_testing_examples, background_testing_examples)
-    acc = 0
-
-    bs = Vector{Float64}(length(foreground_testing_examples) + length(background_testing_examples))
-    idx = 1
-    for example in foreground_testing_examples
-        bias =
-            evaluate(bm.left_seqbias, example.left_seq)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    for example in background_testing_examples
-        bias =
-            evaluate(bm.left_seqbias, example.left_seq)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    bs .-= median(bs)
-
-    for i in 1:length(foreground_testing_examples)
-        acc += bs[i] .> 0.0
-    end
-
-    for i in 1:length(background_testing_examples)
-        acc += bs[length(foreground_testing_examples) + i] .<= 0.0
-    end
-
-    return acc / (length(foreground_testing_examples) + length(background_testing_examples))
-end
-
-
-function accuracy2(
-        bm::BiasModel, foreground_testing_examples, background_testing_examples)
-    acc = 0
-
-    bs = Vector{Float64}(length(foreground_testing_examples) + length(background_testing_examples))
-    idx = 1
-    for example in foreground_testing_examples
-        bias =
-            evaluate(bm.right_seqbias, example.right_seq)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    for example in background_testing_examples
-        bias =
-            evaluate(bm.right_seqbias, example.right_seq)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    bs .-= median(bs)
-
-    for i in 1:length(foreground_testing_examples)
-        acc += bs[i] .> 0.0
-    end
-
-    for i in 1:length(background_testing_examples)
-        acc += bs[length(foreground_testing_examples) + i] .<= 0.0
-    end
-
-    return acc / (length(foreground_testing_examples) + length(background_testing_examples))
-end
-
-
-function accuracy3(
-        bm::BiasModel, foreground_testing_examples, background_testing_examples)
-    acc = 0
-
-    bs = Vector{Float64}(length(foreground_testing_examples) + length(background_testing_examples))
-    idx = 1
-    for example in foreground_testing_examples
-        bias =
-            evaluate(bm.gc_model, example.frag_gc)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    for example in background_testing_examples
-        bias =
-            evaluate(bm.gc_model, example.frag_gc)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    bs .-= median(bs)
-
-    for i in 1:length(foreground_testing_examples)
-        acc += bs[i] .> 0.0
-    end
-
-    for i in 1:length(background_testing_examples)
-        acc += bs[length(foreground_testing_examples) + i] .<= 0.0
-    end
-
-    return acc / (length(foreground_testing_examples) + length(background_testing_examples))
-end
-
-
-function accuracy4(
-        bm::BiasModel, foreground_testing_examples, background_testing_examples)
-    acc = 0
-
-    bs = Vector{Float64}(length(foreground_testing_examples) + length(background_testing_examples))
-    idx = 1
-    for example in foreground_testing_examples
-        bias =
-            evaluate(bm.pos_model, example.tlen, example.fpdist, classification=true)
-        bs[idx] = bias
-        idx += 1
-    end
-
-    for example in background_testing_examples
-        bias =
             evaluate(bm.pos_model, example.tlen, example.fpdist, classification=true)
         bs[idx] = bias
         idx += 1

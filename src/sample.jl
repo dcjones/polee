@@ -264,8 +264,6 @@ function RNASeqSample(fm::FragModel,
     # TODO: this is allocated larger than it needs to be. Use a dict?
     aln_idx_map = zeros(UInt32, length(rs.alignments))
     nextidx = 1
-    # for alnpr in rs.alignment_pairs
-    # for alnpr in rs.alignment_pairs
     for tree in values(rs.alignment_pairs.trees)
         for alnpr in tree
             if alnpr.metadata.mate1_idx > 0
@@ -292,8 +290,6 @@ function RNASeqSample(fm::FragModel,
     Threads.@threads for t in ts_arr
         effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
-
-    @show quantile(effective_lengths, [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0])
 
     println("intersecting reads and transcripts...")
 

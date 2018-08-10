@@ -108,6 +108,8 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         # self.x = tf.Print(self.x, [tf.reduce_sum(tf.exp(self.x), axis=1)], "x scale")
         x = tf.nn.softmax(self.x)
 
+        # x= tf.Print(x, [1e6 * x[1 - 1, 199451 - 1]], "x: ")
+
         # optional LogNormal regularization essentially encodes the assumption
         # that most transcripts are not expressed.
         # these prior values are just sort of rules of thumb that seem to do ok

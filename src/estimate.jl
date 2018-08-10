@@ -225,18 +225,19 @@ end
 
 
 function RNASeqApproxLikelihood(
-        loaded_samples::LoadedSamples, x; informative_prior::Bool=true)
+        loaded_samples::LoadedSamples, x)
     invhsb_params = [
         loaded_samples.variables[:left_index],
         loaded_samples.variables[:right_index],
         loaded_samples.variables[:leaf_index]
     ]
 
+    @show INFORMATIVE_PRIOR
     return polee_py.RNASeqApproxLikelihood(
             x=x,
             efflens=loaded_samples.variables[:efflen],
             la_params=loaded_samples.variables[:la_param],
-            informative_prior=informative_prior,
+            informative_prior=INFORMATIVE_PRIOR,
             invhsb_params=invhsb_params,
             value=Float32[])
 end

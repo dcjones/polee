@@ -80,6 +80,11 @@ function BiasTrainingExample(tseq, tpos, fl)
 end
 
 
+function randdna()
+    return DNA(1 << rand(0:3))
+end
+
+
 """
 Essentially do tseq[first:last], but pad the sequence with Ns when first:last
 is out of bounds.
@@ -91,7 +96,8 @@ function extract_padded_seq(tseq, first, last)
     if leftpad == 0 && rightpad == 0
         return fragseq
     else
-        return vcat(fill(DNA_N, leftpad), fragseq, fill(DNA_N, rightpad))
+        # return vcat(fill(DNA_N, leftpad), fragseq, fill(DNA_N, rightpad))
+        return vcat([randdna() for _ in 1:leftpad], fragseq, [randdna() for _ in 1:rightpad])
     end
 end
 
@@ -148,7 +154,7 @@ function push_alignment_context!(
 end
 
 
-struct SeqBiasModel
+struct SeqBiasModel{SIDE}
     orders::Vector{Int}
     ps::Array{Float32, 3}
 end
@@ -170,8 +176,8 @@ end
 const nt2bit = UInt8[
     0,                   # A
     1, 0,                # C
-    2, 0, 0, 0,          # C
-    3, 0, 0, 0, 0, 0, 0, # G
+    2, 0, 0, 0,          # G
+    3, 0, 0, 0, 0, 0, 0, # T
     0 ]                  # N
 
 # update position j in the markov chain parameters ps
@@ -257,10 +263,10 @@ function SeqBiasModel(
         foreground_testing_examples::Vector{BiasTrainingExample},
         background_testing_examples::Vector{BiasTrainingExample},
         weights::Vector{Float32},
-        fragend::Symbol)
+        side::Symbol)
 
-    @assert fragend == :left || fragend == :right
-    maxorder = 6
+    @assert side == :left || side == :right
+    maxorder = 0
     maxorder_size = 4^maxorder
     k = length(foreground_training_examples[1].left_seq)
 
@@ -279,7 +285,7 @@ function SeqBiasModel(
              (seq_test,  ys_test,                                     0,  true, foreground_testing_examples),
              (seq_test,  ys_test,  length(foreground_testing_examples), false, background_testing_examples)]
         for (i, example) in enumerate(examples)
-            seq = fragend == :left ? example.left_seq : example.right_seq
+            seq = side == :left ? example.left_seq : example.right_seq
             for j in 1:k
                 c = nt2bit[Int(seq[j])]
                 seqarr[offset + i, j] = c
@@ -287,6 +293,40 @@ function SeqBiasModel(
             end
         end
     end
+
+
+    # diagnostics
+    # if side == :left
+    #     freqs_fg = zeros(Float64, (k, 4))
+    #     freqs_bg = zeros(Float64, (k, 4))
+
+    #     for i in 1:size(seq_train, 1), j in 1:size(seq_train, 2)
+    #         if ys_train[i]
+    #             freqs_fg[j, seq_train[i, j] + 1] += 1
+    #         else
+    #             freqs_bg[j, seq_train[i, j] + 1] += 1
+    #         end
+    #     end
+
+    #     freqs_fg ./= sum(freqs_fg, 2)
+    #     freqs_bg ./= sum(freqs_bg, 2)
+
+    #     open("seqarr-foreground.csv", "w") do output
+    #         println(output, "pos,nt,freq")
+    #         for i in 1:size(freqs_fg, 1), j in 1:size(freqs_fg, 2)
+    #             println(output, i, ",", j, ",", freqs_fg[i, j])
+    #         end
+    #     end
+
+    #     open("seqarr-background.csv", "w") do output
+    #         println(output, "pos,nt,freq")
+    #         for i in 1:size(freqs_bg, 1), j in 1:size(freqs_bg, 2)
+    #             println(output, i, ",", j, ",", freqs_bg[i, j])
+    #         end
+    #     end
+
+    #     exit()
+    # end
 
     # assuming this is 0.5
     # prior = length(foreground_training_examples) /
@@ -352,7 +392,9 @@ function SeqBiasModel(
         end
     end
 
-    return SeqBiasModel(orders, ps[:,2,:,:] ./ ps[:,1,:,:])
+    @show orders
+
+    return SeqBiasModel{side}(orders, ps[:,2,:,:] ./ ps[:,1,:,:])
 end
 
 
@@ -360,7 +402,7 @@ function evaluate(sb::SeqBiasModel, seq)
     @assert length(seq) == length(sb.orders)
     bias = 1.0f0
     @inbounds for i in 1:length(seq)
-        if sb.orders[i] > 0
+        if sb.orders[i] >= 0
             c = nt2bit[Int(seq[i])]
             ctx = 0
             for l in 1:sb.orders[i]
@@ -373,15 +415,37 @@ function evaluate(sb::SeqBiasModel, seq)
 end
 
 
-function evaluate(sb::SeqBiasModel, seq, pos)
+function evaluate(sb::SeqBiasModel{:left}, seq, pos)
     bias = 1.0f0
     seqlen = length(seq)
     @inbounds for (i, j) in enumerate(pos-BIAS_SEQ_OUTER_CTX:pos+BIAS_SEQ_INNER_CTX-1)
-        if sb.orders[i] > 0
-            c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : DNA_N)]
+        if sb.orders[i] >= 0
+            # c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : DNA_N)]
+            c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : randdna())]
             ctx = 0
             for l in 1:sb.orders[i]
-                ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)]
+                # ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)]
+                ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : randdna())]
+            end
+            bias *= sb.ps[i, c+1, ctx+1]
+        end
+    end
+
+    return bias
+end
+
+
+function evaluate(sb::SeqBiasModel{:right}, seq, pos)
+    bias = 1.0f0
+    seqlen = length(seq)
+    @inbounds for (i, j) in enumerate(pos-BIAS_SEQ_INNER_CTX+1:pos+BIAS_SEQ_OUTER_CTX)
+        if sb.orders[i] >= 0
+            # c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : DNA_N)]
+            c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : randdna())]
+            ctx = 0
+            for l in 1:sb.orders[i]
+                # ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)]
+                ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : randdna())]
             end
             bias *= sb.ps[i, c+1, ctx+1]
         end
@@ -484,6 +548,8 @@ function fit_pos_bias(tlens, fpdists, flens, maxtlen, efflens, fraglen_pmf)
         for k in 1:maxtlen-1
             logprob_terms[k+1] = (1/efflens[k]) * p * (1-p)^k
             logprob_grad_terms[k+1] = - (1/efflens[k]) * (1 - p)^(k-1) * (k*p + p - 1)
+            # logprob_terms[k+1] = (1/k) * p * (1-p)^k
+            # logprob_grad_terms[k+1] = - (1/k) * (1 - p)^(k-1) * (k*p + p - 1)
         end
         cumsum!(logprob_terms, logprob_terms)
         cumsum!(logprob_grad_terms, logprob_grad_terms)
@@ -493,10 +559,12 @@ function fit_pos_bias(tlens, fpdists, flens, maxtlen, efflens, fraglen_pmf)
         for (fpdist, tlen) in zip(fpdists, tlens)
             term = logprob_terms[tlen] - logprob_terms[fpdist]
             prob = term + (1/efflens[tlen]) * (1-p)^tlen
+            # prob = term + (1/tlen) * (1-p)^tlen
             lp += log(prob)
 
             term_grad = logprob_grad_terms[tlen] - logprob_grad_terms[fpdist]
             prob_grad = term_grad - (1/efflens[tlen]) * tlen * (1-p)^(tlen - 1)
+            # prob_grad = term_grad - (1/tlen) * tlen * (1-p)^(tlen - 1)
             lp_grad += (1/prob) * prob_grad
         end
 
@@ -592,8 +660,8 @@ end
 
 
 struct BiasModel
-    left_seqbias::SeqBiasModel
-    right_seqbias::SeqBiasModel
+    left_seqbias::SeqBiasModel{:left}
+    right_seqbias::SeqBiasModel{:right}
     gc_model::SimpleHistogramModel
     pos_model::PositionalBiasModel
 end

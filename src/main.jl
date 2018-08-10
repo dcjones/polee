@@ -1,3 +1,5 @@
+srand(3924)
+
 
 function print_usage()
     println("Usage: polee <command>\n")
@@ -345,6 +347,8 @@ function main()
                 default = "csv"
             "--exclude-transcripts"
                 required = false
+            "--flat-prior"
+                action = :store_true
             "--credible-lower"
                 default = 0.025
                 arg_type = Float64
@@ -414,6 +418,11 @@ function main()
 
         ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
+
+        if parsed_args["flat-prior"]
+            global INFORMATIVE_PRIOR
+            INFORMATIVE_PRIOR = false
+        end
 
         max_num_samples =  get(parsed_args, "max-num-samples", nothing)
         loaded_samples = load_samples_from_specification(

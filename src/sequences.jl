@@ -14,6 +14,7 @@ function read_transcript_sequences_from_fasta!(ts, filename)
     entry = eltype(reader)()
 
     i = 0
+    seen_seqs = Set{String}()
     while !isnull(tryread!(reader, entry))
         seqname = FASTA.identifier(entry)
         if length(entry.sequence) > 100000
@@ -21,6 +22,7 @@ function read_transcript_sequences_from_fasta!(ts, filename)
         end
 
         if haskey(ts.trees, seqname)
+            push!(seen_seqs, seqname)
             entryseq = FASTA.sequence(entry)
             for t in ts.trees[seqname]
                 seq = DNASequence()
@@ -37,6 +39,13 @@ function read_transcript_sequences_from_fasta!(ts, filename)
             end
         end
     end
+
+    for seqname in keys(ts.trees)
+        if seqname ∉ seen_seqs
+            warn("FASTA file has sequence for ", seqname)
+        end
+    end
+
     finish!(prog)
 end
 

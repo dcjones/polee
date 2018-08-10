@@ -215,6 +215,7 @@ function BiasedFragModel(
 
         # perturb fragment position and record context as a background sample
         tpos = rand(1:length(tseq)-fl+1)
+        # tpos = min(max(1, tpos + rand(-20:20)), length(tseq)-fl+1)
         push!(bias_background_examples, BiasTrainingExample(tseq, tpos, fl))
     end
 

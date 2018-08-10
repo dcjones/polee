@@ -2,6 +2,11 @@
 # various parameters than are generally fixed
 
 
+# Whether to use a prior that encodes the assumption that most transcripts have
+# low expression. Set to false by the right command line option.
+const INFORMATIVE_PRIOR = true
+
+
 # Increment this whenever we introduce a non-backward compatible change to
 # the approximated likelihood function or its serialization format.
 const PREPARED_SAMPLE_FORMAT_VERSION = 1
@@ -28,11 +33,11 @@ const MIN_FRAG_LEN_COUNT = 1000
 
 # Effective lengths are set to max(ef, MIN_EFFECTIVE_LENGTH). Very small
 # effective lengths can give very high and probably erroneous expression estimates.
-const MIN_EFFECTIVE_LENGTH = 10.0f0
+const MIN_EFFECTIVE_LENGTH = 1.0f0
 
 # Fragment is considered incompatible with a transcript if it has a conditional
 # probability less than this.
-const MIN_FRAG_PROB = 1e-10
+const MIN_FRAG_PROB = 1e-12
 
 # Epsilon used to clamp the y variable during likelihood approximation
 const LIKAP_Y_EPS = 1e-10
@@ -67,5 +72,5 @@ const BIAS_NUM_FREQ_BINS = 4
 
 # Number of fragment lengths to sum over when estimating effective length
 # (larger number is more accurate but slower)
-const BIAS_EFFLEN_NUM_FRAGLENS = 150
+const BIAS_EFFLEN_NUM_FRAGLENS = 200
 

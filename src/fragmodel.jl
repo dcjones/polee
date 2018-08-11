@@ -255,17 +255,10 @@ function BiasedFragModel(
     bias_background_examples = bias_background_examples[p]
     n_training = floor(Int, 0.8 * length(bias_foreground_examples))
 
-    bias_foreground_training_examples = bias_foreground_examples[1:n_training]
-    bias_background_training_examples = bias_background_examples[1:n_training]
-    bias_foreground_testing_examples = bias_foreground_examples[n_training+1:end]
-    bias_background_testing_examples = bias_background_examples[n_training+1:end]
-
     bias_model = BiasModel(
         ts, fraglen_pmf,
-        bias_foreground_training_examples,
-        bias_background_training_examples,
-        bias_foreground_testing_examples,
-        bias_background_testing_examples)
+        bias_foreground_examples,
+        bias_background_examples)
 
     # if dump_bias_training_examples
         open("bias-foreground.csv", "w") do output

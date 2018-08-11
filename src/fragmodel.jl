@@ -208,7 +208,7 @@ function BiasedFragModel(
         end
 
         # record the fragment length only if it was observed and not guessed
-        if alnpr.metadata.mate1_idx != 0 && alnpr.metadata.mate1_idx != 0
+        if alnpr.metadata.mate1_idx != 0 && alnpr.metadata.mate2_idx != 0
             push!(fraglens, fl)
         end
         push!(bias_foreground_examples, BiasTrainingExample(tseq, tpos, fl))
@@ -242,6 +242,13 @@ function BiasedFragModel(
             end
         end
         fraglen_pmf ./= sum(fraglen_pmf)
+    end
+
+    open("fraglen_pmf.csv", "w") do output
+        println(output, "fraglen,pr")
+        for (fraglen, pr) in enumerate(fraglen_pmf)
+            println(output, fraglen, ",", pr)
+        end
     end
 
     fraglen_cdf = copy(fraglen_pmf)

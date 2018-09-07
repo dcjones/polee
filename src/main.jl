@@ -451,6 +451,19 @@ function main()
         # TODO: figure out what to do with `output`
 
         return
+
+    elseif subcmd == "optimize"
+        @add_arg_table arg_settings begin
+            "--output", "-o"
+                default = "transcript-expression-estimates.csv"
+            "likelihood_matrix"
+                required = true
+        end
+        parsed_args = parse_args(subcmd_args, arg_settings)
+        expectation_maximization(
+            parsed_args["likelihood_matrix"], parsed_args["output"])
+        return
+
     elseif subcmd == "sample"
         @add_arg_table arg_settings begin
             "--output", "-o"

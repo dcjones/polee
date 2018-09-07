@@ -43,7 +43,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     for (t, alnpr) in eachoverlap(ts, examples)
         fraglen = fragmentlength(t, rs, alnpr)
 
-        if !isnull(fraglen)
+        if isnull(fraglen)
             continue
         end
 

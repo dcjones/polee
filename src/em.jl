@@ -11,10 +11,10 @@ function expectation_maximization(input_filename, output_filename)
 
     # X = convert(SparseMatrixCSC{Float32}, sample.X)
     X = sparse(Is, Js, Vs)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
 
     # transcript read count expectations
-    cs = Array{Float32}(n)
+    cs = Array{Float32}(undef, n)
 
     # transcript mixture
     ys = zeros(Float32, n)
@@ -29,8 +29,8 @@ function expectation_maximization(input_filename, output_filename)
     ws = zeros(Float64, wlen)
     fill!(ws, 0.0f0)
 
-    frag_probs = Vector{Float32}(m)
-    log_frag_probs = Vector{Float32}(m)
+    frag_probs = Vector{Float32}(undef, m)
+    log_frag_probs = Vector{Float32}(undef, m)
 
     pAt_mul_B!(frag_probs, Xt, ys)
     log!(log_frag_probs, frag_probs, m)
@@ -39,7 +39,7 @@ function expectation_maximization(input_filename, output_filename)
     ϵ = 1e-6
 
     while true
-        copy!(ys0, ys)
+        copyto!(ys0, ys)
         lp0 = lp
 
         # assign reads

@@ -18,6 +18,7 @@ using Pkg
 tfutil.reveal_undocumented("edward.util.graphs")
 @pyimport edward.util.graphs as edgraphs
 
+build_tensorflow_ext_if_needed()
 pushfirst!(PyVector(pyimport("sys")["path"]), dirname(pathof(Polee)))
 @pyimport polee as polee_py
 
@@ -70,8 +71,6 @@ function build_tensorflow_ext_if_needed()
     end
 end
 
-build_tensorflow_ext_if_needed()
-
 
 using ArgParse
 using GenomicFeatures
@@ -89,11 +88,11 @@ import SHA
 import YAML
 
 using Base64: base64encode
-using SparseArrays: sparse, SparseMatrixCSC
+using SparseArrays: findnz, sparse, SparseMatrixCSC
 using Printf: @printf, @sprintf
 using Random
-using Profile
-using InteractiveUtils
+# using Profile
+# using InteractiveUtils
 
 
 function tryread!(reader, entry)

@@ -57,8 +57,8 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
     V = Float32[]
 
     mut = Threads.Mutex()
-    # Threads.@threads for treepair_idx in 1:length(treepairs)
-    for treepair_idx in 1:length(treepairs)
+    Threads.@threads for treepair_idx in 1:length(treepairs)
+    # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,

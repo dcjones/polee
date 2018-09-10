@@ -43,7 +43,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     for (t, alnpr) in eachoverlap(ts, examples)
         fraglen = fragmentlength(t, rs, alnpr)
 
-        if isnull(fraglen)
+        if fraglen === nothing
             continue
         end
 
@@ -53,13 +53,12 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
             strand_mismatch_count += 1
         end
 
-        if !isnull(fraglen) && get(fraglen) > 0
+        if fraglen > 0
             h = hash(alnpr)
-            fl = get(fraglen)
             if haskey(alnpr_fraglen, h)
-                alnpr_fraglen[h] = min(alnpr_fraglen[h], fl)
+                alnpr_fraglen[h] = min(alnpr_fraglen[h], fraglen)
             else
-                alnpr_fraglen[h] = fl
+                alnpr_fraglen[h] = fraglen
             end
         end
     end
@@ -68,10 +67,10 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
         (strand_match_count + strand_mismatch_count)
     negentropy = strand_specificity * log2(strand_specificity) +
         (1.0 - strand_specificity) * log2(1.0 - strand_specificity)
-    println("Strand specificity: ", round(100.0 * (1 + negentropy), 1), "%")
+    println("Strand specificity: ", round(100.0 * (1 + negentropy), digits=1), "%")
 
     # compute fragment length frequencies
-    fraglen_pmf = Vector{Float32}(MAX_FRAG_LEN)
+    fraglen_pmf = Vector{Float32}(undef, MAX_FRAG_LEN)
     fraglens_count = isempty(alnpr_fraglen) ?
         0 : sum(ifelse(fl <= MAX_FRAG_LEN, 1, 0) for fl in values(alnpr_fraglen))
     if fraglens_count < MIN_FRAG_LEN_COUNT
@@ -107,11 +106,10 @@ end
 
 function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
                       alnpr::AlignmentPair, effective_length::Float32)
-    fraglen_ = fragmentlength(t, rs, alnpr)
-    if isnull(fraglen_)
+    fraglen = fragmentlength(t, rs, alnpr)
+    if fraglen === nothing
         return 0.0f0
     end
-    fraglen = get(fraglen_)
 
     # single-end read
     if fraglen <= 0
@@ -223,10 +221,10 @@ function BiasedFragModel(
         (strand_match_count + strand_mismatch_count)
     negentropy = strand_specificity * log2(strand_specificity) +
         (1.0 - strand_specificity) * log2(1.0 - strand_specificity)
-    println("Strand specificity: ", round(100.0 * (1 + negentropy), 1), "%")
+    println("Strand specificity: ", round(100.0 * (1 + negentropy), digits=1), "%")
 
     # compute fragment length frequencies
-    fraglen_pmf = Vector{Float32}(MAX_FRAG_LEN)
+    fraglen_pmf = Vector{Float32}(undef, MAX_FRAG_LEN)
     if length(fraglens) < MIN_FRAG_LEN_COUNT
         # use fallback distribution
         for fl in 1:MAX_FRAG_LEN
@@ -320,6 +318,15 @@ function compute_transcript_bias!(fm::BiasedFragModel, ts::Transcripts)
     # for t in ts_arr
         compute_transcript_bias!(fm.bias_model, t)
     end
+
+    # # codegen
+    # compute_transcript_bias!(fm.bias_model, ts_arr[1])
+
+    # @profile for t in ts_arr[1:20000]
+    #     compute_transcript_bias!(fm.bias_model, t)
+    # end
+    # Profile.print()
+    # exit()
 end
 
 
@@ -379,6 +386,10 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
     end
     frag_gc = frag_gc_count / length(fragint)
 
+    # @show fragint
+    # @show length(t.metadata.left_bias)
+    # @show length(t.metadata.right_bias)
+
     fragbias =
         t.metadata.left_bias[fragint.start] *
         t.metadata.right_bias[fragint.stop] *
@@ -387,6 +398,7 @@ function condfragprob(fm::BiasedFragModel, t::Transcript, rs::Reads,
     fragstrandpr = alnpr.strand == t.strand ?
         fm.strand_specificity : 1.0 - fm.strand_specificity
 
+    # @show (fragstrandpr, fraglenpr, fragbias, effective_length)
     fragpr = fragstrandpr * fraglenpr * fragbias / effective_length
 
     return fragpr

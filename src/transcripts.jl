@@ -1,6 +1,6 @@
 
 
-immutable Exon
+struct Exon
     first::Int64
     last::Int64
 end
@@ -21,7 +21,7 @@ function Base.isless(a::Interval, b::Exon)
 end
 
 
-type TranscriptMetadata
+mutable struct TranscriptMetadata
     name::String
     id::Int
     exons::Vector{Exon}
@@ -62,7 +62,7 @@ end
 const Transcripts = IntervalCollection{TranscriptMetadata}
 
 
-type TranscriptsMetadata
+mutable struct TranscriptsMetadata
     filename::String
     gffsize::Int
     gffhash::Vector{UInt8}
@@ -217,7 +217,7 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
 end
 
 
-immutable ExonIntron
+struct ExonIntron
     first::Int
     last::Int
     isexon::Bool
@@ -233,18 +233,23 @@ end
 Iterate over exons and introns in a transcript in order Interval{Bool} where
 metadata flag is true for exons.
 """
-immutable ExonIntronIter
+struct ExonIntronIter
     t::Transcript
 end
 
 
-function Base.start(it::ExonIntronIter)
-    return 1, true
+function Base.iterate(it::ExonIntronIter)
+    return iterate(it, (1, true))
 end
 
 
-@inline function Base.next(it::ExonIntronIter, state::Tuple{Int, Bool})
+@inline function Base.iterate(it::ExonIntronIter, state::Tuple{Int, Bool})
     i, isexon = state
+
+    if state[1] == length(it.t.metadata.exons) && !state[2]
+        return nothing
+    end
+
     if isexon
         ex = it.t.metadata.exons[i]
         return ExonIntron(ex.first, ex.last, true), (i, false)
@@ -252,11 +257,6 @@ end
         return ExonIntron(it.t.metadata.exons[i].last+1,
                           it.t.metadata.exons[i+1].first-1, false), (i+1, true)
     end
-end
-
-
-@inline function Base.done(it::ExonIntronIter, state::Tuple{Int, Bool})
-    return state[1] == length(it.t.metadata.exons) && !state[2]
 end
 
 
@@ -272,30 +272,28 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
 
     # rule out obviously incompatible alignments
     if alnpr.first < t.first || alnpr.last > t.last
-        return Nullable{Int}()
+        return nothing
     end
 
     # set a1, a2 as leftmost and rightmost alignments
-    a1 = Nullable{Alignment}()
-    a2 = Nullable{Alignment}()
+    a1 = nothing
+    a2 = nothing
     if alnpr.metadata.mate1_idx > 0 && alnpr.metadata.mate2_idx > 0
         mate1 = rs.alignments[alnpr.metadata.mate1_idx]
         mate2 = rs.alignments[alnpr.metadata.mate2_idx]
         if mate1.leftpos <= mate2.leftpos
-            a1, a2 = Nullable(mate1), Nullable(mate2)
+            a1, a2 = mate1, mate2
         else
-            a1, a2 = Nullable(mate2), Nullable(mate1)
+            a1, a2 = mate2, mate1
         end
     elseif alnpr.metadata.mate1_idx > 0
-        a1 = Nullable(rs.alignments[alnpr.metadata.mate1_idx])
+        a1 = rs.alignments[alnpr.metadata.mate1_idx]
     else
-        a1 = Nullable(rs.alignments[alnpr.metadata.mate2_idx])
+        a1 = rs.alignments[alnpr.metadata.mate2_idx]
     end
 
-    c1_iter = CigarIter(rs, get(a1))
-    c1_state = start(c1_iter)
-    c1 = Nullable{CigarInterval}()
-    @next!(CigarInterval, c1, c1_iter, c1_state)
+    c1_iter = CigarIter(rs, a1)
+    c1_next = iterate(c1_iter)
 
     exons = t.metadata.exons
     first_exon_idx = searchsortedlast(exons, alnpr)
@@ -307,12 +305,12 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
     intronlen = 0
 
     # skip any leading soft clipping
-    if !isnull(c1) && get(c1).op == OP_SOFT_CLIP
-        @next!(CigarInterval, c1, c1_iter, c1_state)
+    if c1_next !== nothing && c1_next[1].op == OP_SOFT_CLIP
+        c1_next = iterate(c1_iter, c1_next[2])
     end
 
-    while e1_idx <= length(exons) && !isnull(c1)
-        c = get(c1)
+    while e1_idx <= length(exons) && c1_next !== nothing
+        c, c1_state = c1_next
 
         # case 1: e entirely precedes
         if e1_last < c.first
@@ -323,59 +321,57 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         elseif c.last >= e1_first && c.last <= e1_last && c.first >= e1_first
             if e1_isexon
                 if !is_exon_compatible(c.op)
-                    return Nullable{Int}()
+                    return nothing
                 end
             else
                 if !is_intron_compatible(c.op)
-                    return Nullable{Int}()
+                    return nothing
                 end
                 intronlen += e1_last - e1_first + 1
             end
-            @next!(CigarInterval, c1, c1_iter, c1_state)
+            c1_next = iterate(c1_iter, c1_state)
 
         # case 3: soft clipping partiallly overlapping an exon or intron
         elseif c.op == OP_SOFT_CLIP
-            @next!(CigarInterval, c1, c1_iter, c1_state)
+            c1_next = iterate(c1_iter, c1_state)
 
         # case 4: match op overhangs into an intron a little
         elseif c.last > e1_last && c.op == OP_MATCH
             if e1_isexon && c.last - e1_last <= max_allowable_encroachment
-                c1 = Nullable(CigarInterval(c.first, e1_last, c.op))
+                c1_next = CigarInterval(c.first, e1_last, c.op), c1_state
             elseif !e1_isexon && e1_last >= c.first &&
                    e1_last - c.first < max_allowable_encroachment
-                c1 = Nullable(CigarInterval(e1_last + 1, c.last, c.op))
+                c1_next = CigarInterval(e1_last + 1, c.last, c.op), c1_state
             else
-                return Nullable{Int}()
+                return nothing
             end
 
         # case 5: c precedes and partially overlaps e
         else
-            return Nullable{Int}()
+            return nothing
         end
     end
 
-    if !isnull(c1)
-        return Nullable{Int}()
+    if c1_next !== nothing
+        return nothing
     end
 
     # alignment is compatible, but single-ended
-    if isnull(a2)
-        return Nullable{Int}(0)
+    if a2 === nothing
+        return 0
     end
 
     e2_sup_e1 = false # marks with e2 > e1
 
-    c2_iter = CigarIter(rs, get(a2))
-    c2_state = start(c2_iter)
-    c2 = Nullable{CigarInterval}()
-    @next!(CigarInterval, c2, c2_iter, c2_state)
+    c2_iter = CigarIter(rs, a2)
+    c2_next = iterate(c2_iter)
 
     e2_idx = first_exon_idx
     e2_isexon = true
     e2_first, e2_last = exons[e2_idx].first, exons[e2_idx].last
 
-    while e2_idx <= length(exons) && !isnull(c2)
-        c = get(c2)
+    while e2_idx <= length(exons) && c2_next !== nothing
+        c, c2_state = c2_next
 
         # case 1: e entirely precedes c
         if e2_last < c.first
@@ -396,53 +392,52 @@ function fragmentlength(t::Transcript, rs::Reads, alnpr::AlignmentPair)
         elseif c.last >= e2_first && c.last <= e2_last && c.first >= e2_first
             if e2_isexon
                 if !is_exon_compatible(c.op)
-                    return Nullable{Int}()
+                    return nothing
                 end
             else
                 if !is_intron_compatible(c.op)
-                    return Nullable{Int}()
+                    return nothing
                 end
             end
-            @next!(CigarInterval, c2, c2_iter, c2_state)
+            c2_next = iterate(c2_iter, c2_state)
 
         # case 3: soft clipping partially overlapping an exon or intron
         elseif c.op == OP_SOFT_CLIP
-            @next!(CigarInterval, c2, c2_iter, c2_state)
+            c2_next = iterate(c2_iter, c2_state)
 
         # case 4: match op overhangs into an intron a little
         elseif c.last > e2_last && c.op == OP_MATCH
             if e2_isexon && c.last - e2_last <= max_allowable_encroachment
-                c2 = Nullable(CigarInterval(c.first, e2_last, c.op))
+                c2_next = CigarInterval(c.first, e2_last, c.op), c2_state
             elseif !e2_isexon && e2_last >= c.first &&
                 e2_last - c.first < max_allowable_encroachment
-                c2 = Nullable(CigarInterval(e2_last + 1, c.last, c.op))
+                c2_next = CigarInterval(e2_last + 1, c.last, c.op), c2_state
             else
-                return Nullable{Int}()
+                return nothing
             end
 
         # case 5: c precedes and partially overlaps e
         else
-            return Nullable{Int}()
+            return nothing
         end
     end
 
     # skip any trailing soft clipping
-    if !isnull(c2) && get(c2).op == OP_SOFT_CLIP
-        @next!(CigarInterval, c2, c2_iter, c2_state)
+    if c2_next !== nothing && c2_next[1].op == OP_SOFT_CLIP
+        c2_next = iterate(c2_iter, c2_next[2])
     end
 
-    if !isnull(c2)
-        return Nullable{Int}()
+    if c2_next !== nothing
+        return nothing
     end
 
-    a1_, a2_ = get(a1), get(a2)
-    fraglen = max(a1_.rightpos, a2_.rightpos) -
-              min(a1_.leftpos, a2_.leftpos) + 1 - intronlen
+    fraglen = max(a1.rightpos, a2.rightpos) -
+              min(a1.leftpos, a2.leftpos) + 1 - intronlen
 
     if fraglen > 0
-        return Nullable{Int}(fraglen)
+        return Int(fraglen)
     else
-        return Nullable{Int}()
+        return nothing
     end
 end
 
@@ -455,15 +450,13 @@ function genomic_to_transcriptomic(
 
     tlen = length(t.metadata.seq)
 
-    fraglen_ = fragmentlength(t, rs, alnpr)
-    if isnull(fraglen_)
+    fraglen = fragmentlength(t, rs, alnpr)
+    if fraglen === nothing
         # incompatible fragment
         return 1:0
     end
 
-    if get(fraglen_) > 0
-        fraglen = get(fraglen_)
-    else
+    if fraglen <= 0
         fraglen = fraglen_median
         if fraglen <= 0
             return 1:0
@@ -622,7 +615,7 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
     end
 
     # hold the exons transcript number along with intron flanks, if it has them.
-    const IntronFlanks = Tuple{Int, Nullable{Int}, Nullable{Int}}
+    IntronFlanks = Tuple{Int, Nullable{Int}, Nullable{Int}}
 
     exons = IntervalCollection{IntronFlanks}()
     for t in ts
@@ -643,10 +636,10 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
     # interval contains the shorter intron. First two metadata fields contain
     # the longer intron. Second two fields give the transcript numbers for those
     # using the shorter and longer introns respectively.
-    const AltAccDonMetadata = Tuple{Int, Int, Set{Int}, Set{Int}}
+    AltAccDonMetadata = Tuple{Int, Int, Set{Int}, Set{Int}}
     alt_accdon_sites = IntervalCollection{AltAccDonMetadata}()
 
-    const RetIntronMetadata = Tuple{Set{Int}, Set{Int}}
+    RetIntronMetadata = Tuple{Set{Int}, Set{Int}}
     retained_introns = IntervalCollection{RetIntronMetadata}()
 
     for (a, b) in eachoverlap(exons, exons, filter=match_strand)

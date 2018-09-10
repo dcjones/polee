@@ -15,7 +15,7 @@ function read_transcript_sequences_from_fasta!(ts, filename)
 
     i = 0
     seen_seqs = Set{String}()
-    while !isnull(tryread!(reader, entry))
+    while tryread!(reader, entry)
         seqname = FASTA.identifier(entry)
         if length(entry.sequence) > 100000
             ProgressMeter.update!(prog, position(reader.state.stream.source))
@@ -35,7 +35,7 @@ function read_transcript_sequences_from_fasta!(ts, filename)
                     reverse_complement!(seq)
                 end
 
-                t.metadata.seq = Vector{DNA}(seq)
+                t.metadata.seq = convert(Vector{DNA}, seq)
             end
         end
     end
@@ -74,7 +74,7 @@ function read_transcript_sequences_from_twobit!(ts, filename)
                 reverse_complement!(seq)
             end
 
-            t.metadata.seq = Vector{DNA}(seq)
+            t.metadata.seq = convert(Vector{DNA}, seq)
         end
     end
 end

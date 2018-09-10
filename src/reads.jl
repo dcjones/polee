@@ -151,7 +151,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     cigardata = UInt32[]
 
     # don't bother with reads from sequences with no transcripts
-    excluded_refidxs = IntSet()
+    excluded_refidxs = BitSet()
     for (refidx, seqname) in enumerate(reader.refseqnames)
         if seqname in excluded_seqs
             push!(excluded_refidxs, refidx)
@@ -193,7 +193,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
             # check if we have the same cigar string as the last alignment
             prev_identical = false
             if length(cigardata) >= cigarlen
-                c = ccall(:memcmp, Cint, (Ptr{Void}, Ptr{Void}, Csize_t),
+                c = ccall(:memcmp, Cint, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
                           pointer(cigardata, N-cigarlen+1),
                           cigarptr, 4*cigarlen)
                 prev_identical = c == 0
@@ -204,8 +204,8 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
             else
                 cigaridx = UInt32(N+1):UInt32(N+1+cigarlen-1)
                 resize!(cigardata, N + cigarlen)
-                unsafe_copy!(pointer(cigardata, N + 1),
-                             cigarptr, cigarlen)
+                unsafe_copyto!(
+                    pointer(cigardata, N + 1), cigarptr, cigarlen)
             end
         end
 
@@ -238,7 +238,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     sort!(alignments, lt=group_alignments_isless)
 
     # first partition alignments by reference sequence
-    blocks = Array{UnitRange{Int}}(0)
+    blocks = UnitRange{Int}[]
     i = 1
     while i <= length(alignments)
         j = i
@@ -251,7 +251,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
         i = j + 1
     end
 
-    trees = Array{GenomicFeatures.ICTree{AlignmentPairMetadata}}(length(blocks))
+    trees = Array{GenomicFeatures.ICTree{AlignmentPairMetadata}}(undef, length(blocks))
     alignment_pairs = make_interval_collection(alignments, reader.refseqnames, blocks, trees, cigardata)
 
     return Reads(alignments, alignment_pairs, cigardata, length(readnames))
@@ -427,7 +427,7 @@ function cigar_len(aln::Alignment)
 end
 
 
-immutable CigarInterval
+struct CigarInterval
     first::Int
     last::Int
     op::Operation
@@ -439,7 +439,7 @@ function Base.length(c::CigarInterval)
 end
 
 
-immutable CigarIter
+struct CigarIter
     rs::Reads
     aln::Alignment
 end
@@ -450,13 +450,18 @@ function Base.length(ci::CigarIter)
 end
 
 
-function Base.start(ci::CigarIter)
-    return 1, Int32(ci.aln.leftpos)
+function Base.iterate(ci::CigarIter)
+    return iterate(ci, (1, Int32(ci.aln.leftpos)))
 end
 
 
-@inline function Base.next(ci::CigarIter, state::Tuple{Int, Int32})
+@inline function Base.iterate(ci::CigarIter, state::Tuple{Int, Int32})
     i, pos = state
+
+    if i > cigar_len(ci.aln)
+        return nothing
+    end
+
     if i == 1 && length(ci.aln.cigaridx) <= 0
         return (CigarInterval(ci.aln.leftpos, ci.aln.rightpos, OP_MATCH),
                 (i + 1, Int32(ci.aln.rightpos + 1)))
@@ -468,12 +473,6 @@ end
         last = first + len - 1
         return (CigarInterval(pos, pos+len-1, op), (i + 1, Int32(pos+len)))
     end
-end
-
-
-@inline function Base.done(ci::CigarIter, state::Tuple{Int, Int32})
-    i, pos = state
-    return i > cigar_len(ci.aln)
 end
 
 

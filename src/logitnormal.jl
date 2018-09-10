@@ -5,7 +5,7 @@ logit(x) = log(x / (1 - x))
 
 
 
-function logit_normal_transform!{GRADONLY}(mu, sigma, zs, ys, ::Type{Val{GRADONLY}})
+function logit_normal_transform!(mu, sigma, zs, ys, ::Type{Val{GRADONLY}}) where {GRADONLY}
     n = length(mu)+1
     ladj = 0.0f0
     for i in 1:n-1

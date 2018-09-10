@@ -7,7 +7,7 @@
 """
 One parameter sinh/asinh transformation from zs0 -> zs
 """
-function sinh_asinh_transform!{GRADONLY}(alpha, zs0, zs, ::Type{Val{GRADONLY}})
+function sinh_asinh_transform!(alpha, zs0, zs, ::Type{Val{GRADONLY}}) where {GRADONLY}
     n = length(alpha)+1
     ladj = 0.0f0
     Threads.@threads for i in 1:n-1

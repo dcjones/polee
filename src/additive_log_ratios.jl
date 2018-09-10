@@ -1,6 +1,6 @@
 
 # additive log-ratio transformation
-type ALRTransform
+struct ALRTransform
     # index of reference element
     refidx::Int
 end
@@ -9,8 +9,8 @@ end
 Transfrom real numbers ys to simplex constrain vector xs using ALR
 transformation.
 """
-function alr_transform!{GRADONLY}(t::ALRTransform, ys::Vector, xs::Vector,
-                                  ::Type{Val{GRADONLY}})
+function alr_transform!(t::ALRTransform, ys::Vector, xs::Vector,
+                        ::Type{Val{GRADONLY}}) where {GRADONLY}
     n = length(xs)
     for i in 1:n
         if i == t.refidx
@@ -34,8 +34,8 @@ end
 """
 Transfrom simplex constrained xs to unconstrained real numbers ys.
 """
-function inverse_alr_transform!{GRADONLY}(t::ALRTransform, xs::Vector, ys::Vector,
-                                          ::Type{Val{GRADONLY}})
+function inverse_alr_transform!(t::ALRTransform, xs::Vector, ys::Vector,
+                                ::Type{Val{GRADONLY}}) where {GRADONLY}
     n = length(xs)
     for i in 1:n
         if i == t.refidx

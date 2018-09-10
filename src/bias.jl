@@ -55,10 +55,10 @@ function BiasTrainingExample(tseq, tpos, fl)
             end
         end
 
-        a_freqs[bin] ./= length(from:to)
-        c_freqs[bin] ./= length(from:to)
-        g_freqs[bin] ./= length(from:to)
-        t_freqs[bin] ./= length(from:to)
+        a_freqs[bin] /= length(from:to)
+        c_freqs[bin] /= length(from:to)
+        g_freqs[bin] /= length(from:to)
+        t_freqs[bin] /= length(from:to)
     end
     gc /= length(fragseq)
     @assert 0.0 <= gc <= 1.0
@@ -182,7 +182,7 @@ const nt2bit = UInt8[
 
 # update position j in the markov chain parameters ps
 function seqbias_update_param_estimate!(ps, seq_train, ys_train, j, order, weights)
-    ps[j,1:end,1:end,1:end] = 1 # pseudocount
+    ps[j,1:end,1:end,1:end] .= 1 # pseudocount
 
     for i in 1:size(seq_train, 1) # 0.22 seconds
         ctx = 0
@@ -274,8 +274,8 @@ function SeqBiasModel(
 
     # 2bit encode every sequence
     n_train   = length(foreground_training_examples) + length(background_training_examples)
-    seq_train = Array{UInt8}((n_train, k))
-    ys_train  = Array{Bool}(n_train)
+    seq_train = Array{UInt8}(undef, (n_train, k))
+    ys_train  = Array{Bool}(undef, n_train)
 
     for (seqarr, ys, offset, y, examples) in
             [(seq_train, ys_train,                                    0,  true, foreground_training_examples),
@@ -283,7 +283,7 @@ function SeqBiasModel(
         for (i, example) in enumerate(examples)
             seq = side == :left ? example.left_seq : example.right_seq
             for j in 1:k
-                c = nt2bit[Int(seq[j])]
+                c = nt2bit[convert(Int, seq[j])]
                 seqarr[offset + i, j] = c
                 ys[offset + i] = y
             end
@@ -333,7 +333,7 @@ function SeqBiasModel(
     ps = zeros(Float32, (k, 2, 4, maxorder_size))
 
     # arrays for saving a slice of ps
-    tmp_ps = Array{Float32}((2, 4, maxorder_size))
+    tmp_ps = Array{Float32}(undef, (2, 4, maxorder_size))
 
     # probability terms, precomputed to avoid revaluating things
     seq_test_p = ones(Float32, (n_train, 2, k))
@@ -401,10 +401,10 @@ function evaluate(sb::SeqBiasModel, seq)
     bias = 1.0f0
     @inbounds for i in 1:length(seq)
         if sb.orders[i] >= 0
-            c = nt2bit[Int(seq[i])]
+            c = nt2bit[convert(Int, seq[i])]
             ctx = 0
             for l in 1:sb.orders[i]
-                ctx = (ctx << 2) | nt2bit[Int(seq[i+l])]
+                ctx = (ctx << 2) | nt2bit[convert(Int, seq[i+l])]
             end
             bias *= sb.ps[i, c+1, ctx+1]
         end
@@ -419,11 +419,11 @@ function evaluate(sb::SeqBiasModel{:left}, seq, pos)
     @inbounds for (i, j) in enumerate(pos-BIAS_SEQ_OUTER_CTX:pos+BIAS_SEQ_INNER_CTX-1)
         if sb.orders[i] >= 0
             # c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : DNA_N)]
-            c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : randdna())]
+            c = nt2bit[convert(Int, 1 <= j <= seqlen ? seq[j] : randdna())]
             ctx = 0
             for l in 1:sb.orders[i]
                 # ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)]
-                ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : randdna())]
+                ctx = (ctx << 2) | nt2bit[convert(Int, 1 <= j+l <= seqlen ? seq[j+l] : randdna())]
             end
             bias *= sb.ps[i, c+1, ctx+1]
         end
@@ -439,11 +439,11 @@ function evaluate(sb::SeqBiasModel{:right}, seq, pos)
     @inbounds for (i, j) in enumerate(pos-BIAS_SEQ_INNER_CTX+1:pos+BIAS_SEQ_OUTER_CTX)
         if sb.orders[i] >= 0
             # c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : DNA_N)]
-            c = nt2bit[Int(1 <= j <= seqlen ? seq[j] : randdna())]
+            c = nt2bit[convert(Int, 1 <= j <= seqlen ? seq[j] : randdna())]
             ctx = 0
             for l in 1:sb.orders[i]
                 # ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : DNA_N)]
-                ctx = (ctx << 2) | nt2bit[Int(1 <= j+l <= seqlen ? seq[j+l] : randdna())]
+                ctx = (ctx << 2) | nt2bit[convert(Int, 1 <= j+l <= seqlen ? seq[j+l] : randdna())]
             end
             bias *= sb.ps[i, c+1, ctx+1]
         end
@@ -471,7 +471,7 @@ function SimpleHistogramModel(
     binsize = total_weight/numbins
 
     # define bin quantiles
-    qs = Vector{Float32}(numbins-1)
+    qs = Vector{Float32}(undef, numbins-1)
     nextbin = 1
     wsum = 0.0
     for (x, w) in zip(xs, weights)
@@ -491,8 +491,8 @@ function SimpleHistogramModel(
         bincounts[y+1, i] += w
     end
 
-    bincounts_sums = sum(bincounts, 2)
-    bins = Vector{Float32}(numbins)
+    bincounts_sums = sum(bincounts, dims=2)
+    bins = Vector{Float32}(undef, numbins)
     for i in 1:numbins
         bins[i] =
             (bincounts[2, i]/bincounts_sums[2]) /
@@ -500,7 +500,7 @@ function SimpleHistogramModel(
     end
 
     # expand bins into finer grained uniformly spaced bins for faster lookup
-    expanded_bins = Vector{Float32}(100)
+    expanded_bins = Vector{Float32}(undef, 100)
     for i in 1:length(expanded_bins)
         q = (i - 0.5) / length(expanded_bins)
         j = searchsorted(qs, q).start
@@ -527,8 +527,8 @@ end
 Fit geometric 3' bias model by gradient ascent on the likelihood.
 """
 function fit_pos_bias(tlens, fpdists, flens, maxtlen, efflens, fraglen_pmf)
-    logprob_terms = Vector{Float64}(maxtlen)
-    logprob_grad_terms = Vector{Float64}(maxtlen)
+    logprob_terms = Vector{Float64}(undef, maxtlen)
+    logprob_grad_terms = Vector{Float64}(undef, maxtlen)
 
     adam_rm = 0.9
     adam_rv = 0.9
@@ -609,9 +609,9 @@ function PositionalBiasModel(
     end
 
     # copy relavent data from examples to flat arrays
-    poss_fg_train  = Vector{Int}(length(foreground_training_examples))
-    tlens_fg_train = Vector{Int}(length(foreground_training_examples))
-    flens_fg_train = Vector{Int}(length(foreground_training_examples))
+    poss_fg_train  = Vector{Int}(undef, length(foreground_training_examples))
+    tlens_fg_train = Vector{Int}(undef, length(foreground_training_examples))
+    flens_fg_train = Vector{Int}(undef, length(foreground_training_examples))
 
     for (i, example) in enumerate(foreground_training_examples)
         poss_fg_train[i]  = example.fpdist
@@ -621,7 +621,7 @@ function PositionalBiasModel(
 
     # need effective lengths to compute positional bias accounting for
     # fragment lengths
-    efflens = Vector{Float64}(maxtlen)
+    efflens = Vector{Float64}(undef, maxtlen)
     for tlen in 1:maxtlen
         efflen = 0.0
         for (flen, flen_pr) in enumerate(fraglen_pmf)
@@ -734,8 +734,8 @@ function BiasModel(
     # -----------------------
 
     # collect GC information
-    frag_gc_training = Vector{Float32}(n_training)
-    ys_training = Vector{Bool}(n_training)
+    frag_gc_training = Vector{Float32}(undef, n_training)
+    ys_training = Vector{Bool}(undef, n_training)
     for (i, example) in enumerate(bias_foreground_examples)
         frag_gc_training[i] = example.frag_gc
         ys_training[i] = true
@@ -777,7 +777,10 @@ function accuracy(
         bm::BiasModel, foreground_testing_examples, background_testing_examples)
     acc = 0
 
-    bs = Vector{Float64}(length(foreground_testing_examples) + length(background_testing_examples))
+    bs = Vector{Float64}(
+        undef,
+        length(foreground_testing_examples) +
+        length(background_testing_examples))
     idx = 1
     for example in foreground_testing_examples
         bias =

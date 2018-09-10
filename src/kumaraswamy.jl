@@ -1,6 +1,6 @@
 
 
-immutable Kumaraswamy{T<:Real}
+struct Kumaraswamy{T<:Real}
     a::T
     b::T
 end
@@ -24,9 +24,8 @@ end
 
 # Take uniform random numbers in zs, transform them to Kamaraswamy distributed values
 # in ys according to parameters as and bs. Return the log absolute determinant of the jacobian,
-function kumaraswamy_transform!{GRADONLY}(as::Vector, bs::Vector,
-                                          zs::Vector, ys::Vector,
-                                          work::Vector, ::Type{Val{GRADONLY}})
+function kumaraswamy_transform!(
+        as::Vector, bs::Vector, zs::Vector, ys::Vector, work::Vector,::Type{Val{GRADONLY}}) where {GRADONLY}
     Threads.@threads for i in 1:length(ys)
         a = Float64(as[i])
         b = Float64(bs[i])

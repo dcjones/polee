@@ -189,34 +189,34 @@ end
 
 
 
-function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, sample::RNASeqSample,
-                                          ::Type{Val{GRADONLY}}=Val{false})
+function approximate_likelihood(::OptimizeHSBApprox, sample::RNASeqSample,
+                                ::Type{Val{GRADONLY}}=Val{false}) where {GRADONLY}
     X = sample.X
     efflens = sample.effective_lengths
 
     m, n = size(X)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
     model = Model(m, n)
 
     # cluster transcripts for hierachrical stick breaking
     t = HSBTransform(X, :sequential)
 
-    m_z = Array{Float32}(n-1)
-    v_z = Array{Float32}(n-1)
+    m_z = Array{Float32}(undef, n-1)
+    v_z = Array{Float32}(undef, n-1)
 
     ss_max_z_step = 1e-1
 
-    zs = Array{Float32}(n-1)
+    zs = Array{Float32}(undef, n-1)
 
     # logistic transformed zs values
-    ys = Array{Float64}(n-1)
+    ys = Array{Float64}(undef, n-1)
 
     # ys transformed by hierarchical stick breaking
-    xs = Array{Float32}(n)
+    xs = Array{Float32}(undef, n)
 
-    z_grad = Array{Float64}(n-1)
-    y_grad = Array{Float64}(n-1)
-    x_grad = Array{Float64}(n)
+    z_grad = Array{Float64}(undef, n-1)
+    y_grad = Array{Float64}(undef, n-1)
+    x_grad = Array{Float64}(undef, n)
 
     # initial values for y
     k = 1
@@ -290,8 +290,8 @@ function approximate_likelihood{GRADONLY}(::OptimizeHSBApprox, sample::RNASeqSam
 end
 
 
-function approximate_likelihood{GRADONLY}(::LogisticNormalApprox, X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{false})
+function approximate_likelihood(::LogisticNormalApprox, X::SparseMatrixCSC,
+                                ::Type{Val{GRADONLY}}=Val{false}) where {GRADONLY}
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -450,9 +450,9 @@ end
 
 
 
-function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
-                                          X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{true})
+function approximate_likelihood(approx::LogitNormalHSBApprox,
+                                X::SparseMatrixCSC,
+                                ::Type{Val{GRADONLY}}=Val{true}) where {GRADONLY}
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -511,7 +511,6 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
     elbo0 = 0.0
     max_elbo = -Inf # smallest elbo seen so far
 
-    tic()
     prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
@@ -574,32 +573,30 @@ function approximate_likelihood{GRADONLY}(approx::LogitNormalHSBApprox,
         next!(prog)
     end
 
-    toc()
-
     return merge(flattened_tree(t),
                  Dict{String, Vector}("mu" => mu, "omega" => omega))
 end
 
 
-function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
-                                          sample::RNASeqSample,
-                                          ::Type{Val{GRADONLY}}=Val{true})
+function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
+                                sample::RNASeqSample,
+                                ::Type{Val{GRADONLY}}=Val{true}) where {GRADONLY}
     X = sample.X
     efflens = sample.effective_lengths
 
     m, n = size(X)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
     model = Model(m, n)
 
     # gradient running mean
-    m_mu    = Array{Float32}(n-1)
-    m_omega = Array{Float32}(n-1)
-    m_alpha = Array{Float32}(n-1)
+    m_mu    = Array{Float32}(undef, n-1)
+    m_omega = Array{Float32}(undef, n-1)
+    m_alpha = Array{Float32}(undef, n-1)
 
     # gradient running variances
-    v_mu    = Array{Float32}(n-1)
-    v_omega = Array{Float32}(n-1)
-    v_alpha = Array{Float32}(n-1)
+    v_mu    = Array{Float32}(undef, n-1)
+    v_omega = Array{Float32}(undef, n-1)
+    v_alpha = Array{Float32}(undef, n-1)
 
     # step size clamp
     ss_max_mu_step    = 2e-1
@@ -610,14 +607,14 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     t = HSBTransform(X, approx.treemethod)
 
     # Unifom distributed values
-    zs0 = Array{Float32}(n-1)
-    zs  = Array{Float32}(n-1)
+    zs0 = Array{Float32}(undef, n-1)
+    zs  = Array{Float32}(undef, n-1)
 
     # zs transformed to Kumaraswamy distributed values
-    ys = Array{Float64}(n-1)
+    ys = Array{Float64}(undef, n-1)
 
     # ys transformed by hierarchical stick breaking
-    xs = Array{Float32}(n)
+    xs = Array{Float32}(undef, n)
 
     hsb_inverse_transform!(t, t.x0, ys)
     mu    = fill(0.0f0, n-1)
@@ -633,22 +630,21 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
     alpha = fill(0.0f0, n-1)
 
     # exp(omega)
-    sigma = Array{Float32}(n-1)
+    sigma = Array{Float32}(undef, n-1)
 
     # various intermediate gradients
-    mu_grad    = Array{Float32}(n-1)
-    omega_grad = Array{Float32}(n-1)
-    sigma_grad = Array{Float32}(n-1)
-    alpha_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float64}(n)
-    z_grad = Array{Float32}(n)
+    mu_grad    = Array{Float32}(undef, n-1)
+    omega_grad = Array{Float32}(undef, n-1)
+    sigma_grad = Array{Float32}(undef, n-1)
+    alpha_grad = Array{Float32}(undef, n-1)
+    y_grad = Array{Float32}(undef, n-1)
+    x_grad = Array{Float64}(undef, n)
+    z_grad = Array{Float32}(undef, n)
 
     elbo = 0.0
     elbo0 = 0.0
     max_elbo = -Inf # smallest elbo seen so far
 
-    tic()
     prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
@@ -720,16 +716,14 @@ function approximate_likelihood{GRADONLY}(approx::LogitSkewNormalHSBApprox,
         next!(prog)
     end
 
-    toc()
-
     return merge(flattened_tree(t),
                  Dict{String, Vector}("mu" => mu, "omega" => omega, "alpha" => alpha))
 end
 
 
-function approximate_likelihood{GRADONLY}(approx::KumaraswamyHSBApprox,
-                                          X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{true})
+function approximate_likelihood(approx::KumaraswamyHSBApprox,
+                                X::SparseMatrixCSC,
+                                ::Type{Val{GRADONLY}}=Val{true}) where {GRADONLY}
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -886,9 +880,9 @@ end
 
 
 
-function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
-                                          X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{false})
+function approximate_likelihood(approx::NormalILRApprox,
+                                X::SparseMatrixCSC,
+                                ::Type{Val{GRADONLY}}=Val{false}) where {GRADONLY}
     m, n = size(X)
     Xt = transpose(X)
     model = Model(m, n)
@@ -1005,9 +999,9 @@ function approximate_likelihood{GRADONLY}(approx::NormalILRApprox,
 end
 
 
-function approximate_likelihood{GRADONLY}(approx::NormalALRApprox,
-                                          X::SparseMatrixCSC,
-                                          ::Type{Val{GRADONLY}}=Val{false})
+function approximate_likelihood(approx::NormalALRApprox,
+                                X::SparseMatrixCSC,
+                                ::Type{Val{GRADONLY}}=Val{false}) where {GRADONLY}
 
     m, n = size(X)
     Xt = transpose(X)

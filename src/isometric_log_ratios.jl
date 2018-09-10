@@ -1,6 +1,6 @@
 
 # isometric log-ratio transformation
-type ILRTransform
+mutable struct ILRTransform
     # tree nodes in depth first traversal order
     nodes::Vector{HClustNode}
     xs_sum::Float64
@@ -40,8 +40,8 @@ end
 Transfrom real numbers ys to simplex constrain vector xs. (This is actually
 the inverse ilr transformation, if we follew the literature.)
 """
-function ilr_transform!{GRADONLY}(t::ILRTransform, ys::Vector, xs::Vector,
-                                  ::Type{Val{GRADONLY}})
+function ilr_transform!(t::ILRTransform, ys::Vector, xs::Vector,
+                        ::Type{Val{GRADONLY}}) where {GRADONLY}
 
     nodes = t.nodes
     nodes[1].input_value = 0.0f0
@@ -133,8 +133,8 @@ Transorm simplex constrained vector xs to unconstrained real numbers ys.
 
 This is only for testing purposes, so it doesn't compute the jacobian determinant.
 """
-function inverse_ilr_transform!{GRADONLY}(t::ILRTransform, xs::Vector, ys::Vector,
-                                          ::Type{Val{GRADONLY}})
+function inverse_ilr_transform!(t::ILRTransform, xs::Vector, ys::Vector,
+                                ::Type{Val{GRADONLY}}) where {GRADONLY}
 
     nodes = t.nodes
     k = length(ys)

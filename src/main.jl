@@ -1,4 +1,3 @@
-srand(3924)
 
 
 function print_usage()
@@ -34,7 +33,7 @@ end
 
 
 function main()
-    srand(12345678)
+    Random.seed!(12345678)
 
     if isempty(ARGS)
         print_usage()

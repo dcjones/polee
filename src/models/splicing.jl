@@ -267,7 +267,7 @@ function write_splicing_features_to_gene_db(
 
         typ = site.first == site.metadata[1] ?
             site.strand == STRAND_POS ? "alt acceptor site" : "alt donor site" :
-            site.strand == STRAND_POS ? "alt donor site": "alt acceptor site"
+            site.strand == STRAND_POS ? "alt donor site" : "alt acceptor site"
 
         SQLite.bind!(ins_stmt, 1, idx)
         SQLite.bind!(ins_stmt, 2, typ)

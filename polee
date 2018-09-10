@@ -32,4 +32,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-julia --depwarn=no -e 'import Polee; Polee.main()' ${unused_args[@]}
+# TODO: how can I determine this path?
+polee_dir="/home/dcjones/prj/Polee/"
+julia -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" ${unused_args[@]}

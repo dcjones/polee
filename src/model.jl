@@ -1,5 +1,5 @@
 
-type Model
+struct Model
     m::Int # number of fragments
     n::Int # number of transcripts
 
@@ -13,19 +13,19 @@ end
 
 function Model(m, n)
     return Model(Int(m), Int(n),
-                 Vector{Float32}(m),
-                 Vector{Float32}(m))
+                 zeros(Float32, m),
+                 zeros(Float32, m))
 end
 
 
-function log!{T}(ys::Vector{T}, xs::Vector{T}, m)
+function log!(ys::Vector{T}, xs::Vector{T}, m) where {T}
     Threads.@threads for i in 1:m
         ys[i] = log(xs[i])
     end
 end
 
 
-function inv!{T}(xs::Vector{T}, m)
+function inv!(xs::Vector{T}, m) where {T}
     Threads.@threads for i in 1:m
         xs[i] = one(T) / xs[i]
     end
@@ -33,8 +33,10 @@ end
 
 
 # assumes a flat prior on π
-function log_likelihood{GRADONLY}(frag_probs, log_frag_probs, X, Xt, xs, x_grad,
-                                  ::Type{Val{GRADONLY}})
+function log_likelihood(
+        frag_probs, log_frag_probs,
+        X::SparseMatrixCSC, Xt::SparseMatrixCSC, xs, x_grad,
+        ::Type{Val{GRADONLY}}) where {GRADONLY}
     m, n = size(X)
 
     # conditional fragment probabilities

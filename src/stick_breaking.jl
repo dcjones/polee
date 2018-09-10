@@ -4,7 +4,7 @@
 
 
 # Node in the completed tree
-type HClustNode
+mutable struct HClustNode
     # 0 if internal node, >1 for child nodes giving the transcript index
     j::UInt32
 
@@ -22,7 +22,7 @@ type HClustNode
 
     k::Int
 
-    function (::Type{HClustNode})(j::Integer)
+    function HClustNode(j::Integer)
         node = new(j)
         node.left_child = node
         node.right_child = node
@@ -31,7 +31,7 @@ type HClustNode
         return node
     end
 
-    function (::Type{HClustNode})(j::Integer, left_child::HClustNode,
+    function HClustNode(j::Integer, left_child::HClustNode,
                                   right_child::HClustNode)
         node = new(j, left_child, right_child)
         node.parent = node
@@ -157,7 +157,6 @@ end
 
 function hclust(X::SparseMatrixCSC)
     println("Clustering transcripts")
-    tic()
 
     m, n = size(X)
 
@@ -167,7 +166,7 @@ function hclust(X::SparseMatrixCSC)
 
     # order nodes by median compatible read index to group transcripts that
     # tend to share a lot of reads
-    medreadidx = Array{UInt32}(n)
+    medreadidx = Array{UInt32}(undef, n)
     for j in 1:n
         if X.colptr[j] == X.colptr[j+1]
             medreadidx[j] = 0
@@ -264,8 +263,6 @@ function hclust(X::SparseMatrixCSC)
         push!(deleted_nodes, e.j1)
         push!(deleted_nodes, e.j2)
     end
-
-    toc()
 
     root = nodes[next_node_idx-1]
     return root
@@ -373,7 +370,7 @@ end
 
 
 # rebuild tree from serialization
-function HSBTransform{T<:Integer}(parent_idxs::Vector{T}, js::Vector{T})
+function HSBTransform(parent_idxs::Vector{T}, js::Vector{T}) where {T<:Integer}
     n = div(length(js) + 1, 2)
     return HSBTransform(deserialize_tree(parent_idxs, js), fill(1.0f0/n, n))
 end
@@ -414,8 +411,8 @@ end
 
 
 function flattened_tree(nodes::Vector{HClustNode})
-    node_parent_idxs = Array{Int32}(length(nodes))
-    node_js          = Array{Int32}(length(nodes))
+    node_parent_idxs = Array{Int32}(undef, length(nodes))
+    node_js          = Array{Int32}(undef, length(nodes))
     for i in 1:length(nodes)
         node = nodes[i]
         node_parent_idxs[i] = node.parent_idx
@@ -474,8 +471,8 @@ function rand_hsb_tree(n)
 end
 
 
-function hsb_transform!{GRADONLY}(t::HSBTransform, ys::Vector, xs::Vector,
-                                  ::Type{Val{GRADONLY}})
+function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector,
+                        ::Type{Val{GRADONLY}}) where {GRADONLY}
     nodes = t.nodes
     nodes[1].input_value = 1.0f0
     k = 1 # internal node count

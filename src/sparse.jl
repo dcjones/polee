@@ -3,7 +3,7 @@
 """
 Multithreaded version of At_mul_B!
 """
-function pAt_mul_B!{S,T,I}(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector)
+function pAt_mul_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector) where {S,T,I}
     colptr = A.colptr
     rowval = A.rowval
     nzval = A.nzval
@@ -22,7 +22,7 @@ end
 
 
 # multiply by 1./x instead of x
-function pAt_mulinv_B!{S,T,I}(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector)
+function pAt_mulinv_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector) where {S,T,I}
     colptr = A.colptr
     rowval = A.rowval
     nzval = A.nzval

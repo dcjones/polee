@@ -1,5 +1,5 @@
 
-type RNASeqSample
+mutable struct RNASeqSample
     m::Int
     n::Int
     X::SparseMatrixCSC{Float32, UInt32}
@@ -32,7 +32,7 @@ function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
     # join matching trees from ts and rs
     T = Tuple{GenomicFeatures.ICTree{TranscriptMetadata},
               GenomicFeatures.ICTree{AlignmentPairMetadata}}
-    treepairs = Array{T}(0)
+    treepairs = T[]
     for (seqname, ts_tree) in ts.trees
         if haskey(rs.alignment_pairs.trees, seqname)
             push!(treepairs, (ts_tree, rs.alignment_pairs.trees[seqname]))
@@ -57,8 +57,8 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
     V = Float32[]
 
     mut = Threads.Mutex()
-    Threads.@threads for treepair_idx in 1:length(treepairs)
-    # for treepair_idx in 1:length(treepairs)
+    # Threads.@threads for treepair_idx in 1:length(treepairs)
+    for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
@@ -86,7 +86,7 @@ end
 # -Inf log likelihood
 function compact_indexes!(I, aln_idx_rev_map::Vector{UInt32})
     if isempty(I)
-        warn("No compatible reads found.")
+        @warn "No compatible reads found."
     else
         numrows = 1
         last_i = I[1]
@@ -209,7 +209,7 @@ function RNASeqSample(ts::Transcripts,
 
         # assign reads to transcripts
         xs_train = optimize_likelihood(sample_train)
-        Xt = transpose(sample_train.X)
+        Xt = SparseMatrixCSC(transpose(sample_train.X))
 
         # map read index to a transcript index
         read_assignments = Dict{Int, Int}()
@@ -285,7 +285,7 @@ function RNASeqSample(fm::FragModel,
     compute_transcript_bias!(fm, ts)
 
     println("computing effective lengths")
-    effective_lengths = Vector{Float32}(length(ts))
+    effective_lengths = Vector{Float32}(undef, length(ts))
     ts_arr = collect(ts)
     Threads.@threads for t in ts_arr
         effective_lengths[t.metadata.id] = effective_length(fm, t)
@@ -326,12 +326,12 @@ function RNASeqSample(fm::FragModel,
     end
     @assert sum(aln_idx_rev_map .== 0) == 0
 
-    gc()
+    GC.gc()
     p = sortperm(I)
     I = I[p]
     J = J[p]
     V = V[p]
-    gc()
+    GC.gc()
 
     aln_idx_rev_map = compact_indexes!(I, aln_idx_rev_map)
     if !isnull(aln_idx_rev_map_ref)

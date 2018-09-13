@@ -197,10 +197,9 @@ function load_samples_hdf5(
     init_feed_dict = Dict{Any, Any}()
     for (name, val) in zip(var_names, var_values)
         typ = eltype(val) == Float32 ? tf[:float32] : tf[:int32]
-        var_init = tf[:placeholder](typ, shape=size(val))
-        var      = tf[:Variable](var_init)
+        var = tf[:placeholder](typ, shape=size(val))
         variables[name] = var
-        init_feed_dict[var_init] = val
+        init_feed_dict[var] = val
     end
 
     return LoadedSamples(

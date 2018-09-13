@@ -655,11 +655,16 @@ function evaluate(posmodel::PositionalBiasModel, tlen, pos; classification::Bool
 end
 
 
+function evaluate(::Nothing, tlen, pos; classification::Bool=false)
+    return 1.0f0
+end
+
+
 struct BiasModel
     left_seqbias::SeqBiasModel{:left}
     right_seqbias::SeqBiasModel{:right}
     gc_model::SimpleHistogramModel
-    pos_model::PositionalBiasModel
+    pos_model::Union{Nothing, PositionalBiasModel}
 end
 
 
@@ -669,7 +674,8 @@ Train ensemble bias model.
 function BiasModel(
         ts::Transcripts, fraglen_pmf::Vector{Float32},
         bias_foreground_examples::Vector{BiasTrainingExample},
-        bias_background_examples::Vector{BiasTrainingExample})
+        bias_background_examples::Vector{BiasTrainingExample};
+        use_pos_bias::Bool=false)
 
     n_training =
         length(bias_foreground_examples) +
@@ -680,12 +686,15 @@ function BiasModel(
     # train positional bias model
     # ---------------------------
 
-    println("Fitting positional bias model...")
-
-    pos_model = PositionalBiasModel(
-        ts, fraglen_pmf,
-        bias_foreground_examples,
-        bias_background_examples)
+    if use_pos_bias
+        println("Fitting positional bias model...")
+        pos_model = PositionalBiasModel(
+            ts, fraglen_pmf,
+            bias_foreground_examples,
+            bias_background_examples)
+    else
+        pos_model = nothing
+    end
 
     # for (i, example) in enumerate(bias_foreground_training_examples)
     #     weights[i] = 1.0 - logistic(log(evaluate(

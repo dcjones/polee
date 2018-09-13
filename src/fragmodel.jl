@@ -159,7 +159,8 @@ end
 
 function BiasedFragModel(
     rs::Reads, ts::Transcripts, read_assignments::Dict{Int, Int},
-    dump_bias_training_examples::Bool)
+    dump_bias_training_examples::Bool;
+    use_pos_bias::Bool=false)
 
     ts_by_id = collect(Transcript, ts)
 
@@ -263,7 +264,8 @@ function BiasedFragModel(
     bias_model = BiasModel(
         ts, fraglen_pmf,
         bias_foreground_examples,
-        bias_background_examples)
+        bias_background_examples,
+        use_pos_bias=use_pos_bias)
 
     # if dump_bias_training_examples
         open("bias-foreground.csv", "w") do output

@@ -240,19 +240,21 @@ function seqbias_restore_state!(ps, tmp_ps, seq_test_p, tmp_seq_test_p, j)
 end
 
 
-function compute_seqbias_loss(n_params, seq_test_p, ys_test)
+function compute_seqbias_loss(loss_work, n_params, seq_test_p, ys_test)
     n_test, _, k = size(seq_test_p)
-    ll = 0.0
-    for i in 1:n_test
-        p_fg = 1.0
-        p_bg = 1.0
+    ll = 0.0f0
+    Threads.@threads for i in 1:n_test
+        p_fg = 1.0f0
+        p_bg = 1.0f0
         for j in 1:k
             p_fg *= seq_test_p[i, 2, j]
             p_bg *= seq_test_p[i, 1, j]
         end
         p = p_fg / (p_fg + p_bg)
-        ll += log(ifelse(ys_test[i], p, 1.0 - p))
+        lp = log(ifelse(ys_test[i], p, 1.0f0 - p))
+        loss_work[i] = lp
     end
+    ll = sum(loss_work)
 
     # bic
     loss = -(2*ll - n_params * log(n_test))
@@ -276,6 +278,7 @@ function SeqBiasModel(
     n_train   = length(foreground_training_examples) + length(background_training_examples)
     seq_train = Array{UInt8}(undef, (n_train, k))
     ys_train  = Array{Bool}(undef, n_train)
+    loss_work = Array{Float32}(undef, n_train)
 
     for (seqarr, ys, offset, y, examples) in
             [(seq_train, ys_train,                                    0,  true, foreground_training_examples),
@@ -346,7 +349,7 @@ function SeqBiasModel(
     orders = fill(-1, k)
 
     n_params = 0
-    loss0 = compute_seqbias_loss(n_params, seq_test_p, ys_train)
+    loss0 = compute_seqbias_loss(loss_work, n_params, seq_test_p, ys_train)
     while true
         best_loss = loss0
         best_j = 0
@@ -365,7 +368,7 @@ function SeqBiasModel(
                 seqbias_update_p!(
                     ps, seq_train, seq_test_p, j, orders[j]) # 0.0001 seconds
 
-                loss = compute_seqbias_loss(n_params + added_params, seq_test_p, ys_train)
+                loss = compute_seqbias_loss(loss_work, n_params + added_params, seq_test_p, ys_train)
 
                 # if accuracy > best_accuracy
                 if loss < best_loss

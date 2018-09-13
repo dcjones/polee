@@ -64,8 +64,8 @@ const SIGMA_ALPHA0 = 0.001f0
 const SIGMA_BETA0  = 0.001f0
 
 # amount of sequence up- and downstream of the fragment sequence to include.
-const BIAS_SEQ_INNER_CTX  = 20
-const BIAS_SEQ_OUTER_CTX  = 10
+const BIAS_SEQ_INNER_CTX  = 15
+const BIAS_SEQ_OUTER_CTX  = 5
 
 # Number of bins to divide sequence fragments into for counting nucleotide frequencies
 const BIAS_NUM_FREQ_BINS = 4

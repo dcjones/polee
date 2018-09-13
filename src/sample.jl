@@ -287,9 +287,12 @@ function RNASeqSample(fm::FragModel,
     println("computing effective lengths")
     effective_lengths = Vector{Float32}(undef, length(ts))
     ts_arr = collect(ts)
+
+    # 71 seconds
     Threads.@threads for t in ts_arr
         effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
+
 
     # if isa(fm, BiasedFragModel)
     #     open("effective-lengths.csv", "w") do output
@@ -314,7 +317,8 @@ function RNASeqSample(fm::FragModel,
     #     end
     # end
 
-    I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map) # 2.829 GB (53% GC)
+    # 52 seconds
+    I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
 
     # reverse index (mapping matrix index to read id)
     aln_idx_rev_map = zeros(UInt32, maximum(aln_idx_map))

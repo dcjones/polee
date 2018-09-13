@@ -340,30 +340,31 @@ function effective_length(fm::BiasedFragModel, t::Transcript)
     left_bias = t.metadata.left_bias
     right_bias = t.metadata.right_bias
 
-    for fraglen in fm.high_prob_fraglens
+    @inbounds for fraglen in fm.high_prob_fraglens
         if fraglen > tlen
             continue
         end
 
         fraglenpr = fragment_length_prob(fm, fraglen)
 
-        frag_gc_count = 0
+        gc_c = 1.0f0/fraglen
+        frag_gc_prop = 0.0f0
         for pos in 1:fraglen
             nt = tseq[pos]
-            frag_gc_count += isGC(nt)
+            frag_gc_prop += gc_c * isGC(nt)
         end
 
         c = 0f0
         for pos in 1:tlen-fraglen+1
             if pos > 1
-                frag_gc_count -= isGC(tseq[pos-1])
-                frag_gc_count += isGC(tseq[pos+fraglen-1])
+                frag_gc_prop -= gc_c * isGC(tseq[pos-1])
+                frag_gc_prop += gc_c * isGC(tseq[pos+fraglen-1])
             end
 
             c +=
                 left_bias[pos] *
                 right_bias[pos+fraglen-1] *
-                evaluate(fm.bias_model.gc_model, Float32(frag_gc_count/fraglen))
+                evaluate(fm.bias_model.gc_model, frag_gc_prop)
         end
         efflen += c * fraglenpr
     end

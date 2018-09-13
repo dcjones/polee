@@ -2,21 +2,19 @@
 
 module Polee
 
-__precompile__(false)
-
 using PyCall
 using Pkg
 
-@pyimport tensorflow as tf
-@pyimport tensorflow.contrib.distributions as tfdist
-@pyimport tensorflow.contrib.tfprof as tfprof
-@pyimport tensorflow.python.client.timeline as tftl
-@pyimport tensorflow.python.util.all_util as tfutil
-@pyimport edward as ed
-@pyimport edward.models as edmodels
-@pyimport edward.util as edutil
-tfutil.reveal_undocumented("edward.util.graphs")
-@pyimport edward.util.graphs as edgraphs
+# @pyimport tensorflow as tf
+# @pyimport tensorflow.contrib.distributions as tfdist
+# @pyimport tensorflow.contrib.tfprof as tfprof
+# @pyimport tensorflow.python.client.timeline as tftl
+# @pyimport tensorflow.python.util.all_util as tfutil
+# @pyimport edward as ed
+# @pyimport edward.models as edmodels
+# @pyimport edward.util as edutil
+# tfutil.reveal_undocumented("edward.util.graphs")
+# @pyimport edward.util.graphs as edgraphs
 
 # check if the tensorflow extension exists and bulid it if it doesn't.
 function build_tensorflow_ext_if_needed()
@@ -33,43 +31,19 @@ function build_tensorflow_ext_if_needed()
     end
 end
 
-build_tensorflow_ext_if_needed()
-pushfirst!(PyVector(pyimport("sys")["path"]), dirname(pathof(Polee)))
-@pyimport polee as polee_py
+# build_tensorflow_ext_if_needed()
+# pushfirst!(PyVector(pyimport("sys")["path"]), dirname(pathof(Polee)))
+# @pyimport polee as polee_py
 
-# TODO: Once PyCall supports overloading dot, we should use this version
-# and enable precompilation.
-# using PyCall
+const polee_py = PyNULL()
+const tf = PyNULL()
 
-# const tf       = PyNULL()
-# const tfdist   = PyNULL()
-# const tfprof   = PyNULL()
-# const tftl     = PyNULL()
-# const tfutil   = PyNULL()
-# const ed       = PyNULL()
-# const edmodels = PyNULL()
-# const edutil   = PyNULL()
-# const polee_py = PyNULL()
-
-# function __init__()
-#     println("Polee.__init__")
-
-#     copy!(tf,       pyimport("tensorflow"))
-#     copy!(tfdist,   pyimport("tensorflow.contrib.distributions"))
-#     copy!(tfprof,   pyimport("tensorflow.contrib.tfprof"))
-#     copy!(tftl,     pyimport("tensorflow.python.client.timeline"))
-#     copy!(tfutil,   pyimport("tensorflow.python.util.all_util"))
-#     copy!(ed,       pyimport("edward"))
-#     copy!(edmodels, pyimport("edward.models"))
-#     copy!(edutil,   pyimport("edward.util"))
-#     tfutil.reveal_undocumented("edward.util.graphs")
-
-#     pushfirst!(PyVector(pyimport("sys")["path"]), dirname(pathof(Polee)))
-#     copy!(polee_py, pyimport("polee"))
-
-#     build_tensorflow_ext_if_needed()
-# end
-
+function __init__()
+    build_tensorflow_ext_if_needed()
+    pushfirst!(PyVector(pyimport("sys")["path"]), dirname(pathof(Polee)))
+    copy!(polee_py, pyimport("polee"))
+    copy!(tf, pyimport("tensorflow"))
+end
 
 
 using ArgParse
@@ -87,14 +61,16 @@ import IntervalTrees
 import SHA
 import YAML
 
-using Base64: base64encode
+using Base64: base64encode, base64decode
 using SparseArrays: findnz, sparse, SparseMatrixCSC
 using Printf: @printf, @sprintf
 using Random
 # using Profile
 # using InteractiveUtils
 
-
+"""
+More convenient interface to Bio.jl read! functions.
+"""
 function tryread!(reader, entry)
     try
         read!(reader, entry)
@@ -128,19 +104,20 @@ include("isometric_log_ratios.jl")
 include("additive_log_ratios.jl")
 include("sequences.jl")
 include("evaluate.jl")
+include("models.jl")
 
-# TODO: automate including everything under models
-POLEE_MODELS = Dict{String, Function}()
-include("models/splicing.jl")
-include("models/linear-regression.jl")
-include("models/simple-linear-regression.jl")
-include("models/simple-mode.jl")
-include("models/simple-pca.jl")
-include("models/logistic-regression.jl")
-include("models/simple-logistic-regression.jl")
-include("models/quantification.jl")
-include("models/pca.jl")
-include("models/gplvm.jl")
+# TODO: need to rethink this wit the move to edward2
+# POLEE_MODELS = Dict{String, Function}()
+# include("models/splicing.jl")
+# include("models/linear-regression.jl")
+# include("models/simple-linear-regression.jl")
+# include("models/simple-mode.jl")
+# include("models/simple-pca.jl")
+# include("models/logistic-regression.jl")
+# include("models/simple-logistic-regression.jl")
+# include("models/quantification.jl")
+# include("models/pca.jl")
+# include("models/gplvm.jl")
 
 include("main.jl")
 

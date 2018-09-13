@@ -346,7 +346,7 @@ function main()
                 default = "csv"
             "--exclude-transcripts"
                 required = false
-            "--flat-prior"
+            "--informative-prior"
                 action = :store_true
             "--credible-lower"
                 default = 0.025
@@ -418,9 +418,9 @@ function main()
         ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
-        if parsed_args["flat-prior"]
+        if parsed_args["informative-prior"]
             global INFORMATIVE_PRIOR
-            INFORMATIVE_PRIOR = false
+            INFORMATIVE_PRIOR = true
         end
 
         max_num_samples =  get(parsed_args, "max-num-samples", nothing)
@@ -446,8 +446,6 @@ function main()
             credible_interval)
 
         POLEE_MODELS[parsed_args["model"]](input)
-
-        # TODO: figure out what to do with `output`
 
         return
 

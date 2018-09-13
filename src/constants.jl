@@ -4,7 +4,7 @@
 
 # Whether to use a prior that encodes the assumption that most transcripts have
 # low expression. Set to false by the right command line option.
-const INFORMATIVE_PRIOR = true
+const INFORMATIVE_PRIOR = false
 
 
 # Increment this whenever we introduce a non-backward compatible change to

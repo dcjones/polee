@@ -8,7 +8,9 @@ mutable struct LoadedSamples
     x0_values::Array{Float32, 2}
 
     # likelihood approximation base distribution parameters
-    la_param_values::Array{Float32, 3}
+    la_mu_values::Array{Float32, 2}
+    la_sigma_values::Array{Float32, 2}
+    la_alpha_values::Array{Float32, 2}
 
     # hsb parameters
     left_index::Array{Int32, 2}
@@ -17,7 +19,7 @@ mutable struct LoadedSamples
 
     # tensorflow placeholder variables and initalizations
     # variables::Dict{Symbol, PyObject}
-    variables::Dict{Symbol, Any}
+    variables::Dict{String, Any}
     init_feed_dict::Dict{Any, Any}
 
     sample_factors::Vector{Vector{String}}
@@ -96,15 +98,17 @@ function load_samples_hdf5(
     num_samples = length(filenames)
     n = length(ts)
 
-    efflen_values = Array{Float32}(num_samples, n)
-    x0_values     = Array{Float32}(num_samples, n)
+    efflen_values = Array{Float32}(undef, (num_samples, n))
+    x0_values     = Array{Float32}(undef, (num_samples, n))
 
     # likelihood approximation base distribution parameters
-    la_param_values = Array{Float32}(num_samples, 3, n-1)
+    la_mu_values    = Array{Float32}(undef, (num_samples, n-1))
+    la_sigma_values = Array{Float32}(undef, (num_samples, n-1))
+    la_alpha_values = Array{Float32}(undef, (num_samples, n-1))
 
-    left_index_values  = Array{Int32}(num_samples, 2*n-1)
-    right_index_values = Array{Int32}(num_samples, 2*n-1)
-    leaf_index_values  = Array{Int32}(num_samples, 2*n-1)
+    left_index_values  = Array{Int32}(undef, (num_samples, 2*n-1))
+    right_index_values = Array{Int32}(undef, (num_samples, 2*n-1))
+    leaf_index_values  = Array{Int32}(undef, (num_samples, 2*n-1))
 
     prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
     for (i, filename) in enumerate(filenames)
@@ -136,9 +140,9 @@ function load_samples_hdf5(
         sigma = exp.(read(input["omega"]))
         alpha = read(input["alpha"])
 
-        la_param_values[i, 1, :] = mu
-        la_param_values[i, 2, :] = sigma
-        la_param_values[i, 3, :] = alpha
+        la_mu_values[i, :]    = mu
+        la_sigma_values[i, :] = sigma
+        la_alpha_values[i, :] = alpha
 
         efflen_values[i, :] = read(input["effective_lengths"])
 
@@ -156,8 +160,8 @@ function load_samples_hdf5(
 
         # find reasonable initial valuse by taking the mean of the base normal
         # distribution and transforming it
-        y0 = Array{Float64}(n-1)
-        x0 = Array{Float32}(n)
+        y0 = Array{Float64}(undef, n-1)
+        x0 = Array{Float32}(undef, n)
         for j in 1:n-1
             y0[j] = clamp(logistic(sinh(alpha[j]) + mu[j]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
         end
@@ -169,23 +173,32 @@ function load_samples_hdf5(
         next!(prog)
     end
 
-    var_names = [:la_param,
-                 :efflen,
-                 :left_index,
-                 :right_index,
-                 :leaf_index]
-    var_values = Any[la_param_values,
-                     efflen_values,
-                     left_index_values,
-                     right_index_values,
-                     leaf_index_values]
+    var_names = [
+        "efflen",
+        "la_mu",
+        "la_sigma",
+        "la_alpha",
+        "left_index",
+        "right_index",
+        "leaf_index"]
 
-    variables = Dict{Symbol, PyObject}()
+    var_values = Any[
+        efflen_values,
+        la_mu_values,
+        la_sigma_values,
+        la_alpha_values,
+        left_index_values,
+        right_index_values,
+        leaf_index_values]
+
+    # Set up tensorflow variables with placeholders to feed likelihood
+    # approximation parameters to inference.
+    variables = Dict{String, PyObject}()
     init_feed_dict = Dict{Any, Any}()
     for (name, val) in zip(var_names, var_values)
-        typ = eltype(val) == Float32 ? tf.float32 : tf.int32
-        var_init = tf.placeholder(typ, shape=size(val))
-        var      = tf.Variable(var_init)
+        typ = eltype(val) == Float32 ? tf[:float32] : tf[:int32]
+        var_init = tf[:placeholder](typ, shape=size(val))
+        var      = tf[:Variable](var_init)
         variables[name] = var
         init_feed_dict[var_init] = val
     end
@@ -193,7 +206,9 @@ function load_samples_hdf5(
     return LoadedSamples(
         efflen_values,
         x0_values,
-        la_param_values,
+        la_mu_values,
+        la_sigma_values,
+        la_alpha_values,
         left_index_values,
         right_index_values,
         leaf_index_values,

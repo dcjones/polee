@@ -3,6 +3,7 @@ using HDF5
 using PyCall
 
 using DataStructures
+using SparseArrays
 include("../stick_breaking.jl")
 
 @pyimport tensorflow as tf
@@ -11,7 +12,7 @@ include("../stick_breaking.jl")
 logit(x) = log(x) - log(1 - x)
 
 function main()
-    inverse_hsb_op_module = tf.load_op_library("./inverse_hsb_op.so")
+    inverse_hsb_op_module = tf.load_op_library("./hsb_ops.so")
 
     input = h5open(ARGS[1])
     n = read(input["n"])
@@ -38,11 +39,13 @@ function main()
     clamp!(xs, eps(Float32), 1 - eps(Float32))
     xs ./= sum(xs)
 
-    ys_true = Array{Float32}(n-1)
+    ys_true = Array{Float32}(undef, n-1)
     hsb_inverse_transform!(t, xs, ys_true)
     ys_logit_true = logit.(ys_true)
 
     sess = tf.InteractiveSession()
+    #sess = tf.Session(config=tf.ConfigProto(
+        #intra_op_parallelism_threads=4))
     ys = inverse_hsb_op_module[:inv_hsb](
         tf.expand_dims(tf.constant(xs), 0),
         tf.expand_dims(tf.constant(left_child), 0),

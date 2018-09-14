@@ -170,9 +170,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
         return lp + x_prior_lp
 
 def RNASeqApproxLikelihood(*args, **kwargs):
-    return ed.RandomVariable(
-        RNASeqApproxLikelihoodDist(*args, **kwargs),
-        value=np.zeros(0, dtype=np.float32))
+    return RNASeqApproxLikelihoodDist(*args, **kwargs)
 
 
 def rnaseq_approx_likelihood_from_vars(vars, x):

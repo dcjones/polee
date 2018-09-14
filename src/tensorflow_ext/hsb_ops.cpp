@@ -5,9 +5,12 @@
 #include "tensorflow/core/framework/shape_inference.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/util/work_sharder.h"
+#include "tensorflow/core/lib/core/blocking_counter.h"
+
 
 #include <thread>
 #include <cstdio>
+#include <functional>
 
 using namespace tensorflow;
 
@@ -63,7 +66,7 @@ class HSBOp : public OpKernel {
         std::unordered_map<size_t, std::vector<double>> us_map;
         mutex map_mutex;
 
-        auto HSBBatch = [&, context](int start_batch, int limit_batch) {
+        auto HSBBatch = [&, context](int64 start_batch, int64 limit_batch) {
             const std::thread::id thread_id = std::this_thread::get_id();
             const size_t id_hash = std::hash<std::thread::id>()(thread_id);
 
@@ -174,7 +177,7 @@ class InvHSBOp : public OpKernel {
         std::unordered_map<size_t, std::vector<double>> us_map;
         mutex map_mutex;
 
-        auto InvHSBBatch = [&, context](int start_batch, int limit_batch) {
+        auto InvHSBBatch = [&, context](int64 start_batch, int64 limit_batch) {
             // this is cribing from wals_solver_op.cc
             const std::thread::id thread_id = std::this_thread::get_id();
             const size_t id_hash = std::hash<std::thread::id>()(thread_id);

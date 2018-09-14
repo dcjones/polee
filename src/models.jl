@@ -16,8 +16,10 @@ end
 
 function estimate_transcript_expression(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
+    x0_log = log.(input.loaded_samples.x0_values)
     polee_py[:estimate_transcript_expression](
-        num_samples, n, input.loaded_samples.variables)
+        input.loaded_samples.init_feed_dict, num_samples, n,
+        input.loaded_samples.variables, x0_log)
 end
 
 

@@ -74,7 +74,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
                  left_index,
                  right_index,
                  leaf_index,
-                 informative_prior=True,
+                 informative_prior=False,
                  validate_args=False,
                  allow_nan_stats=False,
                  name="RNASeqApproxLikelihood"):
@@ -124,6 +124,9 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         # x= tf.Print(x, [1e6 * x[1 - 1, 199451 - 1]], "x: ")
 
+        # TODO: This is probably not a good idea. It tends to make solutions
+        # pretty unstable (introduces a lot of locat maxima that are hard to
+        # escape, I suspect)
         # optional LogNormal regularization essentially encodes the assumption
         # that most transcripts are not expressed.
         # these prior values are just sort of rules of thumb that seem to do ok

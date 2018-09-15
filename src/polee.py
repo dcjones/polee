@@ -9,7 +9,7 @@ import tensorflow_probability as tfp
 from tensorflow_probability import edward2 as ed
 
 # models
-from polee_models_quantification import *
+from polee_transcript_expression import *
 
 
 

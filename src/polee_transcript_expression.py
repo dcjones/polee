@@ -4,13 +4,12 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import edward2 as ed
 from polee_approx_likelihood import *
-from functools import partial
+from polee_training import *
 
 
+# TODO: other constants
 SIGMA_ALPHA0 = 0.001
 SIGMA_BETA0  = 0.001
-
-
 
 
 def transcript_expression_model(num_samples, n, vars):
@@ -123,14 +122,8 @@ def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log)
 
     elbo = lp + approx_likelihood - entropy
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=2e-2)
-    train = optimizer.minimize(-elbo)
-    init = tf.global_variables_initializer()
-    with tf.Session() as sess:
-        sess.run(init, feed_dict=init_feed_dict)
-        for epoch in range(500):
-            sess.run(train)
-            print((epoch, sess.run(elbo)))
+    train(-elbo, init_feed_dict, 100, 2e-2)
 
+    # TODO: return results in some form
 
 

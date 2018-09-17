@@ -12,7 +12,7 @@ SIGMA_ALPHA0 = 0.001
 SIGMA_BETA0  = 0.001
 
 
-def transcript_expression_model(num_samples, n, vars):
+def transcript_expression_model(num_samples, n):
     # pooled mean
     x_mu_mu0    = tf.constant(np.log(1.0/n), shape=[n], dtype=tf.float32)
     x_mu_sigma0 = tf.constant(4.0, shape=[n], dtype=tf.float32)
@@ -66,7 +66,7 @@ def transcript_expression_variational_model(
 
 def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log):
     log_joint = ed.make_log_joint_fn(
-        lambda: transcript_expression_model(num_samples, n, vars))
+        lambda: transcript_expression_model(num_samples, n))
 
     qx_mu_mu_param = tf.Variable(
         np.mean(x0_log, 0),
@@ -95,6 +95,7 @@ def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log)
         name="qx_softplus_sigma_param",
         dtype=tf.float32)
 
+    # TODO: try to think of a way to simplify all this stuff
     qx_mu, qx_sigma_sq, qx = transcript_expression_variational_model(
         qx_mu_mu_param, qx_mu_softplus_sigma_param,
         qx_sigma_sq_mu_param, qx_sigma_sq_softplus_sigma_param,
@@ -116,14 +117,10 @@ def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log)
         qx_sigma_sq=qx_sigma_sq,
         qx=qx)
 
-    # TODO: is this how this should work?
-    approx_likelihood = tf.reduce_sum(
-        rnaseq_approx_likelihood_from_vars(vars, qx)._log_prob(None))
+    approx_likelihood = rnaseq_approx_likelihood_from_vars(vars, qx)
 
     elbo = lp + approx_likelihood - entropy
 
     train(-elbo, init_feed_dict, 100, 2e-2)
 
     # TODO: return results in some form
-
-

@@ -10,6 +10,7 @@ from tensorflow_probability import edward2 as ed
 
 # models
 from polee_transcript_expression import *
+from polee_transcript_mixture import *
 
 
 

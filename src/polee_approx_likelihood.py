@@ -66,7 +66,8 @@ def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
 """
 Approximated RNA-Seq likelihood.
 """
-class RNASeqApproxLikelihoodDist(distributions.Distribution):
+# class RNASeqApproxLikelihoodDist(distributions.Distribution):
+class RNASeqApproxLikelihoodDist:
     def __init__(self, x, efflens,
                  la_mu,
                  la_sigma,
@@ -96,13 +97,13 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
 
         self.informative_prior = informative_prior
 
-        super(RNASeqApproxLikelihoodDist, self).__init__(
-              dtype=self.x.dtype,
-              validate_args=validate_args,
-              allow_nan_stats=allow_nan_stats,
-              reparameterization_type=tf.contrib.distributions.FULLY_REPARAMETERIZED,
-              parameters=parameters,
-              graph_parents=[self.x,])
+        # super(RNASeqApproxLikelihoodDist, self).__init__(
+        #       dtype=self.x.dtype,
+        #       validate_args=validate_args,
+        #       allow_nan_stats=allow_nan_stats,
+        #       reparameterization_type=tf.contrib.distributions.FULLY_REPARAMETERIZED,
+        #       parameters=parameters,
+        #       graph_parents=[self.x,])
 
     def _get_event_shape(self):
         return tf.TensorShape([2, self.x.get_shape()[-1] - 1])
@@ -110,7 +111,7 @@ class RNASeqApproxLikelihoodDist(distributions.Distribution):
     def _get_batch_shape(self):
         return self.x.get_shape()[:-1]
 
-    def _log_prob(self, _):
+    def log_prob(self):
         num_samples = int(self.x.get_shape()[0])
         n           = int(self.x.get_shape()[-1])
         num_nodes   = 2*n - 1
@@ -177,7 +178,7 @@ def RNASeqApproxLikelihood(*args, **kwargs):
 
 
 def rnaseq_approx_likelihood_from_vars(vars, x):
-    return RNASeqApproxLikelihood(
+    return tf.reduce_sum(RNASeqApproxLikelihood(
         x=x,
         efflens=vars["efflen"],
         la_mu=vars["la_mu"],
@@ -185,4 +186,4 @@ def rnaseq_approx_likelihood_from_vars(vars, x):
         la_alpha=vars["la_alpha"],
         left_index=vars["left_index"],
         right_index=vars["right_index"],
-        leaf_index=vars["leaf_index"])
+        leaf_index=vars["leaf_index"]).log_prob())

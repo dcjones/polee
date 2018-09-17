@@ -27,7 +27,7 @@ def estimate_transcript_mixture(init_feed_dict, num_samples, n, vars, x0_log, nu
         tf.Variable(
             tf.zeros(num_components),
             name="qmix_probs_logit"))
-    qmix_probs = tf.Print(qmix_probs, [qmix_probs], "qmix_probs", summarize=16)
+    # qmix_probs = tf.Print(qmix_probs, [qmix_probs], "qmix_probs", summarize=16)
 
     qx = tf.Variable(x0_log, name="qx")
 
@@ -50,9 +50,11 @@ def estimate_transcript_mixture(init_feed_dict, num_samples, n, vars, x0_log, nu
         rate=tf.constant(SIGMA_BETA0, dtype=tf.float32),
         name="scale_sq_prior")
 
+    mixture_distribution=tfp.distributions.Categorical(probs=qmix_probs)
+    components_distribution=tfp.distributions.MultivariateNormalDiag(loc=qloc, scale_diag=qscale)
     mix_dist = tfp.distributions.MixtureSameFamily(
-        mixture_distribution=tfp.distributions.Categorical(probs=qmix_probs),
-        components_distribution=tfp.distributions.MultivariateNormalDiag(loc=qloc, scale_diag=qscale),
+        mixture_distribution=mixture_distribution,
+        components_distribution=components_distribution,
         name="mix")
 
     tf.summary.histogram("qloc", qloc)
@@ -68,7 +70,28 @@ def estimate_transcript_mixture(init_feed_dict, num_samples, n, vars, x0_log, nu
 
     log_posterior = log_prior + log_likelihood
 
-    train(-log_posterior, init_feed_dict, 500, 2e-2)
+    sess = tf.Session()
+
+    train(sess, -log_posterior, init_feed_dict, 500, 2e-2)
+
+    # assignment posterior probabilities
+    comp_log_probs_list = []
+    for (qmix_prob_i, qloc_i, qscale_i) in zip(
+            tf.unstack(qmix_probs), tf.unstack(tf.squeeze(qloc)), tf.unstack(tf.squeeze(qscale))):
+        component_dist = tfp.distributions.MultivariateNormalDiag(
+            loc=qloc_i, scale_diag=qscale_i)
+
+        comp_log_probs_i = component_dist.log_prob(qx) + tf.log(qmix_prob_i)
+        comp_log_probs_list.append(comp_log_probs_i)
+
+    comp_log_probs = tf.stack(comp_log_probs_list)
+    comp_probs = sess.run(tf.exp(comp_log_probs - tf.reduce_logsumexp(comp_log_probs, axis=0)))
+
+    print(comp_probs)
+
+    # )
+    # print(comp_log_probs)
+    # print(sess.run(comp_log_probs))
 
     # TODO:
     #   Now we want to assign samples to components.

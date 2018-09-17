@@ -37,7 +37,7 @@ function estimate_transcript_mixture(input::ModelInput)
     x0_log = log.(input.loaded_samples.x0_values)
 
     # TODO: how does this get passed in?
-    num_components = 16
+    num_components = 4
 
     polee_py[:estimate_transcript_mixture](
         input.loaded_samples.init_feed_dict, num_samples, n,

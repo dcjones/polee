@@ -28,7 +28,7 @@ class Progbar:
         self.curr_text = progbar
 
 
-def train(objective, init_feed_dict, n_iter, learning_rate):
+def train(sess, objective, init_feed_dict, n_iter, learning_rate):
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
     train = optimizer.minimize(objective)
     init = tf.global_variables_initializer()
@@ -37,13 +37,13 @@ def train(objective, init_feed_dict, n_iter, learning_rate):
     tf.summary.scalar("loss", objective)
     merged_summary = tf.summary.merge_all()
 
-    with tf.Session() as sess:
-        train_writer = tf.summary.FileWriter("log/" + "run-" + str(np.random.randint(1, 1000000)), sess.graph)
-        sess.run(init, feed_dict=init_feed_dict)
-        for iter in range(n_iter):
-            sess.run(train)
-            obj_value = sess.run(objective)
-            prog.update(iter, loss=obj_value)
-            train_writer.add_summary(sess.run(merged_summary), iter)
+    # with tf.Session() as sess:
+    train_writer = tf.summary.FileWriter("log/" + "run-" + str(np.random.randint(1, 1000000)), sess.graph)
+    sess.run(init, feed_dict=init_feed_dict)
+    for iter in range(n_iter):
+        sess.run(train)
+        obj_value = sess.run(objective)
+        prog.update(iter, loss=obj_value)
+        train_writer.add_summary(sess.run(merged_summary), iter)
 
 

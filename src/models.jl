@@ -39,9 +39,58 @@ function estimate_transcript_mixture(input::ModelInput)
     # TODO: how does this get passed in?
     num_components = 4
 
-    polee_py[:estimate_transcript_mixture](
+    component_probs = polee_py[:estimate_transcript_mixture](
         input.loaded_samples.init_feed_dict, num_samples, n,
         input.loaded_samples.variables, x0_log, num_components)
+
+    @show size(component_probs)
+    write_component_membership_html(input, component_probs)
+end
+
+
+function write_component_membership_html(input::ModelInput, component_probs)
+    num_components, num_samples = size(component_probs)
+    open("component_membership.html", "w") do output
+        println(output,
+            """
+            <!html>
+            <head><title>component assignment probabilities</title>
+            <style>
+            td {
+                border: 1px solid;
+            }
+            </style>
+            </head>
+            <body>
+            <table>
+            """)
+
+        println(output, "<tr>")
+        println(output, "<td></td>")
+        for i in 1:num_components
+            println(output, "<td>", i, "</td>")
+        end
+        println(output, "</tr>")
+
+        for j in 1:num_samples
+            println(output, "<tr>")
+            println(output, "<td>", input.loaded_samples.sample_names[j], "</td>")
+            for i in 1:num_components
+                if component_probs[i, j] > 0.0
+                    println(output, "<td>", component_probs[i, j], "</td>")
+                else
+                    println(output, "<td></td>")
+                end
+            end
+
+            println(output, "</tr>")
+        end
+
+        println(output,
+            """
+            </table></body>
+            """)
+    end
 end
 
 

@@ -15,6 +15,10 @@ SIGMA_BETA0  = 0.001
 def estimate_transcript_mixture(
         init_feed_dict, num_samples, n, vars, x0_log,
         num_mix_components, num_pca_components):
+
+    log_prior = 0.0
+
+    # x_bias
     x_bias_loc0 = np.log(1/n)
     x_bias_scale0 = 4.0
     x_bias_prior = tfd.Normal(
@@ -22,34 +26,90 @@ def estimate_transcript_mixture(
         scale=tf.constant(x_bias_scale0, dtype=tf.float32),
         name="x_bias")
 
-    w_prior = tfd.Normal(
-        loc=tf.constant(0.0, dtype=tf.float32),
-        scale=tf.constant(1.0, dtype=tf.float32),
-        name="w_prior")
-
-    # TODO: make this a mixture over some number of components
-    # Then we are going to run into the same difficulty as before, with
-    # MixtureSameFamily not playing nice with edward.
-    z_prior = tfd.Normal(
-        loc=tf.constant(0.0, dtype=tf.float32),
-        scale=tf.constant(1.0, dtype=tf.float32),
-        name="z")
-
     x_bias = tf.Variable(
         np.mean(x0_log, 0),
         dtype=tf.float32,
         name="x_bias")
+
+    log_prior += tf.reduce_sum(x_bias_prior.log_prob(x_bias))
+
+    # w
+    w_prior = tfd.Normal(
+        loc=tf.constant(0.0, dtype=tf.float32),
+        scale=tf.constant(1.0, dtype=tf.float32),
+        name="w_prior")
 
     w = tf.Variable(
         tf.random_normal([n, num_pca_components], stddev=0.1),
         dtype=tf.float32,
         name="w")
 
-    z = tf.Variable(
-        tf.random_normal([num_samples, num_pca_components], stddev=0.1),
-        dtype=tf.float32,
-        name="w")
+    log_prior += tf.reduce_sum(w_prior.log_prob(w))
 
+    # z_mix
+    z_mix_prior = tfd.Dirichlet(
+        concentration=tf.constant(10.0, shape=[num_mix_components]),
+        name="z_mix_prior")
+
+    z_mix = tf.Variable(
+        tf.zeros([num_mix_components]),
+        dtype=tf.float32,
+        name="z_mix")
+
+
+    # z_mix_log_prob = z_mix_prior.log_prob(tf.nn.softmax(z_mix))
+    # z_mix_log_prob = tf.Print(z_mix_log_prob, [z_mix_log_prob], "z_mix_log_prob")
+    # log_prior += tf.reduce_sum(z_mix_log_prob)
+
+    log_prior += tf.reduce_sum(z_mix_prior.log_prob(tf.nn.softmax(z_mix)))
+
+    # z_comp_loc
+    z_comp_loc_prior = tfd.Normal(
+        loc=tf.constant(0.0, dtype=tf.float32),
+        scale=tf.constant(1.0, dtype=tf.float32),
+        name="z_comp_loc_prior")
+
+    z_comp_loc = tf.Variable(
+        tf.random_normal([num_mix_components, num_pca_components], stddev=0.1),
+        name="z_comp_loc")
+
+    log_prior += tf.reduce_sum(z_comp_loc_prior.log_prob(z_comp_loc))
+
+    # z_comp_scale
+    z_comp_scale_prior = tfd.InverseGamma(
+        concentration=0.01,
+        rate=0.01,
+        name="z_comp_scale_prior")
+
+    z_comp_scale = tf.nn.softplus(tf.Variable(
+        tf.fill([num_mix_components, num_pca_components], 1.0),
+        name="z_comp_scale"))
+
+    log_prior += tf.reduce_sum(z_comp_scale_prior.log_prob(z_comp_scale))
+
+    # z
+    z_mix_dist = tfd.Categorical(
+        logits=z_mix,
+        name="z_mix_dist")
+
+    z_comp_dist = tfd.MultivariateNormalDiag(
+        loc=z_comp_loc,
+        scale_diag=z_comp_scale,
+        name="z_comp_dist")
+
+    z_prior = tfd.MixtureSameFamily(
+        mixture_distribution=z_mix_dist,
+        components_distribution=z_comp_dist,
+        name="z_prior")
+
+    z = tf.Variable(
+-       tf.random_normal([num_samples, num_pca_components], stddev=0.1),
+        dtype=tf.float32,
+        name="z")
+
+    log_prior += tf.reduce_sum(z_prior.log_prob(z))
+
+    # x
     x_pca = tf.matmul(z, w, transpose_b=True, name="x_pca")
 
     # TODO: Add some additive error here.
@@ -57,15 +117,37 @@ def estimate_transcript_mixture(
 
     log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
 
-    log_prior = \
-        tf.reduce_sum(x_bias_prior.log_prob(x_bias)) + \
-        tf.reduce_sum(w_prior.log_prob(w)) + \
-        tf.reduce_sum(z_prior.log_prob(z))
-
     log_posterior = log_likelihood + log_prior
 
     sess = tf.Session()
     train(sess, -log_posterior, init_feed_dict, 500, 2e-2)
 
+    print("z")
     print(sess.run(z))
 
+    print("z_mix")
+    print(sess.run(z_mix))
+
+    print("z_comp_loc")
+    print(sess.run(z_comp_loc))
+
+    print("z_comp_scale")
+    print(sess.run(z_comp_scale))
+
+    print("comp probs")
+
+    # compute component assignment probabilities
+    z_ = z_prior._pad_sample_dims(z)
+    log_prob_x = z_comp_dist.log_prob(z_)
+    log_mix_prob = tf.nn.log_softmax(
+          z_mix_dist.logits, axis=-1)
+    log_prob_x += log_mix_prob
+
+    component_probs = sess.run(tf.exp(
+        log_prob_x - tf.reduce_logsumexp(log_prob_x, keepdims=True, axis=1)))
+    print(component_probs)
+
+    return component_probs
+
+    # TODO: This thing falls apart when mixtures go to zero and or scale gets really small.
+    # We might try just clipping these to avoid those situations.

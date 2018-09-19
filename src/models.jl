@@ -37,7 +37,7 @@ function estimate_transcript_mixture(input::ModelInput)
     x0_log = log.(input.loaded_samples.x0_values)
 
     # TODO: how does this get passed in?
-    num_pca_components = 2
+    num_pca_components = 4
     num_mix_components = 4
 
     component_probs = polee_py[:estimate_transcript_mixture](
@@ -45,13 +45,12 @@ function estimate_transcript_mixture(input::ModelInput)
         input.loaded_samples.variables, x0_log,
         num_mix_components, num_pca_components)
 
-    # @show size(component_probs)
-    # write_component_membership_html(input, component_probs)
+    write_component_membership_html(input, component_probs)
 end
 
 
 function write_component_membership_html(input::ModelInput, component_probs)
-    num_components, num_samples = size(component_probs)
+    num_samples, num_components = size(component_probs)
     open("component_membership.html", "w") do output
         println(output,
             """
@@ -78,8 +77,8 @@ function write_component_membership_html(input::ModelInput, component_probs)
             println(output, "<tr>")
             println(output, "<td>", input.loaded_samples.sample_names[j], "</td>")
             for i in 1:num_components
-                if component_probs[i, j] > 0.0
-                    println(output, "<td>", component_probs[i, j], "</td>")
+                if component_probs[j, i] > 1e-10
+                    println(output, "<td>", component_probs[j, i], "</td>")
                 else
                     println(output, "<td></td>")
                 end

@@ -302,6 +302,7 @@ function BiasedFragModel(
             end
         end
     # end
+    # exit()
 
     fraglen_by_prob = collect(1:MAX_FRAG_LEN)[sortperm(fraglen_pmf, rev=true)]
     high_prob_fraglens = fraglen_by_prob[1:BIAS_EFFLEN_NUM_FRAGLENS]

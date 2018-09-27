@@ -341,7 +341,6 @@ function main()
     elseif subcmd == "estimate" || subcmd == "est"
         @add_arg_table arg_settings begin
             "--output", "-o"
-                default = Nullable{String}()
             "--output-format", "-F"
                 default = "csv"
             "--exclude-transcripts"
@@ -354,6 +353,13 @@ function main()
             "--credible-upper"
                 default = 0.975
                 arg_type = Float64
+            "--num-mixture-components"
+                default = 12
+                arg_type = Int
+            "--num-pca-components"
+                default = 8
+                arg_type = Int
+            "--output-pca-w"
             "--inference"
                 default = "default"
             "--max-num-samples"
@@ -443,7 +449,7 @@ function main()
         input = ModelInput(
             loaded_samples, inference, feature, ts, ts_metadata,
             parsed_args["output"], output_format, gene_db,
-            credible_interval)
+            credible_interval, parsed_args)
 
         POLEE_MODELS[parsed_args["model"]](input)
 

@@ -45,7 +45,6 @@ function __init__()
     copy!(tf, pyimport("tensorflow"))
 end
 
-
 using ArgParse
 using GenomicFeatures
 using BioAlignments

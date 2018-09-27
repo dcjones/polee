@@ -121,6 +121,6 @@ def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log)
 
     elbo = lp + approx_likelihood - entropy
 
-    train(-elbo, init_feed_dict, 100, 2e-2)
+    train(-elbo, init_feed_dict, 500, 2e-2)
 
     # TODO: return results in some form

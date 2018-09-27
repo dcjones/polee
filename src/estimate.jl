@@ -224,10 +224,11 @@ mutable struct ModelInput
     feature::Symbol
     ts::Transcripts
     ts_metadata::TranscriptsMetadata
-    output_filename::Nullable{String}
+    output_filename::Union{String, Nothing}
     output_format::Symbol
     gene_db::SQLite.DB
     credible_interval::Tuple{Float64, Float64}
+    parsed_args::Dict{String, Any}
 end
 
 

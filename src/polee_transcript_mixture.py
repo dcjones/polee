@@ -49,7 +49,7 @@ def estimate_transcript_mixture(
 
     # z_mix
     z_mix_prior = tfd.Dirichlet(
-        concentration=tf.constant(10.0, shape=[num_mix_components]),
+        concentration=tf.constant(5.0, shape=[num_mix_components]),
         name="z_mix_prior")
 
     z_mix = tf.Variable(
@@ -146,7 +146,7 @@ def estimate_transcript_mixture(
 
     x_err_scale_prior = HalfCauchy(
         loc=0.0,
-        scale=0.01,
+        scale=0.1,
         name="x_err_scale_prior")
 
     x_err_scale = tf.nn.softplus(tf.Variable(
@@ -158,8 +158,8 @@ def estimate_transcript_mixture(
     # x_err
     x_err_prior = tfd.MultivariateNormalDiag(
         loc=tf.zeros([1,n]),
-        # scale_diag=tf.fill([1,n], 1.0))
-        scale_diag=x_err_scale)
+        scale_diag=tf.fill([1,n], 8.0))
+        # scale_diag=x_err_scale)
 
     # x_err_prior = tfd.StudentT(
     #     df=1.0,
@@ -181,6 +181,8 @@ def estimate_transcript_mixture(
     # x = tf.add(tf.add(x_pca, x_bias), sample_scale, name="x")
     x = tf.add(tf.add(x_pca, x_bias), x_err, name="x")
     # x = tf.add(x_pca, x_bias, name="x")
+
+    # TODO: what if x were mixed with some low-expression dropout component?
 
     log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
 
@@ -215,5 +217,6 @@ def estimate_transcript_mixture(
 
     return component_probs, sess.run(w), sess.run(x)
 
-    # TODO: This thing falls apart when mixtures go to zero and or scale gets really small.
-    # We might try just clipping these to avoid those situations.
+    # TODO: maybe pool x_err variance within genes?
+    #    (We're already doing that!!!)
+    # TODO: 

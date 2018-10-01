@@ -12,6 +12,68 @@ SIGMA_ALPHA0 = 0.001
 SIGMA_BETA0  = 0.001
 
 
+
+def dropout_expression_model(vars, n, x0_log, x_nondrop_loc):
+    log_prior = 0.0
+
+    # x_nondrop_err_scale
+    x_nondrop_scale_prior = HalfCauchy(
+        loc=0.0,
+        scale=0.1,
+        name="x_nondrop_scale_prior")
+
+    x_nondrop_scale = tf.nn.softplus(tf.Variable(
+        tf.fill([1,n], -1.0),
+        name="x_nondrop_scale"))
+
+    log_prior += tf.reduce_sum(x_nondrop_scale_prior.log_prob(x_nondrop_scale))
+
+    # x non-dropout distribution
+    x_nondrop_dist = tfd.Normal(
+        loc=x_nondrop_loc,
+        scale=x_nondrop_scale)
+
+    # x dropout distribution
+    x_drop_loc0 = np.float32(np.log(0.001/n))
+    x_drop_loc = tf.Variable([x_drop_loc0], name="x_drop_prior_loc")
+    x_drop_scale = tf.nn.softplus(tf.Variable([5.0], name="x_drop_prior_scale"))
+    x_drop_loc = tf.Print(x_drop_loc, [x_drop_loc], "x_drop_loc")
+    x_drop_scale = tf.Print(x_drop_scale, [x_drop_scale], "x_drop_scale")
+
+    x_drop_dist = tfd.Normal(
+        loc=x_drop_loc,
+        scale=x_drop_scale)
+
+    # x dropout probability
+    x_drop_prob = tf.sigmoid(tf.Variable(0.0, name="x_drop_prob"))
+    x_drop_prob = tf.Print(x_drop_prob, [x_drop_prob], "x_drop_prob")
+
+    # mixture log-probability
+    x = tf.Variable(
+        x0_log,
+        dtype=tf.float32,
+        name="x")
+
+    drop_log_prob = tf.log(x_drop_prob)
+    nondrop_log_prob = tf.log(1.0 - x_drop_prob)
+
+    x_drop_log_prob = x_drop_dist.log_prob(x) + drop_log_prob
+    x_nondrop_log_prob = x_nondrop_dist.log_prob(x) + nondrop_log_prob
+
+    # x_drop_log_prob = tf.Print(x_drop_log_prob, [x_drop_log_prob], "x_drop_log_prob")
+    # x_nondrop_log_prob = tf.Print(x_nondrop_log_prob, [x_nondrop_log_prob], "x_nondrop_log_prob")
+
+    x_drop_log_prob = tf.Print(x_drop_log_prob, [tf.reduce_min(x_drop_log_prob), tf.reduce_max(x_drop_log_prob)], "x_drop_log_prob")
+    x_nondrop_log_prob = tf.Print(x_nondrop_log_prob, [tf.reduce_min(x_nondrop_log_prob), tf.reduce_max(x_nondrop_log_prob)], "x_nondrop_log_prob")
+
+    x_log_prob = tf.reduce_logsumexp(tf.stack([x_drop_log_prob, x_nondrop_log_prob]), 0)
+    x_log_prob = tf.Print(x_log_prob, [x_log_prob], "x_log_prob")
+
+    log_prior += tf.reduce_sum(x_log_prob)
+
+    return x, log_prior
+
+
 def estimate_transcript_mixture(
         init_feed_dict, num_samples, n, vars, x0_log,
         num_mix_components, num_pca_components):
@@ -19,7 +81,7 @@ def estimate_transcript_mixture(
     log_prior = 0.0
 
     # x_bias
-    x_bias_loc0 = np.log(1/n)
+    x_bias_loc0 = np.log(1000 * 1/n)
     x_bias_scale0 = 4.0
     x_bias_prior = tfd.Normal(
         loc=tf.constant(x_bias_loc0, dtype=tf.float32),
@@ -27,7 +89,7 @@ def estimate_transcript_mixture(
         name="x_bias")
 
     x_bias = tf.Variable(
-        np.mean(x0_log, 0),
+        np.maximum(np.mean(x0_log, 0), x_bias_loc0),
         dtype=tf.float32,
         name="x_bias")
 
@@ -92,11 +154,21 @@ def estimate_transcript_mixture(
         scale=0.01,
         name="z_comp_scale_prior")
 
-    z_comp_scale = tf.nn.softplus(tf.Variable(
-        # tf.fill([num_mix_components, num_pca_components], -3.0),
-        tf.fill([num_mix_components, num_pca_components], 1.0),
-        trainable=True,
-        name="z_comp_scale"))
+    # z_comp_scale = tf.nn.softplus(tf.Variable(
+    #     # tf.fill([num_mix_components, num_pca_components], -3.0),
+    #     tf.fill([num_mix_components, num_pca_components], 1.0),
+    #     # trainable=False,
+    #     name="z_comp_scale"))
+
+    z_comp_scale = tf.matmul(
+        tf.nn.softplus(tf.Variable(
+            # tf.fill([num_mix_components, num_pca_components], -3.0),
+            tf.fill([num_mix_components, 1], 1.0),
+            # trainable=False,
+            name="z_comp_scale")),
+        tf.ones([1, num_pca_components]))
+
+    z_comp_scale = tf.Print(z_comp_scale, [tf.reduce_min(z_comp_scale), tf.reduce_max(z_comp_scale)], "z_comp_scale span")
 
     # z_comp_scale = tf.Print(z_comp_scale, [z_comp_scale], "z_comp_scale span",
     #     summarize=4*18)
@@ -126,66 +198,19 @@ def estimate_transcript_mixture(
 
     log_prior += tf.reduce_sum(z_prior.log_prob(z))
 
-    # sample_scale
-
-    # sample_scale_prior = tfd.Normal(
-    #     loc=tf.constant(0.0, dtype=tf.float32),
-    #     scale=tf.constant(1.0, dtype=tf.float32))
-
-    # sample_scale = tf.Variable(
-    #     tf.zeros([num_samples, 1]),
-    #     name="sample_scale")
-
-    # log_prior += tf.reduce_sum(sample_scale_prior.log_prob(sample_scale))
-
-    # x_err_scale
-    # x_err_scale_prior = tfd.InverseGamma(
-    #     concentration=0.01,
-    #     rate=0.01,
-    #     name="x_err_scale_prior")
-
-    x_err_scale_prior = HalfCauchy(
-        loc=0.0,
-        scale=0.1,
-        name="x_err_scale_prior")
-
-    x_err_scale = tf.nn.softplus(tf.Variable(
-        tf.fill([1,n], -1.0),
-        name="x_err_scale"))
-
-    log_prior += tf.reduce_sum(x_err_scale_prior.log_prob(x_err_scale))
-
-    # x_err
-    x_err_prior = tfd.MultivariateNormalDiag(
-        loc=tf.zeros([1,n]),
-        scale_diag=tf.fill([1,n], 8.0))
-        # scale_diag=x_err_scale)
-
-    # x_err_prior = tfd.StudentT(
-    #     df=1.0,
-    #     loc=tf.zeros([1,n]),
-    #     scale=x_err_scale)
-
-    x_err = tf.Variable(
-        tf.zeros([num_samples, n]),
-        name="x_err")
-
-    # x_err = tf.Print(x_err, [tf.reduce_min(x_err), tf.reduce_max(x_err)], "x_err span")
-
-    log_prior += tf.reduce_sum(x_err_prior.log_prob(x_err))
-
-    # x
     x_pca = tf.matmul(z, w, transpose_b=True, name="x_pca")
 
-    # TODO: Add some additive error here.
-    # x = tf.add(tf.add(x_pca, x_bias), sample_scale, name="x")
-    x = tf.add(tf.add(x_pca, x_bias), x_err, name="x")
-    # x = tf.add(x_pca, x_bias, name="x")
+    x_pca = tf.Print(x_pca, [tf.reduce_min(x_pca), tf.reduce_max(x_pca)], "x_pca span")
+    x_bias = tf.Print(x_bias, [tf.reduce_min(x_bias), tf.reduce_max(x_bias)], "x_bias span")
 
-    # TODO: what if x were mixed with some low-expression dropout component?
+    # x (expression)
+    x_nondrop_loc = tf.add(x_pca, x_bias, name="x_loc")
+    x_nondrop_loc = tf.Print(x_nondrop_loc, [tf.reduce_min(x_nondrop_loc), tf.reduce_max(x_nondrop_loc)], "x_nondrop_loc")
+
+    x, expr_log_prior = dropout_expression_model(vars, n, x0_log, x_nondrop_loc)
+    log_prior += expr_log_prior
 
     log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
-
     log_posterior = log_likelihood + log_prior
 
     sess = tf.Session()

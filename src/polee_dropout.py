@@ -34,18 +34,6 @@ def estimate_transcript_expression_dropout(init_feed_dict, num_samples, n, vars,
     # The question here is whether the non-dropout prior
     # should be pooled across transcripts or what.
 
-    x_non_dropout_scale_prior = HalfCauchy(
-        loc=0.0,
-        scale=0.1,
-        name="x_non_dropout_scale_prior")
-
-    x_non_dropout_scale = tf.nn.softplus(tf.Variable(
-        tf.fill([1,n], 2.0),
-        # trainable=False,
-        name="x_not_dropout_scale"))
-
-    log_prior += tf.reduce_sum(
-        x_non_dropout_scale_prior.log_prob(x_non_dropout_scale))
 
     x_non_dropout_scale = tf.Print(x_non_dropout_scale,
         [tf.reduce_min(x_non_dropout_scale), tf.reduce_max(x_non_dropout_scale)],

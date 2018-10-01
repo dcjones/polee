@@ -117,6 +117,7 @@ def estimate_transcript_mixture(
     z_mix = tf.Variable(
         tf.zeros([num_mix_components]),
         dtype=tf.float32,
+        # trainable=False,
         name="z_mix")
 
     # z_mix = tf.Print(z_mix, [tf.nn.softmax(z_mix)], "z_mix", summarize=16)
@@ -154,19 +155,19 @@ def estimate_transcript_mixture(
         scale=0.01,
         name="z_comp_scale_prior")
 
-    # z_comp_scale = tf.nn.softplus(tf.Variable(
-    #     # tf.fill([num_mix_components, num_pca_components], -3.0),
-    #     tf.fill([num_mix_components, num_pca_components], 1.0),
-    #     # trainable=False,
-    #     name="z_comp_scale"))
+    z_comp_scale = tf.nn.softplus(tf.Variable(
+        # tf.fill([num_mix_components, num_pca_components], -3.0),
+        tf.fill([num_mix_components, num_pca_components], 1.0),
+        # trainable=False,
+        name="z_comp_scale"))
 
-    z_comp_scale = tf.matmul(
-        tf.nn.softplus(tf.Variable(
-            # tf.fill([num_mix_components, num_pca_components], -3.0),
-            tf.fill([num_mix_components, 1], 1.0),
-            # trainable=False,
-            name="z_comp_scale")),
-        tf.ones([1, num_pca_components]))
+    # z_comp_scale = tf.matmul(
+    #     tf.nn.softplus(tf.Variable(
+    #         # tf.fill([num_mix_components, num_pca_components], -3.0),
+    #         tf.fill([num_mix_components, 1], 1.0),
+    #         # trainable=False,
+    #         name="z_comp_scale")),
+    #     tf.ones([1, num_pca_components]))
 
     z_comp_scale = tf.Print(z_comp_scale, [tf.reduce_min(z_comp_scale), tf.reduce_max(z_comp_scale)], "z_comp_scale span")
 
@@ -180,15 +181,15 @@ def estimate_transcript_mixture(
         logits=z_mix,
         name="z_mix_dist")
 
-    z_comp_dist = tfd.MultivariateNormalDiag(
+    z_comp_dist = tfd.Normal(
         loc=z_comp_loc,
-        scale_diag=z_comp_scale,
+        scale=z_comp_scale,
         name="z_comp_dist")
 
-    z_prior = tfd.MixtureSameFamily(
-        mixture_distribution=z_mix_dist,
-        components_distribution=z_comp_dist,
-        name="z_prior")
+    # z_prior = tfd.MixtureSameFamily(
+    #     mixture_distribution=z_mix_dist,
+    #     components_distribution=z_comp_dist,
+    #     name="z_prior")
 
     z = tf.Variable(
 -       tf.random_normal([num_samples, num_pca_components], stddev=0.1),
@@ -196,7 +197,18 @@ def estimate_transcript_mixture(
         dtype=tf.float32,
         name="z")
 
-    log_prior += tf.reduce_sum(z_prior.log_prob(z))
+    # num_samples x num_mix_comps x num_pca_components
+    z_comp_log_prob = z_comp_dist.log_prob(tf.expand_dims(z, 1))
+    z_comp_log_prob += tf.expand_dims(tf.expand_dims(tf.nn.softmax(z_mix), 0), -1)
+    print(z_comp_log_prob)
+
+    # num_samples x num_pca_components
+    z_log_prob = tf.reduce_logsumexp(z_comp_log_prob, 1)
+    print(z_log_prob)
+
+    log_prior += tf.reduce_sum(z_log_prob)
+
+    # log_prior += tf.reduce_sum(z_prior.log_prob(z))
 
     x_pca = tf.matmul(z, w, transpose_b=True, name="x_pca")
 
@@ -231,14 +243,30 @@ def estimate_transcript_mixture(
     print("comp probs")
 
     # compute component assignment probabilities
-    z_ = z_prior._pad_sample_dims(z)
-    log_prob_x = z_comp_dist.log_prob(z_)
-    log_mix_prob = tf.nn.log_softmax(
-          z_mix_dist.logits, axis=-1)
-    log_prob_x += log_mix_prob
 
+    # num_samples x num_mix_components
+    z_comp_log_prob = tf.reduce_sum(z_comp_log_prob, 2)
     component_probs = sess.run(tf.exp(
-        log_prob_x - tf.reduce_logsumexp(log_prob_x, keepdims=True, axis=1)))
+        z_comp_log_prob - tf.reduce_logsumexp(z_comp_log_prob, 1, keepdims=True)))
+
+
+    # tf.reduce_logsumexp(z_comp_log_prob, 
+
+    # print(z_log_prob - tf.reduce_logsumexp(z_log_prob, 1, keepdims=True))
+
+    # component_probs = sess.run(tf.exp(
+    #     z_log_prob - tf.reduce_logsumexp(z_log_prob, 1, keepdims=True)))
+
+    print(component_probs)
+
+    # z_ = z_prior._pad_sample_dims(z)
+    # log_prob_x = z_comp_dist.log_prob(z_)
+    # log_mix_prob = tf.nn.log_softmax(
+    #       z_mix_dist.logits, axis=-1)
+    # log_prob_x += log_mix_prob
+
+    # component_probs = sess.run(tf.exp(
+    #     log_prob_x - tf.reduce_logsumexp(log_prob_x, keepdims=True, axis=1)))
 
     return component_probs, sess.run(w), sess.run(x)
 

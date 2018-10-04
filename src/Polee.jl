@@ -38,7 +38,7 @@ end
 const polee_py = PyNULL()
 const tf = PyNULL()
 
-function __init__()
+function init_python_modules()
     build_tensorflow_ext_if_needed()
     pushfirst!(PyVector(pyimport("sys")["path"]), dirname(pathof(Polee)))
     copy!(polee_py, pyimport("polee"))

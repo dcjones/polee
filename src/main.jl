@@ -421,6 +421,8 @@ function main()
             println("Using transcripts file: ", transcripts_filename)
         end
 
+        init_python_modules()
+
         ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
         gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
@@ -564,3 +566,6 @@ function main()
         exit(1)
     end
 end
+
+
+precompile(main, ())

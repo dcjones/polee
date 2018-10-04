@@ -13,7 +13,7 @@ SIGMA_BETA0  = 0.001
 
 
 
-def dropout_expression_model(vars, n, x0_log, x_nondrop_loc):
+def dropout_expression_model(vars, n, x0_log, z_mix, num_mix_components, num_pca_components, x_nondrop_loc):
     log_prior = 0.0
 
     # x_nondrop_err_scale
@@ -45,8 +45,19 @@ def dropout_expression_model(vars, n, x0_log, x_nondrop_loc):
         scale=x_drop_scale)
 
     # x dropout probability
-    x_drop_prob = tf.sigmoid(tf.Variable(0.0, name="x_drop_prob"))
-    x_drop_prob = tf.Print(x_drop_prob, [x_drop_prob], "x_drop_prob")
+    z_drop_prob = tf.Variable(
+        tf.random_normal([num_mix_components, n]),
+        name="z_drop_prob")
+
+    # [n]
+    x_drop_prob = \
+        tf.sigmoid(tf.reduce_sum(z_drop_prob * tf.expand_dims(tf.nn.softmax(z_mix), -1), 0))
+
+    x_drop_prob = tf.Print(x_drop_prob, [
+        tf.reduce_min(x_drop_prob), tf.reduce_max(x_drop_prob)], "x_drop_prob span")
+
+    # x_drop_prob = tf.sigmoid(tf.Variable(0.0, name="x_drop_prob"))
+    # x_drop_prob = tf.Print(x_drop_prob, [x_drop_prob], "x_drop_prob")
 
     # mixture log-probability
     x = tf.Variable(
@@ -60,6 +71,28 @@ def dropout_expression_model(vars, n, x0_log, x_nondrop_loc):
     x_drop_log_prob = x_drop_dist.log_prob(x) + drop_log_prob
     x_nondrop_log_prob = x_nondrop_dist.log_prob(x) + nondrop_log_prob
 
+    # [num_samples, n]
+    x_drop_total_log_prob = \
+        tf.reduce_logsumexp(tf.stack([x_drop_log_prob, x_nondrop_log_prob]), 0)
+    x_drop_posterior_prob = \
+        tf.exp(x_drop_log_prob - x_drop_total_log_prob)
+    x_nondrop_posterior_prob = \
+        tf.exp(x_nondrop_log_prob - x_drop_total_log_prob)
+
+    z_drop_prob = \
+        tf.sigmoid(z_drop_prob) * tf.expand_dims(x_drop_posterior_prob, 1) + \
+        (1 - tf.sigmoid(z_drop_prob)) * tf.expand_dims(x_nondrop_posterior_prob, 1)
+
+    z_drop_post_log_prob = \
+        tf.log(z_drop_prob) + \
+        tf.expand_dims(tf.nn.softmax(z_mix), -1)
+
+    z_drop_post_log_prob = tf.reduce_sum(z_drop_post_log_prob, 2)
+
+    z_drop_post_log_prob -= \
+        tf.reduce_logsumexp(z_drop_post_log_prob, 1, keepdims=True)
+
+
     # x_drop_log_prob = tf.Print(x_drop_log_prob, [x_drop_log_prob], "x_drop_log_prob")
     # x_nondrop_log_prob = tf.Print(x_nondrop_log_prob, [x_nondrop_log_prob], "x_nondrop_log_prob")
 
@@ -71,7 +104,7 @@ def dropout_expression_model(vars, n, x0_log, x_nondrop_loc):
 
     log_prior += tf.reduce_sum(x_log_prob)
 
-    return x, log_prior
+    return x, log_prior, z_drop_post_log_prob
 
 
 def estimate_transcript_mixture(
@@ -155,11 +188,11 @@ def estimate_transcript_mixture(
         scale=0.01,
         name="z_comp_scale_prior")
 
-    z_comp_scale = tf.nn.softplus(tf.Variable(
+    z_comp_scale = tf.clip_by_value(tf.nn.softplus(tf.Variable(
         # tf.fill([num_mix_components, num_pca_components], -3.0),
         tf.fill([num_mix_components, num_pca_components], 1.0),
         # trainable=False,
-        name="z_comp_scale"))
+        name="z_comp_scale")), 0.02, 100.0)
 
     # z_comp_scale = tf.matmul(
     #     tf.nn.softplus(tf.Variable(
@@ -219,14 +252,15 @@ def estimate_transcript_mixture(
     x_nondrop_loc = tf.add(x_pca, x_bias, name="x_loc")
     x_nondrop_loc = tf.Print(x_nondrop_loc, [tf.reduce_min(x_nondrop_loc), tf.reduce_max(x_nondrop_loc)], "x_nondrop_loc")
 
-    x, expr_log_prior = dropout_expression_model(vars, n, x0_log, x_nondrop_loc)
+    x, expr_log_prior, z_drop_post_log_prob = dropout_expression_model(
+        vars, n, x0_log, z_mix, num_mix_components, num_pca_components, x_nondrop_loc)
     log_prior += expr_log_prior
 
     log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
     log_posterior = log_likelihood + log_prior
 
     sess = tf.Session()
-    train(sess, -log_posterior, init_feed_dict, 500, 5e-2)
+    train(sess, -log_posterior, init_feed_dict, 50, 5e-2)
 
     # print("z")
     # print(sess.run(z))
@@ -244,10 +278,27 @@ def estimate_transcript_mixture(
 
     # compute component assignment probabilities
 
+    # dropout component contribution
+
+    # TODO: for every transcript and sample compute dropout probability
+    # TODO: 
+
+    z_drop_post_log_prob = tf.Print(
+        z_drop_post_log_prob, [
+            tf.reduce_min(z_drop_post_log_prob),
+            tf.reduce_max(z_drop_post_log_prob)],
+        "z_drop_post_log span")
+
     # num_samples x num_mix_components
     z_comp_log_prob = tf.reduce_sum(z_comp_log_prob, 2)
+
+    z_comp_log_prob += z_drop_post_log_prob
     component_probs = sess.run(tf.exp(
         z_comp_log_prob - tf.reduce_logsumexp(z_comp_log_prob, 1, keepdims=True)))
+
+    # component_probs = sess.run(tf.exp(
+    #     z_drop_post_log_prob +
+    #     z_comp_log_prob - tf.reduce_logsumexp(z_comp_log_prob, 1, keepdims=True)))
 
 
     # tf.reduce_logsumexp(z_comp_log_prob, 

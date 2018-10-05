@@ -52,11 +52,10 @@ end
 
 
 function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, aln_idx_map)
-    I = UInt32[]
-    J = UInt32[]
-    V = Float32[]
+    Is = [UInt32[] for _ in 1:Threads.nthreads()]
+    Js = [UInt32[] for _ in 1:Threads.nthreads()]
+    Vs = [Float32[] for _ in 1:Threads.nthreads()]
 
-    mut = Threads.Mutex()
     Threads.@threads for treepair_idx in 1:length(treepairs)
     # for treepair_idx in 1:length(treepairs)
         ts_tree, rs_tree = treepairs[treepair_idx]
@@ -69,15 +68,16 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
                         rs.alignments[alnpr.metadata.mate2_idx].id
                 i = aln_idx_map[Int(i_)]
 
-                lock(mut)
-                push!(I, i)
-                push!(J, t.metadata.id)
-                push!(V, fragpr)
-                unlock(mut)
+                thrid = Threads.threadid()
+                push!(Is[thrid], i)
+                push!(Js[thrid], t.metadata.id)
+                push!(Vs[thrid], fragpr)
             end
         end
     end
-
+    I = vcat(Is...)
+    J = vcat(Js...)
+    V = vcat(Vs...)
     return (I, J, V)
 end
 
@@ -317,7 +317,6 @@ function RNASeqSample(fm::FragModel,
     #     end
     # end
 
-    # 52 seconds
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
 
     # reverse index (mapping matrix index to read id)

@@ -77,7 +77,9 @@ end
 
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String)
+    @tic()
     params = approximate_likelihood(approximation, sample)
+    @toc("Approximating likelihood")
 
     # TODO: delete this
     if isa(approximation, OptimizeHSBApprox)

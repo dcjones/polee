@@ -50,10 +50,10 @@ uuid = "00701ae9-d1dc-5365-b64a-a3a3ebf5695e"
 version = "1.0.0"
 
 [[BioCore]]
-deps = ["Automa", "BufferedStreams", "Pkg"]
-git-tree-sha1 = "56d1c93d2faae59fc7e8ab93a9bdc9acc87d04a4"
+deps = ["Automa", "BufferedStreams", "Pkg", "YAML"]
+git-tree-sha1 = "3e90b0cf7b6e5eb4c25607978a338865489ab393"
 uuid = "37cfa864-2cd6-5c12-ad9e-b6597d696c81"
-version = "2.0.2"
+version = "2.0.3"
 
 [[BioSequences]]
 deps = ["Automa", "BioCore", "BioSymbols", "BufferedStreams", "Combinatorics", "DataStructures", "IndexableBitVectors", "IntervalTrees", "LinearAlgebra", "Pkg", "Printf", "Random", "Test", "Twiddle"]
@@ -220,7 +220,7 @@ uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 version = "0.10.3"
 
 [[IntervalTrees]]
-deps = ["InteractiveUtils", "Profile", "Random", "Test"]
+deps = ["InteractiveUtils", "Nullables", "Profile", "Random", "Test"]
 path = "/home/dcjones/.julia/dev/IntervalTrees"
 uuid = "524e6230-43b7-53ae-be76-1e9e4d08d11b"
 version = "1.0.0+"
@@ -342,10 +342,10 @@ deps = ["Printf"]
 uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 
 [[ProgressMeter]]
-deps = ["Printf", "Random", "Test"]
-git-tree-sha1 = "09e653f4b0a3c44628f0bdd0a0e58bc92e0264ef"
+deps = ["Distributed", "Printf", "Random", "Test"]
+git-tree-sha1 = "5b55c2c974084eab2689ec0d1d5245561b22aeb0"
 uuid = "92933f4c-e287-5a05-a399-4b506db050ca"
-version = "0.6.0"
+version = "0.6.1"
 
 [[PyCall]]
 deps = ["Compat", "Conda", "MacroTools", "Statistics", "VersionParsing"]

@@ -131,7 +131,9 @@ function RNASeqSample(transcripts_filename::String,
                       no_bias::Bool=false,
                       dump_bias_training_examples::Bool=false)
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
+    @tic()
     read_transcript_sequences!(ts, genome_filename)
+    @toc("Reading transcripts")
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
         excluded_transcripts, output, no_bias=no_bias,
@@ -193,7 +195,9 @@ function RNASeqSample(ts::Transcripts,
                       num_training_reads::Int=200000,
                       dump_bias_training_examples::Bool=false)
 
+    @tic()
     rs = Reads(reads_filename, excluded_seqs)
+    @toc("Reading BAM file")
 
     # train fragment model by selecting a random subset of reads, assigning
     # them to transcripts, then extracting sequence context.
@@ -317,9 +321,12 @@ function RNASeqSample(fm::FragModel,
     #     end
     # end
 
+    @tic()
     I, J, V = parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
+    @toc("Intersecting reads and transcripts")
 
     # reverse index (mapping matrix index to read id)
+    @tic()
     aln_idx_rev_map = zeros(UInt32, maximum(aln_idx_map))
     for (i, j) in enumerate(aln_idx_map)
         if j != 0
@@ -340,6 +347,7 @@ function RNASeqSample(fm::FragModel,
     if !isnull(aln_idx_rev_map_ref)
         get(aln_idx_rev_map_ref).x = aln_idx_rev_map
     end
+    @toc("Rearranging sparse matrix indexes")
 
     # TODO: diagnostics
     # if isa(fm, BiasedFragModel)

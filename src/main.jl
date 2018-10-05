@@ -169,7 +169,7 @@ function main()
 
         if !haskey(spec, "samples")
             warn("No samples specified the experiment specification.")
-            exit()
+            exit(1)
         end
 
         samples = spec["samples"]
@@ -239,11 +239,17 @@ function main()
             "--num-threads", "-t" # handled by the wrapper script
             "--no-bias"
                 action = :store_true
+            "--debug"
+                action = :store_true
             "--dump-bias-training-examples"
                 action = :store_true
             "--no-gpu"            # handled by the wrapper script
         end
         parsed_args = parse_args(subcmd_args, arg_settings)
+
+        if parsed_args["debug"]
+            global_logger(ConsoleLogger(stderr, Logging.Debug))
+        end
 
         tree_method = Symbol(parsed_args["tree-method"])
         approx = select_approx_method(parsed_args["approx-method"], tree_method)

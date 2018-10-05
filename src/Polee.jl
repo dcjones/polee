@@ -56,6 +56,7 @@ using ProgressMeter
 using SQLite
 using StatsBase
 using Nullables
+using Logging
 import IntervalTrees
 import SHA
 import YAML
@@ -79,6 +80,22 @@ function tryread!(reader, entry)
             return false
         end
         rethrow()
+    end
+end
+
+# convenient way to time things
+macro tic()
+    t0 = esc(:t0)
+    quote
+        $(t0) = time()
+    end
+end
+
+macro toc(context)
+    t0 = esc(:t0)
+    quote
+        dt = time() - $(t0)
+        @debug @sprintf("%s: %0.2f secs", $(context), dt)
     end
 end
 

@@ -38,9 +38,12 @@ class HalfCauchy(tfp.distributions.TransformedDistribution):
         name=name)
 
 
-def train(sess, objective, init_feed_dict, n_iter, learning_rate):
+def train(sess, objective, init_feed_dict, n_iter, learning_rate, var_list=None):
+    if var_list is None:
+        var_list = tf.trainable_variables()
+
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
-    train = optimizer.minimize(objective)
+    train = optimizer.minimize(objective, var_list=var_list)
     init = tf.global_variables_initializer()
     prog = Progbar(50, n_iter)
 

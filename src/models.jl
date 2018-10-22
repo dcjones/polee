@@ -33,6 +33,47 @@ function estimate_mixture(input::ModelInput)
 end
 
 
+function estimate_pca(input::ModelInput)
+    if input.feature == :transcript
+        return estimate_transcript_pca(input)
+    elseif input.feature == :gene
+        return estimate_gene_pca(input)
+    elseif input.feature == :splicing
+        return estimate_splicing_pca(input)
+    else
+        error("Expression estimates for $(input.feature) not supported")
+    end
+end
+
+
+function estimate_transcript_pca(input::ModelInput)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
+    x0_log = log.(input.loaded_samples.x0_values)
+    z, w = polee_py[:estimate_transcript_pca](
+        input.loaded_samples.init_feed_dict, num_samples, n,
+        input.loaded_samples.variables, x0_log, num_pca_components)
+
+    if haskey(input.parsed_args, "output-pca-w") && input.parsed_args["output-pca-w"] !== nothing
+        write_pca_w(input.parsed_args["output-pca-w"], input, w)
+    end
+
+    output_filename = input.output_filename !== nothing ?
+        input.output_filename : "transcript-pca-estimates.csv"
+    write_pca_z(output_filename, input, z)
+end
+
+
+function estimate_gene_pca(input::ModelInput)
+    # TODO:
+end
+
+
+function estimate_splicing_pca(input::ModelInput)
+    # TODO:
+end
+
+
 function estimate_transcript_mixture(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
     x0_log = log.(input.loaded_samples.x0_values)
@@ -58,6 +99,35 @@ function estimate_transcript_mixture(input::ModelInput)
     end
 
     write_pca_x("pca-x.csv", input, x)
+end
+
+
+function estimate_vae_mixture(input::ModelInput)
+    if input.feature == :transcript
+        return estimate_transcript_vae_mixture(input)
+    else
+        error("Expression estimates for $(input.feature) not supported")
+    end
+end
+
+
+function estimate_transcript_vae_mixture(input::ModelInput)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    x0_log = log.(input.loaded_samples.x0_values)
+
+    num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
+    num_mix_components = Int(get(input.parsed_args, "num-mixture-components", 12))
+
+    component_probs = polee_py[:estimate_transcript_vae_mixture](
+        input.loaded_samples.init_feed_dict, num_samples, n,
+        input.loaded_samples.variables, x0_log,
+        num_mix_components, num_pca_components)
+
+    output_filename = input.output_filename === nothing ?
+        "component-membership.csv" : input.output_filename
+
+    # write_component_membership_html(input, component_probs)
+    write_component_membership_csv(output_filename, input, component_probs)
 end
 
 
@@ -121,6 +191,26 @@ function write_pca_w(output_filename, input, w)
 end
 
 
+function write_pca_z(output_filename, input, z)
+    num_samples, num_pca_components = size(z)
+    open(output_filename, "w") do output
+        print(output, "sample")
+        for j in 1:num_pca_components
+            print(output, ",component", j)
+        end
+        println(output)
+
+        for (i, sample) in enumerate(input.loaded_samples.sample_names)
+            print(output, sample)
+            for j in 1:num_pca_components
+                print(output, ",", z[i, j])
+            end
+            println(output)
+        end
+    end
+end
+
+
 function write_component_membership_html(input::ModelInput, component_probs)
     num_samples, num_components = size(component_probs)
     open("component_membership.html", "w") do output
@@ -168,6 +258,8 @@ end
 
 
 const POLEE_MODELS = Dict(
-    "expression" => estimate_expression,
-    "mixture"    => estimate_mixture
+    "expression"  => estimate_expression,
+    "pca"         => estimate_pca,
+    "mixture"     => estimate_mixture,
+    "vae-mixture" => estimate_vae_mixture
 )

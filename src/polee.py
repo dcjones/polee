@@ -12,6 +12,8 @@ from tensorflow_probability import edward2 as ed
 from polee_transcript_expression import *
 from polee_dropout import *
 from polee_transcript_mixture import *
+from polee_transcript_vae_mixture import *
+from polee_transcript_pca import *
 
 
 

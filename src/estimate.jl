@@ -35,7 +35,8 @@ Input:
     * ts_metadata: transcript metadata
 """
 function load_samples_from_specification(
-        spec, ts, ts_metadata, max_num_samples; check_gff_hash::Bool=true)
+        spec, ts, ts_metadata, max_num_samples, batch_size;
+        check_gff_hash::Bool=true)
 
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
     sample_names = String[]
@@ -59,8 +60,12 @@ function load_samples_from_specification(
         sample_factors = sample_factors[p]
     end
 
+    batch_size = batch_size === nothing ?
+        num_samples : min(batch_size, num_samples)
+
     loaded_samples = load_samples(
-        filenames, ts, ts_metadata, check_gff_hash=check_gff_hash)
+        filenames, ts, ts_metadata, batch_size,
+        check_gff_hash=check_gff_hash)
     println("Sample data loaded")
 
     loaded_samples.sample_factors = sample_factors
@@ -88,13 +93,16 @@ Input:
     * ts_metadata: transcript metadata
 """
 function load_samples(
-        filenames, ts, ts_metadata::TranscriptsMetadata; check_gff_hash::Bool=true)
-    return load_samples_hdf5(filenames, ts, ts_metadata, check_gff_hash=check_gff_hash)
+        filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
+        check_gff_hash::Bool=true)
+    return load_samples_hdf5(
+        filenames, ts, ts_metadata, batch_size, check_gff_hash=check_gff_hash)
 end
 
 
 function load_samples_hdf5(
-        filenames, ts, ts_metadata::TranscriptsMetadata; check_gff_hash::Bool=true)
+        filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
+        check_gff_hash::Bool=true)
     num_samples = length(filenames)
     n = length(ts)
 
@@ -197,8 +205,10 @@ function load_samples_hdf5(
     init_feed_dict = Dict{Any, Any}()
     for (name, val) in zip(var_names, var_values)
         typ = eltype(val) == Float32 ? tf[:float32] : tf[:int32]
-        var_init = tf[:placeholder](typ, shape=size(val))
-        var = tf[:Variable](var_init, trainable=false)
+        # sz = (batch_size, size(val)[2:end]...)
+        sz = (nothing, size(val)[2:end]...)
+        var_init = tf[:placeholder](typ, shape=sz)
+        var = var_init
         variables[name] = var
         init_feed_dict[var_init] = val
     end

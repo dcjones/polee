@@ -74,6 +74,49 @@ function estimate_splicing_pca(input::ModelInput)
 end
 
 
+function estimate_tsne(input::ModelInput)
+    if input.feature == :transcript
+        return estimate_transcript_tsne(input)
+    elseif input.feature == :gene
+        return estimate_gene_tsne(input)
+    elseif input.feature == :splicing
+        return estimate_splicing_tsne(input)
+    else
+        error("Expression estimates for $(input.feature) not supported")
+    end
+end
+
+
+function estimate_transcript_tsne(input::ModelInput)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
+    batch_size = min(num_samples, input.parsed_args["batch-size"])
+    x0_log = log.(input.loaded_samples.x0_values)
+    z = polee_py[:estimate_transcript_tsne](
+        input.loaded_samples.init_feed_dict, num_samples, n,
+        input.loaded_samples.variables, x0_log, num_pca_components,
+        batch_size)
+
+    if haskey(input.parsed_args, "output-pca-w") && input.parsed_args["output-pca-w"] !== nothing
+        write_pca_w(input.parsed_args["output-pca-w"], input, w)
+    end
+
+    output_filename = input.output_filename !== nothing ?
+        input.output_filename : "transcript-tsne-estimates.csv"
+    write_pca_z(output_filename, input, z)
+end
+
+
+function estimate_gene_tsne(input::ModelInput)
+    # TODO:
+end
+
+
+function estimate_splicing_tsne(input::ModelInput)
+    # TODO:
+end
+
+
 function estimate_transcript_mixture(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
     x0_log = log.(input.loaded_samples.x0_values)
@@ -260,6 +303,15 @@ end
 const POLEE_MODELS = Dict(
     "expression"  => estimate_expression,
     "pca"         => estimate_pca,
+    "tsne"        => estimate_tsne,
     "mixture"     => estimate_mixture,
     "vae-mixture" => estimate_vae_mixture
 )
+
+# Whether each method supports mini-batching.
+const BATCH_MODEL = Dict(
+    "expression"  => false,
+    "pca"         => false,
+    "tsne"        => true,
+    "mixture"     => false,
+    "vae-mixture" => false)

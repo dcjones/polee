@@ -30,17 +30,11 @@ def _inv_hsb_grad(op, grad):
 Random expression vector samples in proportion to the approximated likelihood
 function.
 """
-def rnaseq_approx_likelihood_sampler(efflens, la_params, hsb_params):
-    mu    = tf.identity(la_params[...,0,:], name="mu")
-    sigma = tf.identity(la_params[...,1,:], name="sigma")
-    alpha = tf.identity(la_params[...,2,:], name="alpha")
-
-    left_index  = hsb_params[0]
-    right_index = hsb_params[1]
-    leaf_index  = hsb_params[2]
-
+def rnaseq_approx_likelihood_sampler(
+        z0_mu, efflens, mu, sigma, alpha, left_index, right_index, leaf_index):
     # sampling from likelihood distribution
-    z0 = ed.models.Normal(loc=tf.zeros(mu.get_shape()), scale=[1.0])
+    # z0 = ed.Normal(loc=tf.zeros(mu.get_shape()), scale=[1.0])
+    z0 = ed.Normal(loc=z0_mu, scale=[1.0])
 
     # sinh-asinh transform
     z = tf.sinh(tf.asinh(z0) + alpha)

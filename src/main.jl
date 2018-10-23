@@ -365,6 +365,9 @@ function main()
             "--num-pca-components"
                 default = 8
                 arg_type = Int
+            "--batch-size"
+                default = 20
+                arg_type = Int
             "--output-pca-w"
             "--inference"
                 default = "default"
@@ -437,9 +440,12 @@ function main()
             INFORMATIVE_PRIOR = true
         end
 
+        model_name = parsed_args["model"]
+
+        batch_size = BATCH_MODEL[model_name] ? parsed_args["batch-size"] : nothing
         max_num_samples =  get(parsed_args, "max-num-samples", nothing)
         loaded_samples = load_samples_from_specification(
-            spec, ts, ts_metadata, max_num_samples,
+            spec, ts, ts_metadata, max_num_samples, batch_size,
             check_gff_hash=!parsed_args["no-gff-hash-check"])
 
         inference = Symbol(parsed_args["inference"])
@@ -459,7 +465,7 @@ function main()
             parsed_args["output"], output_format, gene_db,
             credible_interval, parsed_args)
 
-        POLEE_MODELS[parsed_args["model"]](input)
+        POLEE_MODELS[model_name](input)
 
         return
 

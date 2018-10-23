@@ -12,7 +12,6 @@ from polee_training import *
 def estimate_transcript_vae_mixture(
         init_feed_dict, num_samples, n, vars, x0_log,
         num_mix_components, num_pca_components):
-    pass
 
     log_prior = 0.0
 

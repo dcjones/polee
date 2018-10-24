@@ -363,7 +363,7 @@ function main()
                 default = 12
                 arg_type = Int
             "--num-pca-components"
-                default = 8
+                default = 2
                 arg_type = Int
             "--batch-size"
                 default = 20

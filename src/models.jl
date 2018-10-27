@@ -92,10 +92,37 @@ function estimate_transcript_tsne(input::ModelInput)
     num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
     batch_size = min(num_samples, input.parsed_args["batch-size"])
     x0_log = log.(input.loaded_samples.x0_values)
-    z = polee_py[:estimate_transcript_tsne](
+    z, p, q = polee_py[:estimate_transcript_tsne](
         input.loaded_samples.init_feed_dict, num_samples, n,
         input.loaded_samples.variables, x0_log, num_pca_components,
         batch_size)
+
+
+    open("p.csv", "w") do output
+        for i in 1:size(p, 1)
+            for j in 1:size(p, 1)
+                if j > 1
+                    print(output, ",")
+                end
+                print(output, p[i, j])
+            end
+            println(output)
+        end
+    end
+
+
+    open("q.csv", "w") do output
+        for i in 1:size(q, 1)
+            for j in 1:size(q, 1)
+                if j > 1
+                    print(output, ",")
+                end
+                print(output, q[i, j])
+            end
+            println(output)
+        end
+    end
+
 
     if haskey(input.parsed_args, "output-pca-w") && input.parsed_args["output-pca-w"] !== nothing
         write_pca_w(input.parsed_args["output-pca-w"], input, w)

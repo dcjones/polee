@@ -64,7 +64,7 @@ def transcript_expression_variational_model(
     return qx_mu, qx_sigma_sq, qx
 
 
-def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log):
+def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log, sess=None):
     log_joint = ed.make_log_joint_fn(
         lambda: transcript_expression_model(num_samples, n))
 
@@ -121,6 +121,8 @@ def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log)
 
     elbo = lp + approx_likelihood - entropy
 
-    train(-elbo, init_feed_dict, 500, 2e-2)
+    if sess is None:
+        sess = tf.Session()
+    train(sess, -elbo, init_feed_dict, 500, 2e-2)
 
-    # TODO: return results in some form
+    return qx

@@ -125,4 +125,4 @@ def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log,
         sess = tf.Session()
     train(sess, -elbo, init_feed_dict, 500, 2e-2)
 
-    return qx
+    return sess.run(qx.distribution.loc), sess.run(qx.distribution.scale)

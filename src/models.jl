@@ -18,7 +18,6 @@ function estimate_transcript_expression(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
     x0_log = log.(input.loaded_samples.x0_values)
     polee_py[:estimate_transcript_expression](
-    # polee_py[:estimate_transcript_expression_dropout](
         input.loaded_samples.init_feed_dict, num_samples, n,
         input.loaded_samples.variables, x0_log)
 end
@@ -48,7 +47,7 @@ end
 
 function estimate_transcript_pca(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
-    num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
+    num_pca_components = Int(get(input.parsed_args, "num-components", 8))
     x0_log = log.(input.loaded_samples.x0_values)
     z, w = polee_py[:estimate_transcript_pca](
         input.loaded_samples.init_feed_dict, num_samples, n,
@@ -89,14 +88,17 @@ end
 
 function estimate_transcript_tsne(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
-    num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
+    num_pca_components = Int(get(input.parsed_args, "num-components", 8))
     batch_size = min(num_samples, input.parsed_args["batch-size"])
+    use_neural_network = input.parsed_args["neural-network"]
     x0_log = log.(input.loaded_samples.x0_values)
     z, p, q = polee_py[:estimate_transcript_tsne](
         input.loaded_samples.init_feed_dict, num_samples, n,
         input.loaded_samples.variables, x0_log, num_pca_components,
-        batch_size)
+        batch_size, use_neural_network)
 
+    print_knn_graph(
+        "tsne-knn.csv", knn(5, z), input.loaded_samples.sample_names)
 
     open("p.csv", "w") do output
         for i in 1:size(p, 1)
@@ -148,7 +150,7 @@ function estimate_transcript_mixture(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
     x0_log = log.(input.loaded_samples.x0_values)
 
-    num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
+    num_pca_components = Int(get(input.parsed_args, "num-components", 8))
     num_mix_components = Int(get(input.parsed_args, "num-mixture-components", 12))
 
     @show (num_pca_components, num_mix_components)
@@ -172,6 +174,26 @@ function estimate_transcript_mixture(input::ModelInput)
 end
 
 
+function estimate_knn(input::ModelInput)
+    if input.feature == :transcript
+        return estimate_transcript_knn(input)
+    else
+        error("Knn estimates for $(input.feature) not supported")
+    end
+end
+
+
+function estimate_transcript_knn(input::ModelInput)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    x0_log = log.(input.loaded_samples.x0_values)
+    x_loc, x_scale = polee_py[:estimate_transcript_expression](
+        input.loaded_samples.init_feed_dict, num_samples, n,
+        input.loaded_samples.variables, x0_log)
+
+    print_knn_graph("knn.csv", knn(5, x_loc), input.loaded_samples.sample_names)
+end
+
+
 function estimate_vae_mixture(input::ModelInput)
     if input.feature == :transcript
         return estimate_transcript_vae_mixture(input)
@@ -185,7 +207,7 @@ function estimate_transcript_vae_mixture(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
     x0_log = log.(input.loaded_samples.x0_values)
 
-    num_pca_components = Int(get(input.parsed_args, "num-pca-components", 8))
+    num_pca_components = Int(get(input.parsed_args, "num-components", 8))
     num_mix_components = Int(get(input.parsed_args, "num-mixture-components", 12))
 
     component_probs = polee_py[:estimate_transcript_vae_mixture](
@@ -327,12 +349,46 @@ function write_component_membership_html(input::ModelInput, component_probs)
 end
 
 
+"""
+Super-simplistic k-nearest neighbors. Outputs a an array of tuples
+representing the edges of the knn graph.
+"""
+function knn(k, X)
+    # X is assumed to be shaped like [samples, dimensionality]
+    num_samples, n = size(X)
+    k = min(k, num_samples)
+    distances = Array{Float32}(undef, num_samples)
+    edges = Tuple{Int, Int}[]
+    for i in 1:num_samples
+        for j in 1:num_samples
+            distances[j] = sum((X[i,:] .- X[j,:]).^2)
+        end
+        for v in sortperm(distances)[2:k+1]
+            push!(edges, (i, v))
+        end
+    end
+
+    return edges
+end
+
+
+function print_knn_graph(output_filename, edges, sample_names)
+    open(output_filename, "w") do output
+        println(output, "u,v")
+        for (u,v) in edges
+            println(output, sample_names[u], ",", sample_names[v])
+        end
+    end
+end
+
+
 const POLEE_MODELS = Dict(
     "expression"  => estimate_expression,
     "pca"         => estimate_pca,
     "tsne"        => estimate_tsne,
+    "knn"         => estimate_knn,
     "mixture"     => estimate_mixture,
-    "vae-mixture" => estimate_vae_mixture
+    "vae-mixture" => estimate_vae_mixture,
 )
 
 # Whether each method supports mini-batching.
@@ -340,5 +396,6 @@ const BATCH_MODEL = Dict(
     "expression"  => false,
     "pca"         => false,
     "tsne"        => true,
+    "knn"         => false,
     "mixture"     => false,
     "vae-mixture" => false)

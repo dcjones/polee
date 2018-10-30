@@ -85,10 +85,10 @@ def find_sigmas(x0_log, target_perplexity):
         # print(delta_sig / delta_sig_sum)
         # print((i, perplexity))
         sigmas[i] = (sigma_lower + sigma_upper) / 2
-    print(sigmas)
+    # print(sigmas)
     # sys.exit()
     # sigmas[:] = 2.0
-    sigmas[:] = 3.0
+    #2sigmas[:] = 3.0
     return sigmas
 
 
@@ -145,7 +145,7 @@ def tsne_q(z, alpha):
 
 def sample_minibatch(feed_dict, full_data, num_samples, B):
     idxs = np.array([i for i in range(num_samples)])
-    # np.random.shuffle(idxs) # TODO:
+    np.random.shuffle(idxs)
     # idxs = np.flip(idxs)
     minibatch_idx = idxs[0:B]
 
@@ -158,104 +158,82 @@ def sample_minibatch(feed_dict, full_data, num_samples, B):
 
 def estimate_transcript_tsne(
         init_feed_dict, num_samples, n, vars, x0_log,
-        num_pca_components, B):
+        num_pca_components, B, use_neural_network):
 
     sess = tf.Session()
 
     # estimate posterior expression distribution
-    x = estimate_transcript_expression(
+    x_loc_full, x_scale_full = estimate_transcript_expression(
         init_feed_dict, num_samples, n, vars, x0_log, sess)
-    # TODO: Gotta make a x a placeholder if we want to do minibatches
 
-    # x = tf.Print(x, [x], "x")
-
-    x0 = sess.run(x)
-
-    B = 56
-    print("B =", B)
+    # TODO: options to pass these parameters in
     alpha = 1.0
-    target_perplexity = 2.0
+    target_perplexity = 10.0
 
-    tsne_all_sigmas = find_sigmas(x0, target_perplexity)
+    # x0 = np.random.normal(x_loc_full, x_scale_full)
+    # tsne_all_sigmas = find_sigmas(x0, target_perplexity)
+
+    tsne_all_sigmas = find_sigmas(x_loc_full, target_perplexity)
+
+    x_loc = tf.placeholder(tf.float32, (None, n), name="x_loc")
+    x_scale = tf.placeholder(tf.float32, (None, n), name="x_scale")
     tsne_sigmas = tf.placeholder(tf.float32, shape=(None,), name="tsne_sigmas_batch")
 
     full_data = {}
-    # varnames = ["efflen", "la_mu", "la_sigma", "la_alpha", "left_index", "right_index", "leaf_index"]
-    # for varname in varnames:
-    #     full_data[vars[varname]] = init_feed_dict[vars[varname]]
     full_data[tsne_sigmas] = tsne_all_sigmas
+    full_data[x_loc] = x_loc_full
+    full_data[x_scale] = x_scale_full
 
-    # x = tf.Print(x, [x], "x", summarize=10)
+    x = ed.Normal(loc=x_loc, scale=x_scale, name="x")
 
     # feed-forward network mapping onto low-dimensional latent space
-    lyr1 = tf.layers.dense(
-        x, 256,
-        # use_bias=False,
-        activation=tf.nn.leaky_relu,
-        bias_initializer=tf.zeros_initializer(),
-        # kernel_initializer=tf.random_normal_initializer(0.0, 0.0001/n))
-    )
+    if use_neural_network:
+        activation=tf.nn.leaky_relu
 
-    # lyr1 = tf.Print(lyr1, [lyr1], "lyr1", summarize=10)
+        lyr1 = tf.layers.dense(
+            x, 500,
+            activation=activation,
+            bias_initializer=tf.zeros_initializer(),
+            # kernel_initializer=tf.random_normal_initializer(0.0, 0.0001/n))
+        )
 
-    lyr2 = tf.layers.dense(
-        lyr1, 512,
-        # use_bias=False,
-        activation=tf.nn.leaky_relu,
-        bias_initializer=tf.zeros_initializer(),
-        # kernel_initializer=tf.random_normal_initializer(0.0, 0.01))
-    )
+        lyr2 = tf.layers.dense(
+            lyr1, 500,
+            activation=activation,
+            bias_initializer=tf.zeros_initializer(),
+            # kernel_initializer=tf.random_normal_initializer(0.0, 0.01))
+        )
 
-    # lyr2 = tf.Print(lyr2, [lyr2], "lyr2", summarize=10)
+        lyr3 = tf.layers.dense(
+            lyr1, 2000,
+            activation=activation,
+            bias_initializer=tf.zeros_initializer(),
+            # kernel_initializer=tf.random_normal_initializer(0.0, 0.01))
+        )
 
-    z = tf.layers.dense(
-        lyr2, num_pca_components,
-        # use_bias=False,
-        activation=tf.identity,
-        # bias_initializer=tf.zeros_initializer(),
-        # kernel_initializer=tf.random_normal_initializer(0.0, 0.1))
-    )
+        z = tf.layers.dense(
+            lyr3,
+            num_pca_components,
+            activation=tf.identity)
+    else:
+        z = tf.layers.dense(
+            x,
+            num_pca_components,
+            activation=tf.identity)
 
-    # weights = tf.get_default_graph().get_tensor_by_name(
-    #     os.path.split(z.name)[0] + '/kernel:0')
-
-    # bias = tf.get_default_graph().get_tensor_by_name(
-    #     os.path.split(z.name)[0] + '/bias:0')
-
-    # z = tf.Print(z, [weights], "z weights", summarize=10)
-    # z = tf.Print(z, [bias], " z bias", summarize=10)
-
-    # z = tf.Print(z, [z], "z", summarize=10)
-
-    # t-SNE objective function
-
-    # TODO: make sure diagonal on both of these is zeroed out
-    one_diag = tf.diag(tf.ones(tf.shape(tsne_sigmas)))
+    # for numerical stability
     eps = 1e-6
+
     p = tsne_p(x, tsne_sigmas) # [B, B]
     p += eps
-    # p += one_diag
-
-    # p = tf.Print(p, [p], "p", summarize=16)
-    # p = tf.Print(p, [tf.reduce_min(p), tf.reduce_max(p)], "p", summarize=10)
 
     q = tsne_q(z, alpha) # [B, B]
     q += eps
-    # q += one_diag
 
-    # q = tf.Print(q, [q], "q", summarize=16)
-    # q = tf.Print(q, [tf.reduce_min(q), tf.reduce_max(q)], "q", summarize=10)
-
+    # KL divergence between p and q
     loss = tf.reduce_sum(p * tf.log(p / q))
-    # loss = tf.Print(loss, [p*tf.log(p/q)], "p*log(p/q)", summarize=400)
-    # loss = tf.Print(loss, [tf.reduce_min(tf.abs(p*tf.log(p/q))), tf.reduce_max(tf.abs(p*tf.log(p/q)))], "p*log(p/q)", summarize=400)
-    # loss = tf.Print(loss, [tf.reduce_min(tf.abs(tf.log(p/q))), tf.reduce_max(tf.abs(tf.log(p/q)))], "p*log(p/q)", summarize=400)
-    # loss = tf.Print(loss, [tf.gradients(loss, q_diff)], "loss grad", summarize=10)
 
-    # TODO: pairwise vlr in data space
-    # TODO: pairwise vlr in latent space
-
-    optimizer = tf.train.AdamOptimizer(learning_rate=1e-4)
+    optimizer = tf.train.AdamOptimizer(learning_rate=1e-5)
     train = optimizer.minimize(loss)
     sample_minibatch(init_feed_dict, full_data, num_samples, B)
 
@@ -265,10 +243,12 @@ def estimate_transcript_tsne(
     batch_feed_dict = {}
     for var in full_data:
         batch_feed_dict[var] = None
-    for iter in range(1000):
+    n_iter = 5000
+    prog = Progbar(50, n_iter)
+    for iter in range(n_iter):
         sample_minibatch(batch_feed_dict, full_data, num_samples, B)
         _, loss_value = sess.run([train, loss], feed_dict=batch_feed_dict)
-        print(loss_value)
+        prog.update(iter, loss=loss_value)
 
     # sample z and average
     z_estimate = np.zeros((num_samples, num_pca_components))

@@ -58,5 +58,6 @@ def train(sess, objective, init_feed_dict, n_iter, learning_rate, var_list=None)
         obj_value = sess.run(objective)
         prog.update(iter, loss=obj_value)
         train_writer.add_summary(sess.run(merged_summary), iter)
+    print()
 
 

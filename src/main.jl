@@ -362,9 +362,11 @@ function main()
             "--num-mixture-components"
                 default = 12
                 arg_type = Int
-            "--num-pca-components"
+            "--num-components"
                 default = 2
                 arg_type = Int
+            "--neural-network"
+                action = :store_true
             "--batch-size"
                 default = 20
                 arg_type = Int

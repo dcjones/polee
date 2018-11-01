@@ -13,6 +13,7 @@ from tensorflow_probability import edward2 as ed
 from polee_approx_likelihood import *
 from polee_training import *
 from polee_transcript_expression import estimate_transcript_expression
+from polee_approx_likelihood import *
 
 def pairwise_vlr(y):
     delta = tf.expand_dims(y, 0) - tf.expand_dims(y, 1)

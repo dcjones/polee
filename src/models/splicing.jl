@@ -59,48 +59,21 @@ simple to do.
 So all we have to do is optimize q's parameters using stochastic gradient descent
 against samples drawn from p.
 """
-function approximate_splicing_likelihood(input::ModelInput)
+function approximate_splicing_likelihood(input::ModelInput, sess)
     num_samples, n = size(input.loaded_samples.x0_values)
 
     (num_features,
      feature_idxs, feature_transcript_idxs,
      antifeature_idxs, antifeature_transcript_idxs) = splicing_features(input)
 
-    # Approximation
+    feature_indices = hcat(feature_idxs .- 1, feature_transcript_idxs .- 1)
+    antifeature_indices = hcat(antifeature_idxs .- 1, antifeature_transcript_idxs .- 1)
 
-    x_feature_loc = polee_py.ImproperPrior(
-        value=tf.zeros([num_samples, num_features]))
+    qx_feature_loc, qx_feature_scale = polee_py[:approximate_splicing_likelihood](
+        input.loaded_samples.init_feed_dict, input.loaded_samples.vars,
+        num_features, n, feature_indices, antifeature_indices, sess)
 
-    x_feature_scale = polee_py.ImproperPrior(
-        value=tf.zeros([num_samples, num_features]))
-
-    x_feature = edmodels.NormalWithSoftplusScale(
-        loc=x_feature_loc, scale=x_feature_scale, name="x_feature")
-
-    # Inference
-    qx_feature_loc_param = tf.Variable(
-        tf.zeros([num_samples, num_features]), name="qx_feature_loc_param")
-    # qx_feature_loc_param = tf_print_span(qx_feature_loc_param, "qx_feature_loc_param")
-    qx_feature_loc = edmodels.PointMass(qx_feature_loc_param)
-
-    qx_feature_scale_param = tf.Variable(
-        tf.zeros([num_samples, num_features]), name="qx_feature_scale_param")
-    # qx_feature_scale_param = tf_print_span(qx_feature_scale_param, "qx_feature_scale_param")
-    qx_feature_scale = edmodels.PointMass(qx_feature_scale_param)
-
-    T = x -> transcript_expression_to_splicing_log_ratios(
-                num_features, n, feature_idxs, feature_transcript_idxs,
-                antifeature_idxs, antifeature_transcript_idxs, x)
-
-    optimizer = tf.train[:AdamOptimizer](1e-2)
-    latent_vars = Dict(
-        x_feature_loc    => qx_feature_loc,
-        x_feature_scale  => qx_feature_scale
-    )
-    run_implicit_model_map_inference(input, x_feature, T, latent_vars, 500, optimizer)
-
-    sess = ed.get_session()
-    return (sess[:run](qx_feature_loc), sess[:run](qx_feature_scale))
+    return (qx_feature_loc, qx_feature_scale)
 end
 
 

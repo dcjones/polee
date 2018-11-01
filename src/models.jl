@@ -97,33 +97,33 @@ function estimate_transcript_tsne(input::ModelInput)
         input.loaded_samples.variables, x0_log, num_pca_components,
         batch_size, use_neural_network)
 
-    print_knn_graph(
-        "tsne-knn.csv", knn(5, z), input.loaded_samples.sample_names)
+    # print_knn_graph(
+    #     "tsne-knn.csv", knn(5, z), input.loaded_samples.sample_names)
 
-    open("p.csv", "w") do output
-        for i in 1:size(p, 1)
-            for j in 1:size(p, 1)
-                if j > 1
-                    print(output, ",")
-                end
-                print(output, p[i, j])
-            end
-            println(output)
-        end
-    end
+    # open("p.csv", "w") do output
+    #     for i in 1:size(p, 1)
+    #         for j in 1:size(p, 1)
+    #             if j > 1
+    #                 print(output, ",")
+    #             end
+    #             print(output, p[i, j])
+    #         end
+    #         println(output)
+    #     end
+    # end
 
 
-    open("q.csv", "w") do output
-        for i in 1:size(q, 1)
-            for j in 1:size(q, 1)
-                if j > 1
-                    print(output, ",")
-                end
-                print(output, q[i, j])
-            end
-            println(output)
-        end
-    end
+    # open("q.csv", "w") do output
+    #     for i in 1:size(q, 1)
+    #         for j in 1:size(q, 1)
+    #             if j > 1
+    #                 print(output, ",")
+    #             end
+    #             print(output, q[i, j])
+    #         end
+    #         println(output)
+    #     end
+    # end
 
 
     if haskey(input.parsed_args, "output-pca-w") && input.parsed_args["output-pca-w"] !== nothing
@@ -137,7 +137,7 @@ end
 
 
 function estimate_gene_tsne(input::ModelInput)
-    # TODO:
+    error("t-SNE estimates for genes not yet supported.")
 end
 
 

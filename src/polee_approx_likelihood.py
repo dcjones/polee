@@ -57,6 +57,18 @@ def rnaseq_approx_likelihood_sampler(
     return x
 
 
+def rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars):
+    return rnaseq_approx_likelihood_sampler(
+        z0_mu=tf.zeros([num_samples, n]),
+        efflens=vars["efflen"],
+        mu=vars["la_mu"],
+        sigma=vars["la_sigma"],
+        alpha=vars["la_alpha"],
+        left_index=vars["left_index"],
+        right_index=vars["right_index"],
+        leaf_index=vars["leaf_index"])
+
+
 """
 Approximated RNA-Seq likelihood.
 """

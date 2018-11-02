@@ -86,7 +86,7 @@ def find_sigmas(x0_log, target_perplexity):
         # print(delta_sig / delta_sig_sum)
         # print((i, perplexity))
         sigmas[i] = (sigma_lower + sigma_upper) / 2
-    print(sigmas)
+    # print(sigmas)
     # sigmas[:] = 2.0
     # sigmas[:] = 3.0
     return sigmas

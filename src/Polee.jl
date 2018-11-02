@@ -120,9 +120,7 @@ include("isometric_log_ratios.jl")
 include("additive_log_ratios.jl")
 include("sequences.jl")
 include("evaluate.jl")
-
-# TODO: move this to main directory
-include("models/splicing.jl")
+include("splicing.jl")
 
 include("models.jl")
 

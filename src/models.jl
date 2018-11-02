@@ -99,7 +99,11 @@ function estimate_transcript_tsne(input::ModelInput)
         input.loaded_samples.init_feed_dict, num_samples, n,
         input.loaded_samples.variables, x0_log, sess)
 
-    z, p, q = polee_py[:estimate_tsne](
+    tf[:reset_default_graph]() # free up some memory
+    sess[:close]()
+    sess = tf[:Session]()
+
+    z = polee_py[:estimate_tsne](
         x_loc_full, x_scale_full,
         input.loaded_samples.init_feed_dict,
         input.loaded_samples.variables, num_pca_components,
@@ -159,7 +163,11 @@ function estimate_splicing_tsne(input::ModelInput)
     sess = tf[:Session]()
     x_loc_full, x_scale_full = approximate_splicing_likelihood(input, sess)
 
-    z, p, q = polee_py[:estimate_tsne](
+    tf[:reset_default_graph]() # free up some memory
+    sess[:close]()
+    sess = tf[:Session]()
+
+    z = polee_py[:estimate_tsne](
         x_loc_full, x_scale_full,
         input.loaded_samples.init_feed_dict,
         input.loaded_samples.variables, num_pca_components,

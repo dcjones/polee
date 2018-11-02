@@ -87,8 +87,7 @@ def find_sigmas(x0_log, target_perplexity):
         # print((i, perplexity))
         sigmas[i] = (sigma_lower + sigma_upper) / 2
     print(sigmas)
-    # sys.exit()
-    sigmas[:] = 2.0
+    # sigmas[:] = 2.0
     # sigmas[:] = 3.0
     return sigmas
 
@@ -97,16 +96,26 @@ def tsne_p(x, sigmas):
     delta = pairwise_l2(x) # [B, B]
     # delta = pairwise_vlr(x) # [B, B]
 
-    # delta = tf.Print(delta, [delta], "delta", summarize=25)
+    # delta = tf.Print(delta, [delta], "delta", summarize=10000)
+    # delta = tf.Print(delta, [tf.reduce_min(delta), tf.reduce_max(delta)], "delta")
+    # delta = tf.Print(delta, [tf.reduce_all(tf.is_finite(delta))], "delta")
 
-    # delta = tf.Print(delta, [delta], "delta", summarize=25)
     delta_sig = tf.exp(-delta / (2*tf.square(tf.expand_dims(sigmas, 0)))) # [B, B]
+    delta_sig = tf.clip_by_value(delta_sig, 1e-12, 1.0)
     delta_sig = delta_sig - tf.diag(tf.diag_part(delta_sig))
 
+    # delta_sig = tf.Print(delta_sig, [tf.reduce_min(delta_sig), tf.reduce_max(delta_sig)], "delta_sig")
+    # delta_sig = tf.Print(delta_sig, [tf.reduce_all(tf.is_finite(delta_sig))], "delta_sig")
     # delta_sig = tf.Print(delta_sig, [delta_sig], "delta_sig", summarize=25)
+
     delta_sig_sum = tf.reduce_sum(delta_sig, axis=0)
+
+    # delta_sig_sum = tf.Print(delta_sig_sum, [tf.reduce_min(delta_sig_sum), tf.reduce_max(delta_sig_sum)], "delta_sig_sum")
+    # delta_sig_sum = tf.Print(delta_sig_sum, [tf.reduce_all(tf.is_finite(delta_sig_sum))], "delta_sig_sum")
+
     p_j_i = delta_sig / delta_sig_sum
     # p_j_i = tf.Print(p_j_i, [p_j_i], "p_j_i", summarize=25)
+    # p_j_i = tf.Print(p_j_i, [tf.reduce_all(tf.is_finite(p_j_i))], "p_j_i")
 
     # symmetrize p_j_i
     B = tf.cast(tf.shape(sigmas), tf.float32)
@@ -115,6 +124,8 @@ def tsne_p(x, sigmas):
     # Simpler way, that is more sensitive to outliers, according to the paper.
     # p_ji = (delta_sig + tf.transpose(delta_sig))
     # p_ji /= tf.reduce_sum(p_ji)
+
+    # p_ji = tf.Print(p_ji, [tf.reduce_all(tf.is_finite(p_ji))], "p_ji")
 
     return p_ji
 
@@ -152,16 +163,19 @@ def estimate_tsne(
         init_feed_dict, vars,
         num_pca_components, B, use_neural_network, sess):
 
+    # assume we don't have to reinitialize anything here
+    init_feed_dict = dict()
+
     num_samples, n = np.shape(x_loc_full)
 
     # TODO: options to pass these parameters in
     alpha = 1.0
-    target_perplexity = 10.0
+    target_perplexity = 50.0
 
-    # x0 = np.random.normal(x_loc_full, x_scale_full)
-    # tsne_all_sigmas = find_sigmas(x0, target_perplexity)
+    x0 = np.random.normal(x_loc_full, x_scale_full)
+    tsne_all_sigmas = find_sigmas(x0, target_perplexity)
 
-    tsne_all_sigmas = find_sigmas(x_loc_full, target_perplexity)
+    # tsne_all_sigmas = find_sigmas(x_loc_full, target_perplexity)
 
     x_loc = tf.placeholder(tf.float32, (None, n), name="x_loc")
     x_scale = tf.placeholder(tf.float32, (None, n), name="x_scale")
@@ -252,7 +266,6 @@ def estimate_tsne(
     for var in full_data:
         batch_feed_dict[var] = None
     n_iter = 5000
-    # n_iter = 50
     prog = Progbar(50, n_iter)
     for iter in range(n_iter):
         sample_minibatch(batch_feed_dict, full_data, num_samples, B)
@@ -265,5 +278,6 @@ def estimate_tsne(
     for iter in range(n_est_iterations):
         z_estimate += sess.run(z, feed_dict=full_data) / n_est_iterations
 
-    return z_estimate, sess.run(p, feed_dict=full_data), sess.run(q, feed_dict=full_data)
+    # return z_estimate, sess.run(p, feed_dict=full_data), sess.run(q, feed_dict=full_data)
+    return z_estimate
 

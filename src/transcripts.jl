@@ -146,7 +146,7 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
             parent_name = getfirst_else_empty(entry, "Parent")
             if !isempty(excluded_transcripts) &&
                (startswith(parent_name, "transcript:") &&
-                replace(parent_name, "transcript:", "") ∈ excluded_transcripts) ||
+                replace(parent_name, "transcript:" => "") ∈ excluded_transcripts) ||
                parent_name ∈ excluded_transcripts
                 continue
             end

@@ -86,10 +86,10 @@ def find_sigmas(x0_log, target_perplexity):
         # print(delta_sig / delta_sig_sum)
         # print((i, perplexity))
         sigmas[i] = (sigma_lower + sigma_upper) / 2
-    # print(sigmas)
+    print(sigmas)
     # sys.exit()
-    # sigmas[:] = 2.0
-    #2sigmas[:] = 3.0
+    sigmas[:] = 2.0
+    # sigmas[:] = 3.0
     return sigmas
 
 
@@ -112,18 +112,9 @@ def tsne_p(x, sigmas):
     B = tf.cast(tf.shape(sigmas), tf.float32)
     p_ji = (p_j_i + tf.transpose(p_j_i)) / (2*B)
 
-    # TODO: Why not just this
-    #
-    # Oh this is why:
-    # It is also possible to compute the joint probabilities p_ij directly by
-    # normalizing over all pairs of datapoints in Equation 2.2, however, such
-    # an approach gives inferior results under the presence of outliers.
-    #
-    # Ok, we should probably try to do it correctly.
-
+    # Simpler way, that is more sensitive to outliers, according to the paper.
     # p_ji = (delta_sig + tf.transpose(delta_sig))
     # p_ji /= tf.reduce_sum(p_ji)
-
 
     return p_ji
 
@@ -147,7 +138,6 @@ def tsne_q(z, alpha):
 def sample_minibatch(feed_dict, full_data, num_samples, B):
     idxs = np.array([i for i in range(num_samples)])
     np.random.shuffle(idxs)
-    # idxs = np.flip(idxs)
     minibatch_idx = idxs[0:B]
 
     for (var, arr) in full_data.items():
@@ -157,15 +147,12 @@ def sample_minibatch(feed_dict, full_data, num_samples, B):
             feed_dict[var] = arr[minibatch_idx]
 
 
-def estimate_transcript_tsne(
-        init_feed_dict, num_samples, n, vars, x0_log,
-        num_pca_components, B, use_neural_network):
+def estimate_tsne(
+        x_loc_full, x_scale_full,
+        init_feed_dict, vars,
+        num_pca_components, B, use_neural_network, sess):
 
-    sess = tf.Session()
-
-    # estimate posterior expression distribution
-    x_loc_full, x_scale_full = estimate_transcript_expression(
-        init_feed_dict, num_samples, n, vars, x0_log, sess)
+    num_samples, n = np.shape(x_loc_full)
 
     # TODO: options to pass these parameters in
     alpha = 1.0
@@ -184,6 +171,14 @@ def estimate_transcript_tsne(
     full_data[tsne_sigmas] = tsne_all_sigmas
     full_data[x_loc] = x_loc_full
     full_data[x_scale] = x_scale_full
+
+    # print(n)
+    # print(np.shape(x_loc_full))
+    # print(np.shape(x_scale_full))
+    # print(x_loc)
+    # print(x_scale)
+    # print(B)
+    # sys.exit()
 
     x = ed.Normal(loc=x_loc, scale=x_scale, name="x")
 
@@ -227,12 +222,24 @@ def estimate_transcript_tsne(
 
     p = tsne_p(x, tsne_sigmas) # [B, B]
     p += eps
+    # p = tf.Print(p, [tf.reduce_min(p), tf.reduce_max(p)], "p")
+    # p = tf.Print(p, [p], "p", summarize=16)
 
     q = tsne_q(z, alpha) # [B, B]
     q += eps
+    # q = tf.Print(q, [q], "q", summarize=16)
+    # q = tf.Print(q, [tf.reduce_min(q), tf.reduce_max(q)], "q")
+
+    # print(B)
+    # print(p)
+    # print(q)
+    # sys.exit()
 
     # KL divergence between p and q
     loss = tf.reduce_sum(p * tf.log(p / q))
+    # loss = tf.Print(loss, [tf.log(p/q)], "log(p/q)", summarize=16)
+    # loss = tf.Print(loss, [p*tf.log(p/q)], "p*log(p/q)", summarize=16)
+    # loss = tf.Print(loss, [loss], "loss")
 
     optimizer = tf.train.AdamOptimizer(learning_rate=1e-5)
     train = optimizer.minimize(loss)
@@ -245,6 +252,7 @@ def estimate_transcript_tsne(
     for var in full_data:
         batch_feed_dict[var] = None
     n_iter = 5000
+    # n_iter = 50
     prog = Progbar(50, n_iter)
     for iter in range(n_iter):
         sample_minibatch(batch_feed_dict, full_data, num_samples, B)

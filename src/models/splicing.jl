@@ -70,8 +70,8 @@ function approximate_splicing_likelihood(input::ModelInput, sess)
     antifeature_indices = hcat(antifeature_idxs .- 1, antifeature_transcript_idxs .- 1)
 
     qx_feature_loc, qx_feature_scale = polee_py[:approximate_splicing_likelihood](
-        input.loaded_samples.init_feed_dict, input.loaded_samples.vars,
-        num_features, n, feature_indices, antifeature_indices, sess)
+        input.loaded_samples.init_feed_dict, input.loaded_samples.variables,
+        num_samples, num_features, n, feature_indices, antifeature_indices, sess)
 
     return (qx_feature_loc, qx_feature_scale)
 end

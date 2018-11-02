@@ -120,11 +120,14 @@ include("isometric_log_ratios.jl")
 include("additive_log_ratios.jl")
 include("sequences.jl")
 include("evaluate.jl")
+
+# TODO: move this to main directory
+include("models/splicing.jl")
+
 include("models.jl")
 
 # TODO: need to rethink this wit the move to edward2
 # POLEE_MODELS = Dict{String, Function}()
-# include("models/splicing.jl")
 # include("models/linear-regression.jl")
 # include("models/simple-linear-regression.jl")
 # include("models/simple-mode.jl")

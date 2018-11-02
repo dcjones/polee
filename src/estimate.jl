@@ -209,7 +209,7 @@ function load_samples_hdf5(
         # sz = (nothing, size(val)[2:end]...)
         sz = size(val)
         var_init = tf[:placeholder](typ, shape=sz)
-        var = tf[:Variable](var_init, name=name)
+        var = tf[:Variable](var_init, name=name, trainable=false)
         variables[name] = var
         init_feed_dict[var_init] = val
     end

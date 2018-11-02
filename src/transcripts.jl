@@ -545,14 +545,13 @@ function get_introns(ts::Transcripts)
             first = t.metadata.exons[i-1].last + 1
             last  = t.metadata.exons[i].first - 1
 
-            key = Interval{Void}(t.seqname, first, last, t.strand, nothing)
+            key = Interval{Nothing}(t.seqname, first, last, t.strand, nothing)
             entry = findfirst(introns, key, filter=(a,b)->a.strand==b.strand)
-            if isnull(entry)
+            if entry === nothing
                 entry = Interval{Vector{Int}}(t.seqname, first, last, t.strand, Int[t.metadata.id])
                 push!(introns, entry)
             else
-                entry_ = get(entry)
-                push!(get(entry).metadata, t.metadata.id)
+                push!(entry.metadata, t.metadata.id)
             end
         end
     end
@@ -583,13 +582,13 @@ function get_cassette_exons(ts::Transcripts, introns::IntervalCollection{Vector{
                                            (e2.first, e2.last))
 
             entry = findfirst(flanking_introns, key, filter=match_strand_exon)
-            if isnull(entry)
+            if entry === nothing
                 push!(flanking_introns,
                       Interval{Tuple{Int, Int, Vector{Int}}}(
                           key.seqname, key.first, key.last, key.strand,
                           (key.metadata[1], key.metadata[2], Int[t.metadata.id])))
             else
-                push!(get(entry).metadata[3], t.metadata.id)
+                push!(entry.metadata[3], t.metadata.id)
             end
 
             i += 1
@@ -599,8 +598,8 @@ function get_cassette_exons(ts::Transcripts, introns::IntervalCollection{Vector{
     cassette_exons = Tuple{Interval{Vector{Int}}, Interval{Tuple{Int, Int, Vector{Int}}}}[]
     for flanks in flanking_introns
         intron = findfirst(introns, flanks, filter=(a,b)->a.strand==b.strand)
-        if !isnull(intron)
-            push!(cassette_exons, (get(intron), flanks))
+        if intron !== nothing
+            push!(cassette_exons, (intron, flanks))
         end
     end
 
@@ -739,24 +738,23 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
                     a.metadata[1] == b.metadata[1] &&
                     a.metadata[2] == b.metadata[2])
             @assert short_tid != long_tid
-            if isnull(entry)
+            if entry === nothing
                 entry = Interval{AltAccDonMetadata}(
                     a.seqname, short_first, short_last, a.strand,
                     (Int(long_first), Int(long_last), Set{Int}(short_tid), Set{Int}(long_tid)))
                 push!(alt_accdon_sites, entry)
             else
-                entry_ = get(entry)
-                push!(entry_.metadata[3], short_tid)
-                push!(entry_.metadata[4], long_tid)
+                push!(entry.metadata[3], short_tid)
+                push!(entry.metadata[4], long_tid)
             end
         elseif has_retained_intron
-            key = Interval{Void}(
+            key = Interval{Nothing}(
                 a.seqname, retained_intron_first, retained_intron_last,
                 a.strand, nothing)
             entry = findfirst(retained_introns, key,
                 filter=(a,b) -> a.strand == b.strand)
             @assert retained_intron_exclude_tid != retained_intron_include_tid
-            if isnull(entry)
+            if entry === nothing
                 entry = Interval{RetIntronMetadata}(
                     a.seqname, retained_intron_first, retained_intron_last,
                     a.strand, (
@@ -764,9 +762,8 @@ function get_alt_donor_acceptor_sites(ts::Transcripts)
                         Set{Int}(retained_intron_exclude_tid)))
                 push!(retained_introns, entry)
             else
-                entry_ = get(entry)
-                push!(entry_.metadata[1], retained_intron_include_tid)
-                push!(entry_.metadata[2], retained_intron_exclude_tid)
+                push!(entry.metadata[1], retained_intron_include_tid)
+                push!(entry.metadata[2], retained_intron_exclude_tid)
             end
         end
     end

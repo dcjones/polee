@@ -4,6 +4,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 from polee_approx_likelihood import *
+from polee_training import *
 
 
 """
@@ -11,7 +12,7 @@ If x is a tensor giving transcript expression, return a tensor giving
 the corresponding splicing log-ratios.
 """
 def transcript_expression_to_splicing_log_ratios(
-        num_features, n, feature_indices, antifeature_indices, x);
+        num_features, n, feature_indices, antifeature_indices, x):
 
     feature_matrix = tf.SparseTensor(
         indices=feature_indices,
@@ -41,15 +42,16 @@ Approximate likelihood function for splicing ratios using a normal distribution
 by minimizing KL(p||q) (not KL(q||p), which is more typical in VI).
 """
 def approximate_splicing_likelihood(
-        init_feed_dict, vars,
-        num_features, n, feature_indices, antifeature_indices, sess=None):
+        init_feed_dict, vars, num_samples, num_features, n,
+        feature_indices, antifeature_indices, sess=None):
 
     qx_feature_loc = tf.Variable(
-        tf.zeros([num_samples, num_features],
-        name="qx_feature_loc"))
-
-    qx_feature_scale = tf.softplus(tf.Variable(
         tf.zeros([num_samples, num_features]),
+        name="qx_feature_loc")
+
+    qx_feature_scale = tf.nn.softplus(tf.Variable(
+        # tf.zeros([num_samples, num_features]),
+        tf.fill([num_samples, num_features], -2.0),
         name="qx_feature_scale_softminus"))
 
     qx_feature = tfd.Normal(

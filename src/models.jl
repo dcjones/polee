@@ -92,10 +92,18 @@ function estimate_transcript_tsne(input::ModelInput)
     batch_size = min(num_samples, input.parsed_args["batch-size"])
     use_neural_network = input.parsed_args["neural-network"]
     x0_log = log.(input.loaded_samples.x0_values)
-    z, p, q = polee_py[:estimate_transcript_tsne](
+
+    sess = tf[:Session]()
+
+    x_loc_full, x_scale_full = polee_py[:estimate_transcript_expression](
         input.loaded_samples.init_feed_dict, num_samples, n,
-        input.loaded_samples.variables, x0_log, num_pca_components,
-        batch_size, use_neural_network)
+        input.loaded_samples.variables, x0_log, sess)
+
+    z, p, q = polee_py[:estimate_tsne](
+        x_loc_full, x_scale_full,
+        input.loaded_samples.init_feed_dict,
+        input.loaded_samples.variables, num_pca_components,
+        batch_size, use_neural_network, sess)
 
     # print_knn_graph(
     #     "tsne-knn.csv", knn(5, z), input.loaded_samples.sample_names)
@@ -142,7 +150,28 @@ end
 
 
 function estimate_splicing_tsne(input::ModelInput)
-    # TODO:
+    num_samples, n = size(input.loaded_samples.x0_values)
+    num_pca_components = Int(get(input.parsed_args, "num-components", 8))
+    batch_size = min(num_samples, input.parsed_args["batch-size"])
+    use_neural_network = input.parsed_args["neural-network"]
+    x0_log = log.(input.loaded_samples.x0_values)
+
+    sess = tf[:Session]()
+    x_loc_full, x_scale_full = approximate_splicing_likelihood(input, sess)
+
+    z, p, q = polee_py[:estimate_tsne](
+        x_loc_full, x_scale_full,
+        input.loaded_samples.init_feed_dict,
+        input.loaded_samples.variables, num_pca_components,
+        batch_size, use_neural_network, sess)
+
+    if haskey(input.parsed_args, "output-pca-w") && input.parsed_args["output-pca-w"] !== nothing
+        write_pca_w(input.parsed_args["output-pca-w"], input, w)
+    end
+
+    output_filename = input.output_filename !== nothing ?
+        input.output_filename : "splicing-tsne-estimates.csv"
+    write_pca_z(output_filename, input, z)
 end
 
 

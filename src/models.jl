@@ -71,27 +71,10 @@ function build_linear_regression_design_matrix(input::ModelInput, include_bias::
 end
 
 
-"""
-Estimate linear regression over transcript expression.
-"""
-function estimate_transcript_linear_regression(input::ModelInput)
-    num_factors, factoridx, X = build_linear_regression_design_matrix(input)
-    num_samples, n = size(input.loaded_samples.x0_values)
-    x0_log = log.(input.loaded_samples.x0_values)
-    w_loc, w_scale, x_sigma_sq_mean = polee_py[:estimate_transcript_linear_regression](
-        input.loaded_samples.init_feed_dict, num_samples, n,
-        input.loaded_samples.variables, x0_log, X)
-
+function write_linear_regression_effects(
+        input::ModelInput, factoridx, w_loc, w_scale, x_sigma_sq_mean)
     output_filename = input.output_filename === nothing ?
         "effects.db" : input.output_filename
-
-    # mean_est = sess[:run](w_loc)
-    # sigma_est = sess[:run](w_scale)
-
-    # log-normal distribution mean
-    # error_sigma = sqrt.(exp.(sess[:run](
-    #     tf.add(qx_sigma_sq_mu_param,
-    #             tf.div(tf.square(tf.nn[:softplus](qx_sigma_sq_sigma_param)), 2.0f0)))))
 
     lower_credible = similar(w_loc)
     upper_credible = similar(w_loc)
@@ -114,6 +97,21 @@ function estimate_transcript_linear_regression(input::ModelInput)
 end
 
 
+"""
+Estimate linear regression over transcript expression.
+"""
+function estimate_transcript_linear_regression(input::ModelInput)
+    num_factors, factoridx, X = build_linear_regression_design_matrix(input)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    x0_log = log.(input.loaded_samples.x0_values)
+    w_loc, w_scale, x_sigma_sq_mean = polee_py[:estimate_transcript_linear_regression](
+        input.loaded_samples.init_feed_dict, input.loaded_samples.variables, x0_log, X)
+
+    write_linear_regression_effects(
+        input, factoridx, w_loc, w_scale, x_sigma_sq_mean)
+end
+
+
 function estimate_gene_linear_regression(input::ModelInput)
     # TODO:
     error("Linear regression for $(input.feature) not supported")
@@ -121,8 +119,22 @@ end
 
 
 function estimate_splicing_linear_regression(input::ModelInput)
-    # TODO:
-    error("Linear regression for $(input.feature) not supported")
+    sess = tf[:Session]()
+    splice_lr_loc, splice_lr_scale = approximate_splicing_likelihood(input, sess)
+    tf[:reset_default_graph]() # free up some memory
+    sess[:close]()
+
+    num_factors, factoridx, X = build_linear_regression_design_matrix(input)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    x0_log = log.(input.loaded_samples.x0_values)
+
+    w_loc, w_scale, x_sigma_sq_mean = polee_py[:estimate_splicing_linear_regression](
+        input.loaded_samples.init_feed_dict,
+        splice_lr_loc, splice_lr_scale,
+        x0_log, X)
+
+    write_linear_regression_effects(
+        input, factoridx, w_loc, w_scale, x_sigma_sq_mean)
 end
 
 
@@ -265,7 +277,6 @@ function estimate_splicing_tsne(input::ModelInput)
 
     sess = tf[:Session]()
     x_loc_full, x_scale_full = approximate_splicing_likelihood(input, sess)
-
     tf[:reset_default_graph]() # free up some memory
     sess[:close]()
     sess = tf[:Session]()

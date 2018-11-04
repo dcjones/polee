@@ -14,23 +14,27 @@ from polee_training import *
 from polee_approx_likelihood import *
 
 
-def transcript_linear_regression_model(num_factors, n, X):
-    w_mu0 = 0.0
-    w_sigma0 = 0.5
-    w_bias_mu0 = np.log(1/n)
-    w_bias_sigma0 = 4.0
-
+"""
+Define model for linear regression.
+    * `num_factors`: Number of factors
+    * `n`: Dimensionality
+    * `X`: 0/1 design matrix of shape [num_samples, num_factors]
+"""
+def linear_regression_model(
+        num_factors, num_features, X,
+        w_mu0, w_sigma0, w_bias_mu0, w_bias_sigma0,
+        sigma_alpha0=0.001, sigma_beta0=0.001, x_df0=10.0):
     sigma_alpha0 = 0.001
     sigma_beta0 = 0.001
 
     x_df0 = 10.0
 
     w_sigma = tf.concat(
-        [tf.constant(w_bias_sigma0, shape=[1, n], dtype=tf.float32),
-         tf.constant(w_sigma0, shape=[num_factors-1, n], dtype=tf.float32)], 0)
+        [tf.constant(w_bias_sigma0, shape=[1, num_features], dtype=tf.float32),
+         tf.constant(w_sigma0, shape=[num_factors-1, num_features], dtype=tf.float32)], 0)
     w_mu = tf.concat(
-        [tf.constant(w_bias_mu0, shape=[1, n], dtype=tf.float32),
-         tf.constant(w_mu0, shape=[num_factors-1, n], dtype=tf.float32)], 0)
+        [tf.constant(w_bias_mu0, shape=[1, num_features], dtype=tf.float32),
+         tf.constant(w_mu0, shape=[num_factors-1, num_features], dtype=tf.float32)], 0)
 
     w = ed.Normal(
         loc=w_mu,
@@ -39,8 +43,8 @@ def transcript_linear_regression_model(num_factors, n, X):
 
     x_mu = tf.matmul(X, w, name="x_mu")
 
-    x_sigma_alpha0 = tf.constant(sigma_alpha0, shape=[n], dtype=tf.float32)
-    x_sigma_beta0  = tf.constant(sigma_beta0, shape=[n], dtype=tf.float32)
+    x_sigma_alpha0 = tf.constant(sigma_alpha0, shape=[num_features], dtype=tf.float32)
+    x_sigma_beta0  = tf.constant(sigma_beta0, shape=[num_features], dtype=tf.float32)
     x_sigma_sq = ed.InverseGamma(
         concentration=x_sigma_alpha0,
         rate=x_sigma_beta0,
@@ -56,7 +60,10 @@ def transcript_linear_regression_model(num_factors, n, X):
     return w, x_sigma_sq, x
 
 
-def transcript_linear_regression_variational_model(
+"""
+Variational model for linear regression, to be paired with `linear_regression_model`.
+"""
+def linear_regression_variational_model(
         qw_loc, qw_scale,
         qx_sigma_sq_loc, qx_sigma_sq_scale,
         qx_loc, qx_scale):
@@ -82,47 +89,53 @@ def transcript_linear_regression_variational_model(
     return qw, qx_sigma_sq, qx
 
 
-def estimate_transcript_linear_regression(
-        init_feed_dict, num_samples, n, vars, x0_log, X_arr, sess=None):
 
-    X = tf.constant(X_arr, dtype=tf.float32)
-    num_factors = X.shape[1]
+"""
+Set up a linear regression model for variational inference, returning
+"""
+def linear_regression_inference(
+        init_feed_dict, X, x_init, make_likelihood,
+        w_mu0, w_sigma0, w_bias_mu0, w_bias_sigma0):
+    num_samples = int(X.shape[0])
+    num_factors = int(X.shape[1])
+    num_features = int(x_init.shape[1])
 
     log_joint = ed.make_log_joint_fn(
-        lambda: transcript_linear_regression_model(num_factors, n, X))
+        lambda: linear_regression_model
+            (num_factors, num_features, X, w_mu0, w_sigma0, w_bias_mu0, w_bias_sigma0))
 
     qw_loc_init = np.vstack(
-        [np.mean(x0_log, 0),
-         np.zeros((num_factors - 1, n), np.float32)])
+        [np.mean(x_init, 0),
+         np.zeros((num_factors - 1, num_features), np.float32)])
 
     qw_loc = tf.Variable(
         qw_loc_init,
         name="qw_loc",
         dtype=tf.float32)
     qw_scale = tf.nn.softplus(tf.Variable(
-        tf.fill([num_factors, n], -2.0),
+        tf.fill([num_factors, num_features], -2.0),
         name="qw_softminus_scale",
         dtype=tf.float32))
 
     qx_sigma_sq_loc = tf.Variable(
-        tf.fill([n], 0.0),
+        tf.fill([num_features], 0.0),
         name="qx_sigma_sq_mu_param",
         dtype=tf.float32)
     qx_sigma_sq_scale = tf.nn.softplus(tf.Variable(
-        tf.fill([n], 1.0),
+        tf.fill([num_features], 1.0),
         name="qx_sigma_sq_softminus_scale",
         dtype=tf.float32))
 
     qx_loc = tf.Variable(
-        x0_log,
+        x_init,
         name="qx_loc",
         dtype=tf.float32)
     qx_scale = tf.nn.softplus(tf.Variable(
-        tf.fill([num_samples, n], -2.0),
+        tf.fill([num_samples, num_features], -2.0),
         name="qx_softminus_scale",
         dtype=tf.float32))
 
-    qw, qx_sigma_sq, qx = transcript_linear_regression_variational_model(
+    qw, qx_sigma_sq, qx = linear_regression_variational_model(
         qw_loc, qw_scale, qx_sigma_sq_loc, qx_sigma_sq_scale, qx_loc, qx_scale)
 
     lp = log_joint(
@@ -131,7 +144,7 @@ def estimate_transcript_linear_regression(
         x=qx)
 
     variational_log_joint = ed.make_log_joint_fn(
-        lambda: transcript_linear_regression_variational_model(
+        lambda: linear_regression_variational_model(
             qw_loc, qw_scale, qx_sigma_sq_loc, qx_sigma_sq_scale, qx_loc, qx_scale))
 
     entropy = variational_log_joint(
@@ -139,12 +152,11 @@ def estimate_transcript_linear_regression(
         qx_sigma_sq=qx_sigma_sq,
         qx=qx)
 
-    likelihood = rnaseq_approx_likelihood_from_vars(vars, qx)
+    likelihood = make_likelihood(qx)
 
     elbo = lp + likelihood - entropy
 
-    if sess is None:
-        sess = tf.Session()
+    sess = tf.Session()
     train(sess, -elbo, init_feed_dict, 500, 2e-2)
 
     # point estimate of x error by taking exponent of log-normal mean.
@@ -155,3 +167,59 @@ def estimate_transcript_linear_regression(
     return (sess.run(qw.distribution.loc),
         sess.run(qw.distribution.scale),
         x_sigma_sq_mean)
+
+
+"""
+Run variational inference on transcript expression linear regression.
+"""
+def estimate_transcript_linear_regression(
+        init_feed_dict, vars, x_init, X_arr, sess=None):
+
+    X = tf.constant(X_arr, dtype=tf.float32)
+    num_features = x_init.shape[1]
+
+    w_mu0 = 0.0
+    w_sigma0 = 0.5
+    w_bias_mu0 = np.log(1/num_features)
+    w_bias_sigma0 = 4.0
+
+    make_likelihood = lambda qx: rnaseq_approx_likelihood_from_vars(vars, qx)
+    return linear_regression_inference(
+        init_feed_dict, X, x_init, make_likelihood,
+        w_mu0, w_sigma0, w_bias_mu0, w_bias_sigma0)
+
+
+
+"""
+Run variational inference on splicing log-ratio linear regression.
+"""
+def estimate_splicing_linear_regression(
+        init_feed_dict, splice_lr_loc, splice_lr_scale, x0_log, X_arr, sess=None):
+
+    # don't need this since we already used the transcript expression
+    # likelihood approximation to approximate splicing likelihood.
+    init_feed_dict.clear()
+
+    num_samples = splice_lr_loc.shape[0]
+    num_features = splice_lr_scale.shape[1]
+
+    splice_lr = tfd.Normal(
+        loc=splice_lr_loc,
+        scale=splice_lr_scale,
+        name="splice_lr")
+
+    make_likelihood = lambda qx: tf.reduce_sum(splice_lr.log_prob(qx))
+
+    X = tf.constant(X_arr, dtype=tf.float32)
+
+    # TODO: might try to find a better initialization
+    x_init = np.zeros((num_samples, num_features), np.float32)
+
+    w_mu0 = 0.0
+    w_sigma0 = 2.0
+    w_bias_mu0 = 0.0
+    w_bias_sigma0 = 10.0
+
+    return linear_regression_inference(
+        init_feed_dict, X, x_init, make_likelihood,
+        w_mu0, w_sigma0, w_bias_mu0, w_bias_sigma0)

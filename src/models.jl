@@ -23,6 +23,109 @@ function estimate_transcript_expression(input::ModelInput)
 end
 
 
+function estimate_linear_regression(input::ModelInput)
+    if input.feature == :transcript
+        return estimate_transcript_linear_regression(input)
+    elseif input.feature == :gene
+        return estimate_gene_linear_regression(input)
+    elseif input.feature == :splicing
+        return estimate_splicing_linear_regression(input)
+    else
+        error("Linear regression for $(input.feature) not supported")
+    end
+end
+
+
+"""
+Build a 0/1 matrix encoding factor membership for each sample. First axis is
+sample, second axis is factor index. If `include_bias` is true, include an
+extra column of all ones.
+"""
+function build_linear_regression_design_matrix(input::ModelInput, include_bias::Bool=true)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    factoridx = Dict{String, Int}()
+
+    if include_bias
+        factoridx["bias"] = 1
+    end
+
+    for factors in input.loaded_samples.sample_factors
+        for factor in factors
+            get!(factoridx, factor, length(factoridx) + 1)
+        end
+    end
+
+    num_factors = length(factoridx)
+    X = zeros(Float32, (num_samples, num_factors))
+    for i in 1:num_samples
+        for factor in input.loaded_samples.sample_factors[i]
+            j = factoridx[factor]
+            X[i, j] = 1
+        end
+    end
+    if include_bias
+        X[:, factoridx["bias"]] .= 1
+    end
+
+    return num_factors, factoridx, X
+end
+
+
+"""
+Estimate linear regression over transcript expression.
+"""
+function estimate_transcript_linear_regression(input::ModelInput)
+    num_factors, factoridx, X = build_linear_regression_design_matrix(input)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    x0_log = log.(input.loaded_samples.x0_values)
+    w_loc, w_scale, x_sigma_sq_mean = polee_py[:estimate_transcript_linear_regression](
+        input.loaded_samples.init_feed_dict, num_samples, n,
+        input.loaded_samples.variables, x0_log, X)
+
+    output_filename = input.output_filename === nothing ?
+        "effects.db" : input.output_filename
+
+    # mean_est = sess[:run](w_loc)
+    # sigma_est = sess[:run](w_scale)
+
+    # log-normal distribution mean
+    # error_sigma = sqrt.(exp.(sess[:run](
+    #     tf.add(qx_sigma_sq_mu_param,
+    #             tf.div(tf.square(tf.nn[:softplus](qx_sigma_sq_sigma_param)), 2.0f0)))))
+
+    lower_credible = similar(w_loc)
+    upper_credible = similar(w_loc)
+    for i in 1:size(w_loc, 1)
+        for j in 1:size(w_loc, 2)
+            dist = Normal(w_loc[i, j], w_scale[i, j])
+
+            lower_credible[i, j] = quantile(dist, input.credible_interval[1])
+            upper_credible[i, j] = quantile(dist, input.credible_interval[2])
+        end
+    end
+
+    write_effects(output_filename, factoridx,
+                w_loc,
+                w_scale,
+                lower_credible,
+                upper_credible,
+                x_sigma_sq_mean,
+                input.feature)
+end
+
+
+function estimate_gene_linear_regression(input::ModelInput)
+    # TODO:
+    error("Linear regression for $(input.feature) not supported")
+end
+
+
+function estimate_splicing_linear_regression(input::ModelInput)
+    # TODO:
+    error("Linear regression for $(input.feature) not supported")
+end
+
+
 function estimate_mixture(input::ModelInput)
     if input.feature == :transcript
         return estimate_transcript_mixture(input)
@@ -420,19 +523,21 @@ end
 
 
 const POLEE_MODELS = Dict(
-    "expression"  => estimate_expression,
-    "pca"         => estimate_pca,
-    "tsne"        => estimate_tsne,
-    "knn"         => estimate_knn,
-    "mixture"     => estimate_mixture,
-    "vae-mixture" => estimate_vae_mixture,
+    "expression"        => estimate_expression,
+    "linear-regression" => estimate_linear_regression,
+    "pca"               => estimate_pca,
+    "tsne"              => estimate_tsne,
+    "knn"               => estimate_knn,
+    "mixture"           => estimate_mixture,
+    "vae-mixture"       => estimate_vae_mixture,
 )
 
 # Whether each method supports mini-batching.
 const BATCH_MODEL = Dict(
-    "expression"  => false,
-    "pca"         => false,
-    "tsne"        => true,
-    "knn"         => false,
-    "mixture"     => false,
-    "vae-mixture" => false)
+    "expression"        => false,
+    "linear-regression" => false,
+    "pca"               => false,
+    "tsne"              => true,
+    "knn"               => false,
+    "mixture"           => false,
+    "vae-mixture"       => false)

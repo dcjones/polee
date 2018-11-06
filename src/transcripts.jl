@@ -824,6 +824,111 @@ end
 
 
 """
+Find alternative five-prime and three-prime transcript ends.
+"""
+function get_alt_fp_tp_ends(ts::Transcripts, ts_metadata::TranscriptsMetadata)
+    transcripts_by_gene_id = Dict{String, Vector{Transcript}}()
+    for t in ts
+        gene_id = ts_metadata.gene_id[t.metadata.name]
+        if !haskey(transcripts_by_gene_id, gene_id)
+            transcripts_by_gene_id[gene_id] = Transcript[]
+        end
+        push!(transcripts_by_gene_id[gene_id], t)
+    end
+
+    alt_fp_ends = Interval{Tuple{Int, Int, Vector{Int}, Vector{Int}}}[]
+    alt_tp_ends = Interval{Tuple{Int, Int, Vector{Int}, Vector{Int}}}[]
+
+    for (gene_id, ts) in transcripts_by_gene_id
+        if length(ts) <= 1
+            continue
+        end
+
+        firsts = Set{Int}()
+        lasts = Set{Int}()
+
+        for t in ts
+            push!(firsts, t.metadata.exons[1].first)
+            push!(lasts, t.metadata.exons[end].last)
+        end
+
+        if gene_id == "gene:ENSMUSG00000025702"
+            @show (gene_id, length(firsts), length(lasts))
+            @show firsts
+            @show lasts
+            for t in ts
+                println(t.metadata.name)
+            end
+            exit()
+        end
+
+        min_first = minimum(firsts)
+        max_last = minimum(lasts)
+
+        # consider alternative firsts
+        if length(firsts) > 1
+            for first in firsts
+                inc_ids = Int[]
+                exc_ids = Int[]
+                for t in ts
+                    if t.metadata.exons[1].first == first
+                        push!(inc_ids, t.metadata.id)
+                    else
+                        push!(exc_ids, t.metadata.id)
+                    end
+                end
+
+                entry = Interval(
+                    ts[1].seqname, first, first, ts[1].strand,
+                    (min_first, max_last, inc_ids, exc_ids))
+                if ts[1].strand == STRAND_POS
+                    push!(alt_fp_ends, entry)
+                else
+                    push!(alt_tp_ends, entry)
+                end
+
+                # don't bother include the reciprocal
+                if length(firsts) == 2
+                    break
+                end
+            end
+        end
+
+        # consider alternative ends
+        if length(lasts) > 1
+            for last in lasts
+                inc_ids = Int[]
+                exc_ids = Int[]
+                for t in ts
+                    if t.metadata.exons[end].last == last
+                        push!(inc_ids, t.metadata.id)
+                    else
+                        push!(exc_ids, t.metadata.id)
+                    end
+                end
+
+                entry = Interval(
+                    ts[1].seqname, last, last, ts[1].strand,
+                    (min_first, max_last, inc_ids, exc_ids))
+                if ts[1].strand == STRAND_POS
+                    push!(alt_tp_ends, entry)
+                else
+                    push!(alt_fp_ends, entry)
+                end
+
+                # don't bother include the reciprocal
+                if length(lasts) == 2
+                    break
+                end
+            end
+        end
+    end
+
+    return alt_fp_ends, alt_tp_ends
+end
+
+
+"""
 Serialize a GFF3 file into sqlite3 database.
 """
 function write_transcripts(output_filename, transcripts, metadata)

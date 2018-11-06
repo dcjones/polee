@@ -92,23 +92,30 @@ function splicing_features(input::ModelInput)
     println("")
     cassette_exons, mutex_exons = get_cassette_exons(input.ts)
     alt_donacc_sites, retained_introns = get_alt_donor_acceptor_sites(input.ts)
+    alt_fp_ends, alt_tp_ends = get_alt_fp_tp_ends(input.ts, input.ts_metadata)
 
     println("Read ", length(cassette_exons), " cassette exons")
     println("     ", length(mutex_exons), " mutually exclusive exons")
     println("     ", length(alt_donacc_sites), " alternate acceptor/donor sites")
     println("     ", length(retained_introns), " retained introns")
-    # TODO: alt 5'-most exons
-    # TODO: alt 3'-most exons
+    # println("     ", length(alt_fp_ends), " alternate 5' ends")
+    # println("     ", length(alt_tp_ends), " alternate 3' ends")
+
 
     @time write_splicing_features_to_gene_db(
-        input.gene_db, cassette_exons, mutex_exons, alt_donacc_sites, retained_introns)
+        input.gene_db, cassette_exons, mutex_exons,
+        alt_donacc_sites, retained_introns,
+        alt_fp_ends, alt_tp_ends)
+
+    exit()
 
     feature_idxs = Int32[]
     feature_transcript_idxs = Int32[]
     antifeature_idxs = Int32[]
     antifeature_transcript_idxs = Int32[]
     num_features =
-        length(cassette_exons) + length(mutex_exons) + length(alt_donacc_sites) + length(retained_introns)
+        length(cassette_exons) + length(mutex_exons) + length(alt_donacc_sites) +
+        length(retained_introns) + length(alt_fp_ends) + length(alt_tp_ends)
 
     feature_id = 0
 
@@ -174,6 +181,36 @@ function splicing_features(input::ModelInput)
         end
     end
 
+    # # alt 5' ends
+    # for alt_fp_end in alt_fp_ends
+    #     feature_id += 1
+
+    #     for id in alt_fp_end.metadata[3]
+    #         push!(feature_idxs, feature_id)
+    #         push!(feature_transcript_idxs, id)
+    #     end
+
+    #     for id in alt_fp_end.metadata[4]
+    #         push!(antifeature_idxs, feature_id)
+    #         push!(antifeature_transcript_idxs, id)
+    #     end
+    # end
+
+    # # alt 3' ends
+    # for alt_tp_end in alt_tp_ends
+    #     feature_id += 1
+
+    #     for id in alt_tp_end.metadata[3]
+    #         push!(feature_idxs, feature_id)
+    #         push!(feature_transcript_idxs, id)
+    #     end
+
+    #     for id in alt_tp_end.metadata[4]
+    #         push!(antifeature_idxs, feature_id)
+    #         push!(antifeature_transcript_idxs, id)
+    #     end
+    # end
+
     return num_features,
            feature_idxs, feature_transcript_idxs,
            antifeature_idxs, antifeature_transcript_idxs
@@ -181,7 +218,8 @@ end
 
 
 function write_splicing_features_to_gene_db(
-    db, cassette_exons, mutex_exons, alt_donacc_sites, retained_introns)
+    db, cassette_exons, mutex_exons, alt_donacc_sites, retained_introns,
+    alt_fp_ends, alt_tp_ends)
 
     SQLite.execute!(db, "drop table if exists splicing_features")
     SQLite.execute!(db,
@@ -344,5 +382,63 @@ function write_splicing_features_to_gene_db(
         end
     end
     SQLite.execute!(db, "end transaction")
+
+    # # alt 5' ends
+    # SQLite.execute!(db, "begin transaction")
+    # for alt_fp_end in alt_fp_ends
+    #     feature_id += 1
+
+    #     SQLite.bind!(ins_stmt, 1, feature_id)
+    #     SQLite.bind!(ins_stmt, 2, "alt 5' end")
+    #     SQLite.bind!(ins_stmt, 3, alt_fp_end.seqname)
+    #     SQLite.bind!(ins_stmt, 4, alt_fp_end.first)
+    #     SQLite.bind!(ins_stmt, 5, alt_fp_end.last)
+    #     SQLite.bind!(ins_stmt, 6, -1)
+    #     SQLite.bind!(ins_stmt, 7, -1)
+    #     SQLite.execute!(ins_stmt)
+
+    #     SQLite.bind!(inc_ins_stmt, 1, feature_id)
+    #     SQLite.bind!(exc_ins_stmt, 1, feature_id)
+
+    #     for id in alt_fp_end.metadata[3]
+    #         SQLite.bind!(inc_ins_stmt, 2, id)
+    #         SQLite.execute!(inc_ins_stmt)
+    #     end
+
+    #     for id in alt_fp_end.metadata[4]
+    #         SQLite.bind!(exc_ins_stmt, 2, id)
+    #         SQLite.execute!(exc_ins_stmt)
+    #     end
+    # end
+    # SQLite.execute!(db, "end transaction")
+
+    # # alt 3' ends
+    # SQLite.execute!(db, "begin transaction")
+    # for alt_tp_end in alt_tp_ends
+    #     feature_id += 1
+
+    #     SQLite.bind!(ins_stmt, 1, feature_id)
+    #     SQLite.bind!(ins_stmt, 2, "alt 5' end")
+    #     SQLite.bind!(ins_stmt, 3, alt_tp_end.seqname)
+    #     SQLite.bind!(ins_stmt, 4, alt_tp_end.first)
+    #     SQLite.bind!(ins_stmt, 5, alt_tp_end.last)
+    #     SQLite.bind!(ins_stmt, 6, -1)
+    #     SQLite.bind!(ins_stmt, 7, -1)
+    #     SQLite.execute!(ins_stmt)
+
+    #     SQLite.bind!(inc_ins_stmt, 1, feature_id)
+    #     SQLite.bind!(exc_ins_stmt, 1, feature_id)
+
+    #     for id in alt_tp_end.metadata[3]
+    #         SQLite.bind!(inc_ins_stmt, 2, id)
+    #         SQLite.execute!(inc_ins_stmt)
+    #     end
+
+    #     for id in alt_tp_end.metadata[4]
+    #         SQLite.bind!(exc_ins_stmt, 2, id)
+    #         SQLite.execute!(exc_ins_stmt)
+    #     end
+    # end
+    # SQLite.execute!(db, "end transaction")
 end
 

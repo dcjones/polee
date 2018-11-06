@@ -824,9 +824,33 @@ end
 
 
 """
+Merge values x in xs into intervals containing values that are within d of each other.
+"""
+function merge_adjacent(xs::Vector{T}, d) where {T}
+    sort!(xs)
+    ys = Vector{T}[T[xs[1]]]
+    for i in 2:length(xs)
+        if xs[i] - ys[end][end] <= d
+            push!(ys[end], xs[i])
+        else
+            push!(ys, T[xs[i]])
+        end
+    end
+    return ys
+end
+
+
+"""
 Find alternative five-prime and three-prime transcript ends.
 """
-function get_alt_fp_tp_ends(ts::Transcripts, ts_metadata::TranscriptsMetadata)
+function get_alt_fp_tp_ends(
+        ts::Transcripts, ts_metadata::TranscriptsMetadata, merge_distance=250)
+
+
+    # TODO: ensembl tends to give pretty much every transcript a different start
+    # and ends site, to do really do this, we should do some sort of clustering
+    # of stards/ends.
+
     transcripts_by_gene_id = Dict{String, Vector{Transcript}}()
     for t in ts
         gene_id = ts_metadata.gene_id[t.metadata.name]
@@ -844,34 +868,28 @@ function get_alt_fp_tp_ends(ts::Transcripts, ts_metadata::TranscriptsMetadata)
             continue
         end
 
-        firsts = Set{Int}()
-        lasts = Set{Int}()
+        firsts_set = Set{Int}()
+        lasts_set = Set{Int}()
 
         for t in ts
-            push!(firsts, t.metadata.exons[1].first)
-            push!(lasts, t.metadata.exons[end].last)
+            push!(firsts_set, t.metadata.exons[1].first)
+            push!(lasts_set, t.metadata.exons[end].last)
         end
 
-        if gene_id == "gene:ENSMUSG00000025702"
-            @show (gene_id, length(firsts), length(lasts))
-            @show firsts
-            @show lasts
-            for t in ts
-                println(t.metadata.name)
-            end
-            exit()
-        end
+        min_first = minimum(firsts_set)
+        max_last = minimum(lasts_set)
 
-        min_first = minimum(firsts)
-        max_last = minimum(lasts)
+        # merge nearby firsts and lasts
+        firsts = merge_adjacent(collect(firsts_set), merge_distance)
+        lasts = merge_adjacent(collect(lasts_set), merge_distance)
 
         # consider alternative firsts
         if length(firsts) > 1
-            for first in firsts
+            for first_cluster in firsts
                 inc_ids = Int[]
                 exc_ids = Int[]
                 for t in ts
-                    if t.metadata.exons[1].first == first
+                    if in(t.metadata.exons[1].first, first_cluster)
                         push!(inc_ids, t.metadata.id)
                     else
                         push!(exc_ids, t.metadata.id)
@@ -879,8 +897,8 @@ function get_alt_fp_tp_ends(ts::Transcripts, ts_metadata::TranscriptsMetadata)
                 end
 
                 entry = Interval(
-                    ts[1].seqname, first, first, ts[1].strand,
-                    (min_first, max_last, inc_ids, exc_ids))
+                    ts[1].seqname, first_cluster[1], first_cluster[end],
+                    ts[1].strand, (min_first, max_last, inc_ids, exc_ids))
                 if ts[1].strand == STRAND_POS
                     push!(alt_fp_ends, entry)
                 else
@@ -896,11 +914,11 @@ function get_alt_fp_tp_ends(ts::Transcripts, ts_metadata::TranscriptsMetadata)
 
         # consider alternative ends
         if length(lasts) > 1
-            for last in lasts
+            for last_cluster in lasts
                 inc_ids = Int[]
                 exc_ids = Int[]
                 for t in ts
-                    if t.metadata.exons[end].last == last
+                    if in(t.metadata.exons[end].last, last_cluster)
                         push!(inc_ids, t.metadata.id)
                     else
                         push!(exc_ids, t.metadata.id)
@@ -908,8 +926,8 @@ function get_alt_fp_tp_ends(ts::Transcripts, ts_metadata::TranscriptsMetadata)
                 end
 
                 entry = Interval(
-                    ts[1].seqname, last, last, ts[1].strand,
-                    (min_first, max_last, inc_ids, exc_ids))
+                    ts[1].seqname, last_cluster[1], last_cluster[end],
+                    ts[1].strand, (min_first, max_last, inc_ids, exc_ids))
                 if ts[1].strand == STRAND_POS
                     push!(alt_tp_ends, entry)
                 else

@@ -98,8 +98,8 @@ function splicing_features(input::ModelInput)
     println("     ", length(mutex_exons), " mutually exclusive exons")
     println("     ", length(alt_donacc_sites), " alternate acceptor/donor sites")
     println("     ", length(retained_introns), " retained introns")
-    # println("     ", length(alt_fp_ends), " alternate 5' ends")
-    # println("     ", length(alt_tp_ends), " alternate 3' ends")
+    println("     ", length(alt_fp_ends), " alternate 5' ends")
+    println("     ", length(alt_tp_ends), " alternate 3' ends")
 
 
     @time write_splicing_features_to_gene_db(
@@ -107,7 +107,7 @@ function splicing_features(input::ModelInput)
         alt_donacc_sites, retained_introns,
         alt_fp_ends, alt_tp_ends)
 
-    exit()
+    # exit()
 
     feature_idxs = Int32[]
     feature_transcript_idxs = Int32[]
@@ -181,35 +181,35 @@ function splicing_features(input::ModelInput)
         end
     end
 
-    # # alt 5' ends
-    # for alt_fp_end in alt_fp_ends
-    #     feature_id += 1
+    # alt 5' ends
+    for alt_fp_end in alt_fp_ends
+        feature_id += 1
 
-    #     for id in alt_fp_end.metadata[3]
-    #         push!(feature_idxs, feature_id)
-    #         push!(feature_transcript_idxs, id)
-    #     end
+        for id in alt_fp_end.metadata[3]
+            push!(feature_idxs, feature_id)
+            push!(feature_transcript_idxs, id)
+        end
 
-    #     for id in alt_fp_end.metadata[4]
-    #         push!(antifeature_idxs, feature_id)
-    #         push!(antifeature_transcript_idxs, id)
-    #     end
-    # end
+        for id in alt_fp_end.metadata[4]
+            push!(antifeature_idxs, feature_id)
+            push!(antifeature_transcript_idxs, id)
+        end
+    end
 
-    # # alt 3' ends
-    # for alt_tp_end in alt_tp_ends
-    #     feature_id += 1
+    # alt 3' ends
+    for alt_tp_end in alt_tp_ends
+        feature_id += 1
 
-    #     for id in alt_tp_end.metadata[3]
-    #         push!(feature_idxs, feature_id)
-    #         push!(feature_transcript_idxs, id)
-    #     end
+        for id in alt_tp_end.metadata[3]
+            push!(feature_idxs, feature_id)
+            push!(feature_transcript_idxs, id)
+        end
 
-    #     for id in alt_tp_end.metadata[4]
-    #         push!(antifeature_idxs, feature_id)
-    #         push!(antifeature_transcript_idxs, id)
-    #     end
-    # end
+        for id in alt_tp_end.metadata[4]
+            push!(antifeature_idxs, feature_id)
+            push!(antifeature_transcript_idxs, id)
+        end
+    end
 
     return num_features,
            feature_idxs, feature_transcript_idxs,
@@ -383,62 +383,62 @@ function write_splicing_features_to_gene_db(
     end
     SQLite.execute!(db, "end transaction")
 
-    # # alt 5' ends
-    # SQLite.execute!(db, "begin transaction")
-    # for alt_fp_end in alt_fp_ends
-    #     feature_id += 1
+    # alt 5' ends
+    SQLite.execute!(db, "begin transaction")
+    for alt_fp_end in alt_fp_ends
+        feature_id += 1
 
-    #     SQLite.bind!(ins_stmt, 1, feature_id)
-    #     SQLite.bind!(ins_stmt, 2, "alt 5' end")
-    #     SQLite.bind!(ins_stmt, 3, alt_fp_end.seqname)
-    #     SQLite.bind!(ins_stmt, 4, alt_fp_end.first)
-    #     SQLite.bind!(ins_stmt, 5, alt_fp_end.last)
-    #     SQLite.bind!(ins_stmt, 6, -1)
-    #     SQLite.bind!(ins_stmt, 7, -1)
-    #     SQLite.execute!(ins_stmt)
+        SQLite.bind!(ins_stmt, 1, feature_id)
+        SQLite.bind!(ins_stmt, 2, "alt 5' end")
+        SQLite.bind!(ins_stmt, 3, alt_fp_end.seqname)
+        SQLite.bind!(ins_stmt, 4, alt_fp_end.first)
+        SQLite.bind!(ins_stmt, 5, alt_fp_end.last)
+        SQLite.bind!(ins_stmt, 6, -1)
+        SQLite.bind!(ins_stmt, 7, -1)
+        SQLite.execute!(ins_stmt)
 
-    #     SQLite.bind!(inc_ins_stmt, 1, feature_id)
-    #     SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.bind!(inc_ins_stmt, 1, feature_id)
+        SQLite.bind!(exc_ins_stmt, 1, feature_id)
 
-    #     for id in alt_fp_end.metadata[3]
-    #         SQLite.bind!(inc_ins_stmt, 2, id)
-    #         SQLite.execute!(inc_ins_stmt)
-    #     end
+        for id in alt_fp_end.metadata[3]
+            SQLite.bind!(inc_ins_stmt, 2, id)
+            SQLite.execute!(inc_ins_stmt)
+        end
 
-    #     for id in alt_fp_end.metadata[4]
-    #         SQLite.bind!(exc_ins_stmt, 2, id)
-    #         SQLite.execute!(exc_ins_stmt)
-    #     end
-    # end
-    # SQLite.execute!(db, "end transaction")
+        for id in alt_fp_end.metadata[4]
+            SQLite.bind!(exc_ins_stmt, 2, id)
+            SQLite.execute!(exc_ins_stmt)
+        end
+    end
+    SQLite.execute!(db, "end transaction")
 
-    # # alt 3' ends
-    # SQLite.execute!(db, "begin transaction")
-    # for alt_tp_end in alt_tp_ends
-    #     feature_id += 1
+    # alt 3' ends
+    SQLite.execute!(db, "begin transaction")
+    for alt_tp_end in alt_tp_ends
+        feature_id += 1
 
-    #     SQLite.bind!(ins_stmt, 1, feature_id)
-    #     SQLite.bind!(ins_stmt, 2, "alt 5' end")
-    #     SQLite.bind!(ins_stmt, 3, alt_tp_end.seqname)
-    #     SQLite.bind!(ins_stmt, 4, alt_tp_end.first)
-    #     SQLite.bind!(ins_stmt, 5, alt_tp_end.last)
-    #     SQLite.bind!(ins_stmt, 6, -1)
-    #     SQLite.bind!(ins_stmt, 7, -1)
-    #     SQLite.execute!(ins_stmt)
+        SQLite.bind!(ins_stmt, 1, feature_id)
+        SQLite.bind!(ins_stmt, 2, "alt 5' end")
+        SQLite.bind!(ins_stmt, 3, alt_tp_end.seqname)
+        SQLite.bind!(ins_stmt, 4, alt_tp_end.first)
+        SQLite.bind!(ins_stmt, 5, alt_tp_end.last)
+        SQLite.bind!(ins_stmt, 6, -1)
+        SQLite.bind!(ins_stmt, 7, -1)
+        SQLite.execute!(ins_stmt)
 
-    #     SQLite.bind!(inc_ins_stmt, 1, feature_id)
-    #     SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.bind!(inc_ins_stmt, 1, feature_id)
+        SQLite.bind!(exc_ins_stmt, 1, feature_id)
 
-    #     for id in alt_tp_end.metadata[3]
-    #         SQLite.bind!(inc_ins_stmt, 2, id)
-    #         SQLite.execute!(inc_ins_stmt)
-    #     end
+        for id in alt_tp_end.metadata[3]
+            SQLite.bind!(inc_ins_stmt, 2, id)
+            SQLite.execute!(inc_ins_stmt)
+        end
 
-    #     for id in alt_tp_end.metadata[4]
-    #         SQLite.bind!(exc_ins_stmt, 2, id)
-    #         SQLite.execute!(exc_ins_stmt)
-    #     end
-    # end
-    # SQLite.execute!(db, "end transaction")
+        for id in alt_tp_end.metadata[4]
+            SQLite.bind!(exc_ins_stmt, 2, id)
+            SQLite.execute!(exc_ins_stmt)
+        end
+    end
+    SQLite.execute!(db, "end transaction")
 end
 

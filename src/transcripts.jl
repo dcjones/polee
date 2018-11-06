@@ -559,9 +559,11 @@ function get_introns(ts::Transcripts)
     return introns
 end
 
+
 function get_cassette_exons(ts::Transcripts)
     get_cassette_exons(ts, get_introns(ts))
 end
+
 
 function get_cassette_exons(ts::Transcripts, introns::IntervalCollection{Vector{Int}})
     function match_strand_exon(a, b)
@@ -595,6 +597,7 @@ function get_cassette_exons(ts::Transcripts, introns::IntervalCollection{Vector{
         end
     end
 
+    # find cassette exons
     cassette_exons = Tuple{Interval{Vector{Int}}, Interval{Tuple{Int, Int, Vector{Int}}}}[]
     for flanks in flanking_introns
         intron = findfirst(introns, flanks, filter=(a,b)->a.strand==b.strand)
@@ -603,7 +606,55 @@ function get_cassette_exons(ts::Transcripts, introns::IntervalCollection{Vector{
         end
     end
 
-    return cassette_exons
+    # find mutually exclusive exons
+    exons_by_flanks = Dict{Interval{Nothing}, Vector{Tuple{Int, Int, Vector{Int}}}}()
+    for flanks in flanking_introns
+        key = Interval{Nothing}(flanks.seqname, flanks.first, flanks.last, flanks.strand, nothing)
+        if !haskey(exons_by_flanks, key)
+            exons_by_flanks[key] = Tuple{Int, Int, Vector{Int}}[]
+        end
+        push!(exons_by_flanks[key], flanks.metadata)
+    end
+
+    mutex_exons = Tuple{Interval{Vector{Int}}, Interval{Vector{Int}}}[]
+    for (flanks, exons) in exons_by_flanks
+        if length(exons) <= 1
+            continue
+        end
+        sort!(exons)
+
+        # collapse exons into unions
+        flattened_exons = Tuple{Int, Int, Vector{Int}}[]
+        for exon in exons
+            first, last, tids = exon
+            if isempty(flattened_exons) || first > flattened_exons[end][2]
+                push!(flattened_exons, exon)
+            else
+                flattened_exons[end] =
+                    (min(flattened_exons[end][1], first),
+                     max(flattened_exons[end][2], last),
+                     vcat(flattened_exons[end][3], tids))
+            end
+        end
+
+        if length(flattened_exons) <= 1
+            continue
+        elseif length(flattened_exons) == 2
+            first_a, last_a, tids_a = flattened_exons[1]
+            first_b, last_b, tids_b = flattened_exons[2]
+
+            push!(mutex_exons,
+                (Interval(flanks.seqname, first_a, last_a, flanks.strand, tids_a),
+                Interval(flanks.seqname, first_b, last_b, flanks.strand, tids_b)))
+        else
+            # A weird multiple (>2) mutually exclusive splicing event, which
+            # we'll ignore for now, but possibly we should try to consider.
+            # E.g. there are a few dozen of these events in mouse.
+            # @show flanks
+        end
+    end
+
+    return cassette_exons, mutex_exons
 end
 
 

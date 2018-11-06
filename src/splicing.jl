@@ -90,67 +90,86 @@ Returns:
 """
 function splicing_features(input::ModelInput)
     println("")
-    cassette_exons = get_cassette_exons(input.ts)
+    cassette_exons, mutex_exons = get_cassette_exons(input.ts)
     alt_donacc_sites, retained_introns = get_alt_donor_acceptor_sites(input.ts)
 
     println("Read ", length(cassette_exons), " cassette exons")
+    println("     ", length(mutex_exons), " mutually exclusive exons")
     println("     ", length(alt_donacc_sites), " alternate acceptor/donor sites")
     println("     ", length(retained_introns), " retained introns")
     # TODO: alt 5'-most exons
     # TODO: alt 3'-most exons
 
     @time write_splicing_features_to_gene_db(
-        input.gene_db, cassette_exons, alt_donacc_sites, retained_introns)
+        input.gene_db, cassette_exons, mutex_exons, alt_donacc_sites, retained_introns)
 
     feature_idxs = Int32[]
     feature_transcript_idxs = Int32[]
     antifeature_idxs = Int32[]
     antifeature_transcript_idxs = Int32[]
     num_features =
-        length(cassette_exons) + length(alt_donacc_sites) + length(retained_introns)
+        length(cassette_exons) + length(mutex_exons) + length(alt_donacc_sites) + length(retained_introns)
+
+    feature_id = 0
 
     # cassette exons
-    for (i, (intron, flanks)) in  enumerate(cassette_exons)
+    for (intron, flanks) in cassette_exons
+        feature_id += 1
         @assert !isempty(intron.metadata)
         @assert !isempty(flanks.metadata[3])
 
         for id in flanks.metadata[3]
-            push!(feature_idxs, i)
+            push!(feature_idxs, feature_id)
             push!(feature_transcript_idxs, id)
         end
 
         for id in intron.metadata
-            push!(antifeature_idxs, i)
+            push!(antifeature_idxs, feature_id)
+            push!(antifeature_transcript_idxs, id)
+        end
+    end
+
+    # mutex exons
+    for (exon_a, exon_b) in mutex_exons
+        feature_id += 1
+
+        for id in exon_a.metadata
+            push!(feature_idxs, feature_id)
+            push!(feature_transcript_idxs, id)
+        end
+
+        for id in exon_b.metadata
+            push!(antifeature_idxs, feature_id)
             push!(antifeature_transcript_idxs, id)
         end
     end
 
     # alt donor/acceptor sites
-    for (i, alt_donacc_site) in enumerate(alt_donacc_sites)
-        idx = i + length(cassette_exons)
+    for alt_donacc_site in alt_donacc_sites
+        feature_id += 1
 
         for id in alt_donacc_site.metadata[3]
-            push!(feature_idxs, idx)
+            push!(feature_idxs, feature_id)
             push!(feature_transcript_idxs, id)
         end
 
         for id in alt_donacc_site.metadata[4]
-            push!(antifeature_idxs, idx)
+            push!(antifeature_idxs, feature_id)
             push!(antifeature_transcript_idxs, id)
         end
     end
 
     # retained introns
-    for (i, retained_intron) in enumerate(retained_introns)
-        idx = i + length(cassette_exons) + length(alt_donacc_sites)
+    for retained_intron in retained_introns
+        feature_id += 1
 
         for id in retained_intron.metadata[1]
-            push!(feature_idxs, idx)
+            push!(feature_idxs, feature_id)
             push!(feature_transcript_idxs, id)
         end
 
         for id in retained_intron.metadata[2]
-            push!(antifeature_idxs, idx)
+            push!(antifeature_idxs, feature_id)
             push!(antifeature_transcript_idxs, id)
         end
     end
@@ -162,7 +181,7 @@ end
 
 
 function write_splicing_features_to_gene_db(
-    db, cassette_exons, alt_donacc_sites, retained_introns)
+    db, cassette_exons, mutex_exons, alt_donacc_sites, retained_introns)
 
     SQLite.execute!(db, "drop table if exists splicing_features")
     SQLite.execute!(db,
@@ -206,10 +225,13 @@ function write_splicing_features_to_gene_db(
     ins_stmt = SQLite.Stmt(db,
         "insert into splicing_features values (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
 
+    feature_id = 0
+
     # cassette exons
     SQLite.execute!(db, "begin transaction")
-    for (i, (intron, flanks)) in  enumerate(cassette_exons)
-        SQLite.bind!(ins_stmt, 1, i)
+    for (intron, flanks) in  cassette_exons
+        feature_id += 1
+        SQLite.bind!(ins_stmt, 1, feature_id)
         SQLite.bind!(ins_stmt, 2, "cassette_exon")
         SQLite.bind!(ins_stmt, 3, intron.seqname)
         SQLite.bind!(ins_stmt, 4, flanks.metadata[1])
@@ -218,8 +240,8 @@ function write_splicing_features_to_gene_db(
         SQLite.bind!(ins_stmt, 7, flanks.last)
         SQLite.execute!(ins_stmt)
 
-        SQLite.bind!(inc_ins_stmt, 1, i)
-        SQLite.bind!(exc_ins_stmt, 1, i)
+        SQLite.bind!(inc_ins_stmt, 1, feature_id)
+        SQLite.bind!(exc_ins_stmt, 1, feature_id)
 
         for id in flanks.metadata[3]
             SQLite.bind!(inc_ins_stmt, 2, id)
@@ -233,16 +255,44 @@ function write_splicing_features_to_gene_db(
     end
     SQLite.execute!(db, "end transaction")
 
+    # mutex exons
+    SQLite.execute!(db, "begin transaction")
+    for (exon_a, exon_b) in mutex_exons
+        feature_id += 1
+        SQLite.bind!(ins_stmt, 1, feature_id)
+        SQLite.bind!(ins_stmt, 2, "mutex_exon")
+        SQLite.bind!(ins_stmt, 3, exon_a.seqname)
+        SQLite.bind!(ins_stmt, 4, exon_a.first)
+        SQLite.bind!(ins_stmt, 5, exon_a.last)
+        SQLite.bind!(ins_stmt, 6, exon_b.first)
+        SQLite.bind!(ins_stmt, 7, exon_b.last)
+        SQLite.execute!(ins_stmt)
+
+        SQLite.bind!(inc_ins_stmt, 1, feature_id)
+        SQLite.bind!(exc_ins_stmt, 1, feature_id)
+
+        for id in exon_a.metadata
+            SQLite.bind!(inc_ins_stmt, 2, id)
+            SQLite.execute!(inc_ins_stmt)
+        end
+
+        for id in exon_b.metadata
+            SQLite.bind!(exc_ins_stmt, 2, id)
+            SQLite.execute!(exc_ins_stmt)
+        end
+    end
+    SQLite.execute!(db, "end transaction")
+
     # alt donor/acceptor sites
     SQLite.execute!(db, "begin transaction")
-    for (i, site) in enumerate(alt_donacc_sites)
-        idx = i + length(cassette_exons)
+    for site in alt_donacc_sites
+        feature_id += 1
 
         typ = site.first == site.metadata[1] ?
             site.strand == STRAND_POS ? "alt acceptor site" : "alt donor site" :
             site.strand == STRAND_POS ? "alt donor site" : "alt acceptor site"
 
-        SQLite.bind!(ins_stmt, 1, idx)
+        SQLite.bind!(ins_stmt, 1, feature_id)
         SQLite.bind!(ins_stmt, 2, typ)
         SQLite.bind!(ins_stmt, 3, site.seqname)
         SQLite.bind!(ins_stmt, 4, site.first)
@@ -251,8 +301,8 @@ function write_splicing_features_to_gene_db(
         SQLite.bind!(ins_stmt, 7, site.metadata[2])
         SQLite.execute!(ins_stmt)
 
-        SQLite.bind!(inc_ins_stmt, 1, idx)
-        SQLite.bind!(exc_ins_stmt, 1, idx)
+        SQLite.bind!(inc_ins_stmt, 1, feature_id)
+        SQLite.bind!(exc_ins_stmt, 1, feature_id)
 
         for id in site.metadata[3]
             SQLite.bind!(inc_ins_stmt, 2, id)
@@ -268,10 +318,10 @@ function write_splicing_features_to_gene_db(
 
     # retained intron
     SQLite.execute!(db, "begin transaction")
-    for (i, retained_intron) in enumerate(retained_introns)
-        idx = i + length(cassette_exons) + length(alt_donacc_sites)
+    for retained_intron in retained_introns
+        feature_id += 1
 
-        SQLite.bind!(ins_stmt, 1, idx)
+        SQLite.bind!(ins_stmt, 1, feature_id)
         SQLite.bind!(ins_stmt, 2, "retained intron")
         SQLite.bind!(ins_stmt, 3, retained_intron.seqname)
         SQLite.bind!(ins_stmt, 4, retained_intron.first)
@@ -280,8 +330,8 @@ function write_splicing_features_to_gene_db(
         SQLite.bind!(ins_stmt, 7, -1)
         SQLite.execute!(ins_stmt)
 
-        SQLite.bind!(inc_ins_stmt, 1, idx)
-        SQLite.bind!(exc_ins_stmt, 1, idx)
+        SQLite.bind!(inc_ins_stmt, 1, feature_id)
+        SQLite.bind!(exc_ins_stmt, 1, feature_id)
 
         for id in retained_intron.metadata[1]
             SQLite.bind!(inc_ins_stmt, 2, id)

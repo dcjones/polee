@@ -50,6 +50,7 @@ def linear_regression_model(
         rate=x_sigma_beta0,
         name="x_sigma_sq")
     x_sigma = tf.sqrt(x_sigma_sq, name="x_sigma")
+    # x_sigma = tf.Print(x_sigma, [tf.reduce_min(x_sigma), tf.reduce_max(x_sigma)], "x_sigma span")
 
     x = ed.StudentT(
         df=x_df0,
@@ -216,7 +217,7 @@ def estimate_splicing_linear_regression(
     x_init = np.zeros((num_samples, num_features), np.float32)
 
     w_mu0 = 0.0
-    w_sigma0 = 2.0
+    w_sigma0 = 10.0
     w_bias_mu0 = 0.0
     w_bias_sigma0 = 10.0
 

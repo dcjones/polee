@@ -360,7 +360,7 @@ function write_splicing_features_to_gene_db(
         feature_id += 1
 
         SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "retained intron")
+        SQLite.bind!(ins_stmt, 2, "retained_intron")
         SQLite.bind!(ins_stmt, 3, retained_intron.seqname)
         SQLite.bind!(ins_stmt, 4, retained_intron.first)
         SQLite.bind!(ins_stmt, 5, retained_intron.last)
@@ -389,7 +389,7 @@ function write_splicing_features_to_gene_db(
         feature_id += 1
 
         SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "alt 5' end")
+        SQLite.bind!(ins_stmt, 2, "alt_5p_end")
         SQLite.bind!(ins_stmt, 3, alt_fp_end.seqname)
         SQLite.bind!(ins_stmt, 4, alt_fp_end.first)
         SQLite.bind!(ins_stmt, 5, alt_fp_end.last)
@@ -418,7 +418,7 @@ function write_splicing_features_to_gene_db(
         feature_id += 1
 
         SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "alt 5' end")
+        SQLite.bind!(ins_stmt, 2, "alt_3p_end")
         SQLite.bind!(ins_stmt, 3, alt_tp_end.seqname)
         SQLite.bind!(ins_stmt, 4, alt_tp_end.first)
         SQLite.bind!(ins_stmt, 5, alt_tp_end.last)

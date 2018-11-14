@@ -72,9 +72,7 @@ end
 
 
 function write_linear_regression_effects(
-        input::ModelInput, factoridx, w_loc, w_scale, x_sigma_sq_mean)
-    output_filename = input.output_filename === nothing ?
-        "effects.db" : input.output_filename
+        output_filename::String, input::ModelInput, factoridx, w_loc, w_scale, x_sigma_sq_mean)
 
     lower_credible = similar(w_loc)
     upper_credible = similar(w_loc)
@@ -108,6 +106,7 @@ function estimate_transcript_linear_regression(input::ModelInput)
         input.loaded_samples.init_feed_dict, input.loaded_samples.variables, x0_log, X)
 
     write_linear_regression_effects(
+        input.output_filename === nothing ? "transcript-effects.db" : input.output_filename,
         input, factoridx, w_loc, w_scale, x_sigma_sq_mean)
 end
 
@@ -133,8 +132,75 @@ function estimate_splicing_linear_regression(input::ModelInput)
         splice_lr_loc, splice_lr_scale,
         x0_log, X)
 
+    # TODO: consider whether w should be converted to proportion scale (from log-ratio scale)
+    # before writing.
+
+    output_filename = input.output_filename === nothing ? "splicing-effects.db" : input.output_filename
     write_linear_regression_effects(
-        input, factoridx, w_loc, w_scale, x_sigma_sq_mean)
+        output_filename, input, factoridx, w_loc, w_scale, x_sigma_sq_mean)
+
+    # Compute the proportions and find credible intervals
+    lower_quant = 0.01
+    upper_quant = 0.99
+
+    w_lower = similar(w_loc)
+    w_upper = similar(w_loc)
+    for i in 1:size(w_loc, 1), j in 1:size(w_loc, 2)
+        dist = Normal(w_loc[i,j], w_scale[i,j])
+        w_lower[i,j] = quantile(dist, lower_quant)
+        w_upper[i,j] = quantile(dist, upper_quant)
+    end
+
+    x_prop_lower = logistic.(w_lower[2:end,:] .+ transpose(w_lower[1,:]))
+    x_prop_upper = logistic.(w_upper[2:end,:] .+ transpose(w_upper[1,:]))
+
+    x_span = x_prop_upper .- x_prop_lower
+    x_prop_span = maximum(x_prop_lower, dims=1) .- minimum(x_prop_upper, dims=1)
+
+    db = SQLite.DB(output_filename)
+    SQLite.execute!(db, "drop table if exists splicing_prop_span")
+    SQLite.execute!(
+        db,
+        """
+        create table splicing_prop_span
+        (splicing_num INT, span REAL)
+        """)
+
+    ins_stmt = SQLite.Stmt(db, "insert into splicing_prop_span values (?1, ?2)")
+    SQLite.execute!(db, "begin transaction")
+    for (feature_num, span) in enumerate(x_prop_span)
+        SQLite.bind!(ins_stmt, 1, feature_num)
+        SQLite.bind!(ins_stmt, 2, span)
+        SQLite.execute!(ins_stmt)
+    end
+    SQLite.execute!(db, "end transaction")
+
+    # Store credible intervals as proportions
+    x_prop_lower = logistic.(w_lower .+ transpose(w_lower[1,:]))
+    x_prop_upper = logistic.(w_upper .+ transpose(w_upper[1,:]))
+
+    # Write a table recording credible intervals for proportions
+    SQLite.execute!(db, "drop table if exists splicing_prop_credible_interval")
+    SQLite.execute!(
+        db,
+        """
+        create table splicing_prop_credible_interval
+        (splicing_num INT, factor TEXT, p_lower REAL, p_upper REAL)
+        """)
+
+    ins_stmt = SQLite.Stmt(db, "insert into splicing_prop_credible_interval values (?1, ?2, ?3, ?4)")
+    SQLite.execute!(db, "begin transaction")
+    for factor = sort(collect(keys(factoridx)))
+        i = factoridx[factor]
+        for j in 1:size(w_lower, 2)
+            SQLite.bind!(ins_stmt, 1, j)
+            SQLite.bind!(ins_stmt, 2, factor)
+            SQLite.bind!(ins_stmt, 3, x_prop_lower[i, j])
+            SQLite.bind!(ins_stmt, 4, x_prop_upper[i, j])
+            SQLite.execute!(ins_stmt)
+        end
+    end
+    SQLite.execute!(db, "end transaction")
 end
 
 

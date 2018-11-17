@@ -303,7 +303,7 @@ function get_transcript_regression_coefs(db, row_index, col_index)
     return cols, rows, values
 end
 
-function main(feature_type, num_features)
+function drawplot(feature_type, num_features)
     db = SQLite.DB()
     SQLite.execute!(db, "attach \"genes.db\" as genes_db;")
     SQLite.execute!(db, "attach \"transcript-effects.db\" as tr_eff_db;")
@@ -407,18 +407,24 @@ function main(feature_type, num_features)
     end
     compose!(heatmap, svgattribute("shape-rendering", "crispEdges"))
     ctx = compose(context(), colkey, heatmap)
-    ctx |> SVG("heatmap.svg", 4inch, 10inch)
+    ctx |> SVG("$(feature_type)-heatmap.svg", 4inch, 10inch)
     # colkey |> SVG("heatmap.svg", 4inch, 8inch)
-    # TODO: label tissues, at the very least
 
     return U[row_perm, col_perm], V[row_perm, col_perm]
 end
 
-# U, V = main("mutex_exon", 100)
-main("cassette_exon", 100)
-# main("retained_intron", 200);
-# main("alt_5p_end", 200);
-# main("alt_3p_end", 200);
+num_features = 100
+feature_types = [
+    "mutex_exon",
+    "cassette_exon",
+    "retained_intron",
+    "alt_5p_end",
+    "alt_3p_end",
+    "alt_5p_end",
+    "alt_3p_end",
+    "alt_acceptor_site",
+    "alt_donor_site" ]
 
-# @show U[1,:]
-# @show V[1,:]
+for feature_type in feature_types
+    drawplot(feature_type, num_features)
+end

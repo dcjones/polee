@@ -101,7 +101,6 @@ function splicing_features(input::ModelInput)
     println("     ", length(alt_fp_ends), " alternate 5' ends")
     println("     ", length(alt_tp_ends), " alternate 3' ends")
 
-
     @time write_splicing_features_to_gene_db(
         input.gene_db, cassette_exons, mutex_exons,
         alt_donacc_sites, retained_introns,
@@ -327,8 +326,8 @@ function write_splicing_features_to_gene_db(
         feature_id += 1
 
         typ = site.first == site.metadata[1] ?
-            site.strand == STRAND_POS ? "alt acceptor site" : "alt donor site" :
-            site.strand == STRAND_POS ? "alt donor site" : "alt acceptor site"
+            site.strand == STRAND_POS ? "alt_acceptor_site" : "alt_donor_site" :
+            site.strand == STRAND_POS ? "alt_donor_site" : "alt_acceptor_site"
 
         SQLite.bind!(ins_stmt, 1, feature_id)
         SQLite.bind!(ins_stmt, 2, typ)

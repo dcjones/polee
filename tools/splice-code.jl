@@ -14,6 +14,12 @@ import Polee
 import YAML
 using BioSequences
 using GenomicFeatures
+using Statistics
+using HDF5
+
+
+# K-mer size
+const K = 6
 
 
 function approximate_splicing_likelihood(cassette_exons, loaded_samples)
@@ -91,8 +97,8 @@ function extract_sequence_features(genome_filename, cassette_exons)
     alt_donor_seqs    = Array{DNASequence}(undef, num_features)
     alt_acceptor_seqs = Array{DNASequence}(undef, num_features)
 
-    exonic_len = 15
-    intronic_len = 15
+    exonic_len = 5
+    intronic_len = 100
 
     reader = open(FASTA.Reader, genome_filename)
     entry = eltype(reader)()
@@ -128,8 +134,16 @@ function extract_sequence_features(genome_filename, cassette_exons)
             acceptor_seqs[i]     = acceptor_seq
             alt_donor_seqs[i]    = alt_donor_seq
             alt_acceptor_seqs[i] = alt_acceptor_seq
+
+            # @show donor_seq
+            # @show alt_donor_seq
+            # @show acceptor_seq
+            # @show alt_acceptor_seq
+            # @show (intron.seqname, intron.first, intron.last)
         end
     end
+
+    # exit()
 
     # 1-hot encode sequences
     donor_seq_arr        = one_hot_encode_seqs(donor_seqs)
@@ -138,6 +152,173 @@ function extract_sequence_features(genome_filename, cassette_exons)
     alt_acceptor_seq_arr = one_hot_encode_seqs(alt_acceptor_seqs)
 
     return donor_seq_arr, acceptor_seq_arr, alt_donor_seq_arr, alt_acceptor_seq_arr
+end
+
+
+function encode_kmer_usage!(usage_matrix, seq, cons, i, j)
+    z = length(seq) - K + 1
+
+    for (l, x) in each(DNAKmer{K}, seq)
+
+        c = 0.0
+        for i in l:l+K-1
+            c += cons[i]
+        end
+        c /= K
+
+        k = convert(UInt64, x)
+
+        # usage_matrix[i, j + k] = 1
+        # usage_matrix[i, j + k] += 1
+        # usage_matrix[i, j + k] += c
+        usage_matrix[i, j + k] = max(usage_matrix[i, j + k], c)
+
+        # @show (l, c, x)
+    end
+
+    # exit()
+end
+
+
+function read_conservation(conservation_filename)
+    conservation_input = h5open(conservation_filename)
+    conservation = Dict{String, Vector{Float32}}()
+    for dataset in get_datasets(conservation_input)
+        chrname = replace(name(dataset), r"^/" => "")
+        conservation[chrname] = read(dataset)
+
+        # TODO: values tend to be too small. Maybe clamp the upper end?
+
+        # but everything into a 0-1 scale. not sure this is a great idea
+        replace!(x -> isnan(x) ? 0.0 : x, conservation[chrname])
+        clamp!(conservation[chrname], -1.0, 1.0)
+        # @show quantile(conservation[chrname], [0.0, 0.1, 0.5, 0.9, 1.0])
+        # map!(exp, conservation[chrname], conservation[chrname])
+        conservation[chrname] .-= minimum(conservation[chrname])
+        conservation[chrname] ./= maximum(conservation[chrname])
+    end
+    return conservation
+end
+
+
+function extract_sequence_kmer_features(
+        genome_filename, conservation_filename, cassette_exons)
+
+    conservations = read_conservation(conservation_filename)
+
+    num_features = length(cassette_exons)
+
+    num_segments = 7
+    segment_size = 4^K
+    kmer_usage_matrix = zeros(Float32, (num_features, num_segments*segment_size))
+
+    # fill!(kmer_usage_matrix, 1)
+    fill!(kmer_usage_matrix, 0)
+
+    intron_segment_len = 50
+
+    reader = open(FASTA.Reader, genome_filename)
+    entry = eltype(reader)()
+    while Polee.tryread!(reader, entry)
+        seqname = FASTA.identifier(entry)
+        entryseq = FASTA.sequence(entry)
+
+        if !haskey(conservations, seqname)
+            conservation = zeros(Float32, length(entryseq))
+        else
+            conservation = conservations[seqname]
+        end
+
+        for (i, (intron, flanks)) in enumerate(cassette_exons)
+            if intron.seqname != seqname
+                continue
+            end
+
+            exon_first = flanks.metadata[1]
+            exon_last  = flanks.metadata[2]
+
+            w = intron.first
+            x = intron.first + intron_segment_len - 1
+            y = exon_first - intron_segment_len
+            z = exon_first - 1
+            intron_5p_A = extract_sequence(entryseq, w, x)
+            intron_5p_A_cons = conservation[w:x]
+
+            intron_5p_B = extract_sequence(entryseq, x+1, y-1)
+            intron_5p_B_cons = conservation[x+1:y-1]
+
+            intron_5p_C = extract_sequence(entryseq, y, z)
+            intron_5p_C_cons = conservation[y:z]
+
+            alt_exon = extract_sequence(entryseq, exon_first, exon_last)
+            alt_exon_cons = conservation[exon_first:exon_last]
+
+            w = exon_last + 1
+            x = exon_last + intron_segment_len
+            y = intron.last - intron_segment_len + 1
+            z = intron.last
+            intron_3p_A = extract_sequence(entryseq, w, x)
+            intron_3p_A_cons = conservation[w:x]
+
+            intron_3p_B = extract_sequence(entryseq, x+1, y-1)
+            intron_3p_B_cons = conservation[x+1:y-1]
+
+            intron_3p_C = extract_sequence(entryseq, y, z)
+            intron_3p_C_cons = conservation[y:z]
+
+            if intron.strand == STRAND_NEG
+                intron_5p_A_ = reverse_complement(intron_3p_C)
+                intron_5p_B_ = reverse_complement(intron_3p_B)
+                intron_5p_C_ = reverse_complement(intron_3p_A)
+
+                intron_5p_A_cons_ = reverse(intron_3p_C_cons)
+                intron_5p_B_cons_ = reverse(intron_3p_B_cons)
+                intron_5p_C_cons_ = reverse(intron_3p_A_cons)
+
+                intron_3p_A_ = reverse_complement(intron_5p_C)
+                intron_3p_B_ = reverse_complement(intron_5p_B)
+                intron_3p_C_ = reverse_complement(intron_5p_A)
+
+                intron_3p_A_cons_ = reverse(intron_5p_C_cons)
+                intron_3p_B_cons_ = reverse(intron_5p_B_cons)
+                intron_3p_C_cons_ = reverse(intron_5p_A_cons)
+
+                intron_5p_A = intron_5p_A_
+                intron_5p_B = intron_5p_B_
+                intron_5p_C = intron_5p_C_
+
+                intron_5p_A_cons = intron_5p_A_cons_
+                intron_5p_B_cons = intron_5p_B_cons_
+                intron_5p_C_cons = intron_5p_C_cons_
+
+                intron_3p_A = intron_3p_A_
+                intron_3p_B = intron_3p_B_
+                intron_3p_C = intron_3p_C_
+
+                intron_3p_A_cons = intron_3p_A_cons_
+                intron_3p_B_cons = intron_3p_B_cons_
+                intron_3p_C_cons = intron_3p_C_cons_
+
+                alt_exon = reverse_complement(alt_exon)
+                reverse!(alt_exon_cons)
+            end
+
+            # TODO: encode (i.e. write)
+            encode_kmer_usage!(kmer_usage_matrix, intron_5p_A, intron_5p_A_cons, i, 1 + 0*segment_size)
+            encode_kmer_usage!(kmer_usage_matrix, intron_5p_B, intron_5p_B_cons, i, 1 + 1*segment_size)
+            encode_kmer_usage!(kmer_usage_matrix, intron_5p_C, intron_5p_C_cons, i, 1 + 2*segment_size)
+            encode_kmer_usage!(kmer_usage_matrix, alt_exon, alt_exon_cons, i, 1 + 3*segment_size)
+            encode_kmer_usage!(kmer_usage_matrix, intron_3p_A, intron_3p_A_cons, i, 1 + 4*segment_size)
+            encode_kmer_usage!(kmer_usage_matrix, intron_3p_B, intron_3p_B_cons, i, 1 + 5*segment_size)
+            encode_kmer_usage!(kmer_usage_matrix, intron_3p_C, intron_3p_C_cons, i, 1 + 6*segment_size)
+        end
+    end
+
+    # for idx in eachindex(kmer_usage_matrix)
+    #     kmer_usage_matrix[idx] = log(kmer_usage_matrix[idx])
+    # end
+
+    return kmer_usage_matrix
 end
 
 
@@ -158,6 +339,7 @@ end
 function main()
     # read specification
     spec = YAML.load_file(ARGS[1])
+    conservation_filename = ARGS[2]
     if isempty(spec)
         error("Experiment specification is empty.")
     end
@@ -205,18 +387,81 @@ function main()
 
     # find splicing features
     cassette_exons, mutex_exons = Polee.get_cassette_exons(ts)
+    # cassette_exons = filter(e -> e[1].strand == STRAND_POS, cassette_exons)
+
     @info string("Read ", length(cassette_exons), " cassette exons")
 
-    donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs =
-        extract_sequence_features(genome_filename, cassette_exons)
+
+    # CNN using small amount of sequence around splice junctions
+    # donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs =
+    #     extract_sequence_features(genome_filename, cassette_exons)
+
+    # simple regression using k-mer presence
+    kmer_usage_matrix = extract_sequence_kmer_features(
+        genome_filename, conservation_filename, cassette_exons)
 
     qx_feature_loc, qx_feature_scale = approximate_splicing_likelihood(
         cassette_exons, loaded_samples)
 
-    splice_code_py.estimate_splicing_code(
+    # splice_code_py.estimate_splicing_code(
+    #     qx_feature_loc, qx_feature_scale,
+    #     donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs,
+    #     tissues)
+
+    W0, W = splice_code_py.estimate_splicing_code_from_kmers(
         qx_feature_loc, qx_feature_scale,
-        donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs,
-        tissues)
+        kmer_usage_matrix, tissues)
+
+    print_top_k_ws(W0, 10)
+
+    # println("------------")
+
+    # p = sortperm(var(W, dims=2)[:,1], rev=true)
+
+    # for i in 1:5
+    #     k = p[i]-1
+    #     while k >= 4^K
+    #         k -= 4^K
+    #     end
+    #     @show DNAKmer{K}(UInt64(k))
+    #     @show W[p[i],:]
+    # end
+
+    # @show tissue_idx
+end
+
+
+function print_top_k_ws(W, k)
+    segment_size = 4^K
+    segments = [
+        "intron_5p_A",
+        "intron_5p_B",
+        "intron_5p_C",
+        "exon",
+        "intron_3p_A",
+        "intron_3p_B",
+        "intron_3p_C" ]
+
+    for j in 1:size(W, 2)
+        println("tissue: ", j)
+        for (i, part) in enumerate(segments)
+            println(part)
+
+            from = 1 + (i-1)*segment_size
+            to = (i)*segment_size
+
+            W_part = W[from:to,j]
+            p = sortperm(abs.(W_part), rev=true)
+
+            for i in 1:k
+                println((DNAKmer{K}(UInt64(p[i] - 1)), W_part[p[i]]))
+            end
+        end
+
+        # for i in 1:k
+        #     println((DNAKmer{6}(UInt64(p[i] - 1)), W[p[i], j]))
+        # end
+    end
 end
 
 

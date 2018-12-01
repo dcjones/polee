@@ -10,6 +10,7 @@ from tensorflow_probability import edward2 as ed
 def median_absolute_deviance_sample(x_mu, x_likelihood):
     x_mu_sigmoid = tf.sigmoid(x_mu)
     x_sigmoid = tf.sigmoid(x_likelihood)
+
     return tfp.distributions.percentile(tf.abs(x_mu_sigmoid - x_sigmoid), 50.0)
 
     # x_sigmoid = tf.sigmoid(x_likelihood.distribution.loc)
@@ -17,13 +18,15 @@ def median_absolute_deviance_sample(x_mu, x_likelihood):
 
 
 def est_expected_median_absolute_deviance(sess, mad_sample, feed_dict):
-    n_iter = 1
+    n_iter = 5
     return sum(sess.run(mad_sample, feed_dict=feed_dict) for iter in range(n_iter)) / n_iter
 
 
 def estimate_splicing_code(
         qx_feature_loc, qx_feature_scale,
-        donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs, tissues):
+        donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs,
+        donor_cons, acceptor_cons, alt_donor_cons, alt_acceptor_cons,
+        tissues):
 
     num_samples = len(tissues)
     num_tissues = np.max(tissues)
@@ -35,6 +38,15 @@ def estimate_splicing_code(
     seqs = np.hstack(
         [donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs])
         # [ num_features, seq_length, 4 ]
+
+    cons = np.hstack(
+        [donor_cons, acceptor_cons, alt_donor_cons, alt_acceptor_cons])
+
+    seqs = np.concatenate((seqs, np.expand_dims(cons, 2)), axis=2)
+    print(seqs.shape)
+
+    # sys.exit()
+
     num_features = seqs.shape[0]
 
     # split into testing and training data
@@ -67,9 +79,9 @@ def estimate_splicing_code(
 
     conv1 = tf.layers.conv1d(
         inputs=lyr0,
-        filters=32,
+        filters=64,
         kernel_size=4,
-        activation=tf.nn.relu,
+        activation=tf.nn.leaky_relu,
         name="conv1")
 
     print(conv1)
@@ -84,9 +96,9 @@ def estimate_splicing_code(
 
     conv2 = tf.layers.conv1d(
         inputs=pool1,
-        filters=32,
+        filters=64,
         kernel_size=4,
-        activation=tf.nn.relu,
+        activation=tf.nn.leaky_relu,
         name="conv2")
 
     pool2 = tf.layers.max_pooling1d(
@@ -101,7 +113,7 @@ def estimate_splicing_code(
     dense1 = tf.layers.dense(
         inputs=pool2_flat,
         units=256,
-        activation=tf.nn.relu,
+        activation=tf.nn.leaky_relu,
         name="dense1")
 
     training_flag = tf.placeholder(tf.bool)
@@ -119,7 +131,7 @@ def estimate_splicing_code(
         # [num_features, num_tissues]
 
     # TODO: eventually this should be a latent variable
-    x_scale = 0.01
+    x_scale = 0.1
 
     x_mu = tf.matmul(
         tf.constant(tissue_matrix),
@@ -128,8 +140,15 @@ def estimate_splicing_code(
 
     x_prior = tfd.Normal(
         loc=x_mu,
+        # loc=0.0,
         scale=x_scale,
         name="x_prior")
+
+    # x_prior = tfd.StudentT(
+    #     loc=x_mu,
+    #     scale=x_scale,
+    #     df=2.0,
+    #     name="x_prior")
 
     x_likelihood_loc = tf.placeholder(tf.float32, [num_samples, None])
     x_likelihood_scale = tf.placeholder(tf.float32, [num_samples, None])
@@ -138,13 +157,36 @@ def estimate_splicing_code(
         scale=x_likelihood_scale,
         name="x_likelihood")
 
+    # x = x_likelihood
+
     x = tf.Variable(
-        qx_feature_loc_train,
+        # qx_feature_loc_train,
+        # tf.random_normal(qx_feature_loc_train.shape),
+        # tf.zeros(qx_feature_loc_train.shape),
+        qx_feature_loc_train + qx_feature_scale_train * np.float32(np.random.randn(*qx_feature_loc_train.shape)),
+        # trainable=False,
         name="x")
+
+    # x_delta = tf.Variable(
+    #     # qx_feature_loc_train,
+    #     # tf.random_normal(qx_feature_loc_train.shape),
+    #     tf.zeros(qx_feature_loc_train.shape),
+    #     # trainable=False,
+    #     name="x")
+
+    # x_delta = tf.Print(x_delta,
+    #     [tf.reduce_min(x_delta), tf.reduce_max(x_delta)], "x_delta span")
+
+    # x = tf.Print(x,
+    #     [tf.reduce_min(x - qx_feature_loc_train), tf.reduce_max(x - qx_feature_loc_train)],
+    #     "x deviance from init")
 
     # print(x_prior.log_prob(x))
     # print(x_likelihood.log_prob(x))
     # sys.exit()
+
+    # log_prior = tf.reduce_sum(x_prior.log_prob(x_delta))
+    # log_likelihood = tf.reduce_sum(x_likelihood.distribution.log_prob(x_mu + x_delta))
 
     log_prior = tf.reduce_sum(x_prior.log_prob(x))
     log_likelihood = tf.reduce_sum(x_likelihood.distribution.log_prob(x))
@@ -155,13 +197,15 @@ def estimate_splicing_code(
 
     sess = tf.Session()
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
+    optimizer = tf.train.AdamOptimizer(learning_rate=1e-4)
     train = optimizer.minimize(-log_posterior)
 
     sess.run(tf.global_variables_initializer())
 
+    # dropout doesn't seem to do much....
     train_feed_dict = {
         training_flag: True,
+        # training_flag: False,
         lyr0_input: seqs_train,
         x_likelihood_loc: qx_feature_loc_train,
         x_likelihood_scale: qx_feature_scale_train }
@@ -172,23 +216,24 @@ def estimate_splicing_code(
         x_likelihood_loc: qx_feature_loc_test,
         x_likelihood_scale: qx_feature_scale_test }
 
-    n_iter = 2000
+    n_iter = 10000
     mad_sample = median_absolute_deviance_sample(x_mu, x_likelihood)
     for iter in range(n_iter):
-        # _, log_prior_value, log_likelihood_value = sess.run(
-        #     [train, log_prior, log_likelihood],
-        #     feed_dict=train_feed_dict)
-
-        sess.run(
-            [train],
+        _, log_prior_value, log_likelihood_value = sess.run(
+            [train, log_prior, log_likelihood],
             feed_dict=train_feed_dict)
 
-        # print((log_prior_value, log_likelihood_value))
+        # sess.run(
+        #     [train],
+        #     feed_dict=train_feed_dict)
+
+        print((log_prior_value, log_likelihood_value))
 
         if iter % 100 == 0:
             print(iter)
             print(est_expected_median_absolute_deviance(sess, mad_sample, train_feed_dict))
             print(est_expected_median_absolute_deviance(sess, mad_sample, test_feed_dict))
+
 
     print(est_expected_median_absolute_deviance(sess, mad_sample, train_feed_dict))
     print(est_expected_median_absolute_deviance(sess, mad_sample, test_feed_dict))

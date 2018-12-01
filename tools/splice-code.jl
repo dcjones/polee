@@ -88,7 +88,7 @@ function one_hot_encode_seqs(seqs)
 end
 
 
-function extract_sequence_features(genome_filename, cassette_exons)
+function extract_sequence_features(genome_filename, conservations, cassette_exons)
 
     num_features = length(cassette_exons)
 
@@ -97,14 +97,26 @@ function extract_sequence_features(genome_filename, cassette_exons)
     alt_donor_seqs    = Array{DNASequence}(undef, num_features)
     alt_acceptor_seqs = Array{DNASequence}(undef, num_features)
 
-    exonic_len = 5
-    intronic_len = 100
+    exonic_len = 10
+    intronic_len = 30
+    seqlen = exonic_len + intronic_len
+
+    donor_cons        = zeros(Float32, (num_features, seqlen))
+    acceptor_cons     = zeros(Float32, (num_features, seqlen))
+    alt_donor_cons    = zeros(Float32, (num_features, seqlen))
+    alt_acceptor_cons = zeros(Float32, (num_features, seqlen))
 
     reader = open(FASTA.Reader, genome_filename)
     entry = eltype(reader)()
     while Polee.tryread!(reader, entry)
         seqname = FASTA.identifier(entry)
         entryseq = FASTA.sequence(entry)
+        if !haskey(conservations, seqname)
+            conservation = zeros(Float32, length(entryseq))
+        else
+            conservation = conservations[seqname]
+        end
+
         for (i, (intron, flanks)) in enumerate(cassette_exons)
             if intron.seqname != seqname
                 continue
@@ -122,12 +134,23 @@ function extract_sequence_features(genome_filename, cassette_exons)
             alt_acceptor_seq = extract_sequence(
                 entryseq, exon_first-intronic_len, exon_first+exonic_len-1)
 
+            donor_cons_i = conservation[intron.first-exonic_len:intron.first+intronic_len-1]
+            acceptor_cons_i = conservation[intron.last-intronic_len+1:intron.last+exonic_len]
+            alt_donor_cons_i = conservation[exon_last-exonic_len+1:exon_last+intronic_len]
+            alt_acceptor_cons_i = conservation[exon_first-intronic_len:exon_first+exonic_len-1]
+
             if intron.strand == STRAND_NEG
                 donor_seq, acceptor_seq, alt_donor_seq, alt_acceptor_seq =
                     reverse_complement(acceptor_seq),
                     reverse_complement(donor_seq),
                     reverse_complement(alt_acceptor_seq),
                     reverse_complement(alt_donor_seq)
+
+                donor_cons_i, acceptor_cons_i, alt_donor_cons_i, alt_acceptor_cons_i =
+                    reverse(acceptor_cons_i),
+                    reverse(donor_cons_i),
+                    reverse(alt_acceptor_cons_i),
+                    reverse(alt_donor_cons_i)
             end
 
             donor_seqs[i]        = donor_seq
@@ -135,15 +158,17 @@ function extract_sequence_features(genome_filename, cassette_exons)
             alt_donor_seqs[i]    = alt_donor_seq
             alt_acceptor_seqs[i] = alt_acceptor_seq
 
-            # @show donor_seq
-            # @show alt_donor_seq
-            # @show acceptor_seq
-            # @show alt_acceptor_seq
-            # @show (intron.seqname, intron.first, intron.last)
+            donor_cons[i,:] = donor_cons_i
+            acceptor_cons[i,:] = acceptor_cons_i
+            alt_donor_cons[i,:] = alt_donor_cons_i
+            alt_acceptor_cons[i,:] = alt_acceptor_cons_i
+
+            if i <= 3
+                @show (i, intron.seqname)
+                @show haskey(conservations, intron.seqname)
+            end
         end
     end
-
-    # exit()
 
     # 1-hot encode sequences
     donor_seq_arr        = one_hot_encode_seqs(donor_seqs)
@@ -151,7 +176,8 @@ function extract_sequence_features(genome_filename, cassette_exons)
     alt_donor_seq_arr    = one_hot_encode_seqs(alt_donor_seqs)
     alt_acceptor_seq_arr = one_hot_encode_seqs(alt_acceptor_seqs)
 
-    return donor_seq_arr, acceptor_seq_arr, alt_donor_seq_arr, alt_acceptor_seq_arr
+    return donor_seq_arr, acceptor_seq_arr, alt_donor_seq_arr, alt_acceptor_seq_arr,
+        donor_cons, acceptor_cons, alt_donor_cons, alt_acceptor_cons
 end
 
 
@@ -180,24 +206,28 @@ function encode_kmer_usage!(usage_matrix, seq, cons, i, j)
 end
 
 
-function read_conservation(conservation_filename)
+function read_conservations(conservation_filename)
     conservation_input = h5open(conservation_filename)
-    conservation = Dict{String, Vector{Float32}}()
+    conservations = Dict{String, Vector{Float32}}()
     for dataset in get_datasets(conservation_input)
         chrname = replace(name(dataset), r"^/" => "")
-        conservation[chrname] = read(dataset)
+        conservations[chrname] = read(dataset)
 
         # TODO: values tend to be too small. Maybe clamp the upper end?
 
+        nancount = sum(map(isnan, conservations[chrname]))
+        @show (chrname, nancount / length(conservations[chrname]))
+
         # but everything into a 0-1 scale. not sure this is a great idea
-        replace!(x -> isnan(x) ? 0.0 : x, conservation[chrname])
-        clamp!(conservation[chrname], -1.0, 1.0)
-        # @show quantile(conservation[chrname], [0.0, 0.1, 0.5, 0.9, 1.0])
-        # map!(exp, conservation[chrname], conservation[chrname])
-        conservation[chrname] .-= minimum(conservation[chrname])
-        conservation[chrname] ./= maximum(conservation[chrname])
+        replace!(x -> isnan(x) ? 0.0f0 : x, conservations[chrname])
+
+        # clamp!(conservations[chrname], -1.0, 1.0)
+        # # @show quantile(conservation[chrname], [0.0, 0.1, 0.5, 0.9, 1.0])
+        # # map!(exp, conservation[chrname], conservation[chrname])
+        # conservations[chrname] .-= minimum(conservations[chrname])
+        # conservations[chrname] ./= maximum(conservations[chrname])
     end
-    return conservation
+    return conservations
 end
 
 
@@ -328,6 +358,10 @@ function get_tissues_from_spec(spec)
     for sample in spec["samples"]
         @assert length(sample["factors"]) == 1
         tissue = sample["factors"][1]
+
+        # TODO: JUST TESTING
+        # tissue = "A"
+
         k = get!(tissue_idx, tissue, 1 + length(tissue_idx))
         push!(tissues, k)
     end
@@ -373,6 +407,8 @@ function main()
 
     tissues, tissue_idx = get_tissues_from_spec(spec)
 
+    conservations = read_conservations(conservation_filename)
+
     Polee.init_python_modules()
 
     excluded_transcripts = Set{String}()
@@ -393,26 +429,78 @@ function main()
 
 
     # CNN using small amount of sequence around splice junctions
-    # donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs =
-    #     extract_sequence_features(genome_filename, cassette_exons)
+    donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs,
+    donor_cons, acceptor_cons, alt_donor_cons, alt_acceptor_cons =
+        extract_sequence_features(genome_filename, conservations, cassette_exons)
 
     # simple regression using k-mer presence
-    kmer_usage_matrix = extract_sequence_kmer_features(
-        genome_filename, conservation_filename, cassette_exons)
+    # kmer_usage_matrix = extract_sequence_kmer_features(
+    #     genome_filename, conservation_filename, cassette_exons)
 
     qx_feature_loc, qx_feature_scale = approximate_splicing_likelihood(
         cassette_exons, loaded_samples)
 
-    # splice_code_py.estimate_splicing_code(
-    #     qx_feature_loc, qx_feature_scale,
-    #     donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs,
-    #     tissues)
+    # @show size(qx_feature_loc)
+    # @show size(qx_feature_scale)
 
-    W0, W = splice_code_py.estimate_splicing_code_from_kmers(
+    # tmp_mu = qx_feature_loc[1:4,:]
+    # tmp_sd = qx_feature_scale[1:4,:]
+
+    # p = sortperm(var(tmp_mu, dims=1)[1,:], rev=true)
+    # tmp_mu = tmp_mu[:,p]
+    # tmp_sd = tmp_sd[:,p]
+
+    # for i in 1:10
+    #     println(i)
+    #     println(tmp_mu[:,i])
+    #     println(tmp_sd[:,i])
+    # end
+
+    # println("---------------")
+
+    # k = div(size(tmp_mu, 2), 2)
+    # for i in 1:10
+    #     println(i)
+    #     println(tmp_mu[:,k+i])
+    #     println(tmp_sd[:,k+i])
+    # end
+
+    # println("---------------")
+
+
+    # for i in 1:10
+    #     println(i)
+    #     println(tmp_mu[:,end-i+1])
+    #     println(tmp_sd[:,end-i+1])
+    # end
+
+    # println("#####################")
+
+    # p = sortperm(tmp_sd[1,:])
+    # tmp_mu = tmp_mu[:,p]
+    # tmp_sd = tmp_sd[:,p]
+
+    # for i in 1:10
+    #     println(i)
+    #     println(tmp_mu[:,i])
+    #     println(tmp_sd[:,i])
+    # end
+
+    # @show quantile(tmp_sd[1,:], [0.0, 0.1, 0.5, 0.9, 1.0])
+
+    # exit()
+
+    splice_code_py.estimate_splicing_code(
         qx_feature_loc, qx_feature_scale,
-        kmer_usage_matrix, tissues)
+        donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs,
+        donor_cons, acceptor_cons, alt_donor_cons, alt_acceptor_cons,
+        tissues)
 
-    print_top_k_ws(W0, 10)
+    # W0, W = splice_code_py.estimate_splicing_code_from_kmers(
+    #     qx_feature_loc, qx_feature_scale,
+    #     kmer_usage_matrix, tissues)
+
+    # print_top_k_ws(W0, 10)
 
     # println("------------")
 

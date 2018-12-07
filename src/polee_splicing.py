@@ -31,8 +31,8 @@ def transcript_expression_to_splicing_log_ratios(
         feature_expr     = tf.sparse_tensor_dense_matmul(feature_matrix, x_i)
         antifeature_expr = tf.sparse_tensor_dense_matmul(antifeature_matrix, x_i)
 
-        splice_lrs.append(
-            tf.log(feature_expr) - tf.log(antifeature_expr))
+        log_ratio = tf.log(feature_expr) - tf.log(antifeature_expr)
+        splice_lrs.append(log_ratio)
 
     return tf.squeeze(tf.stack(splice_lrs), axis=-1)
 
@@ -67,6 +67,6 @@ def approximate_splicing_likelihood(
     if sess is None:
         sess = tf.Session()
 
-    train(sess, -log_prob, init_feed_dict, 500, 1e-1)
+    train(sess, -log_prob, init_feed_dict, 1500, 1e-1)
 
     return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))

@@ -111,6 +111,7 @@ function extract_sequence_features(genome_filename, conservations, cassette_exon
     while Polee.tryread!(reader, entry)
         seqname = FASTA.identifier(entry)
         entryseq = FASTA.sequence(entry)
+
         if !haskey(conservations, seqname)
             conservation = zeros(Float32, length(entryseq))
         else
@@ -359,9 +360,6 @@ function get_tissues_from_spec(spec)
         @assert length(sample["factors"]) == 1
         tissue = sample["factors"][1]
 
-        # TODO: JUST TESTING
-        # tissue = "A"
-
         k = get!(tissue_idx, tissue, 1 + length(tissue_idx))
         push!(tissues, k)
     end
@@ -387,6 +385,15 @@ function main()
     end
     genome_filename = spec["genome"]
 
+    excluded_transcripts = Set{String}()
+    if length(ARGS) >= 3
+        open(ARGS[3]) do input
+            for line in eachline(input)
+                push!(excluded_transcripts, chomp(line))
+            end
+        end
+    end
+
     if haskey(spec, "annotations")
         transcripts_filename = spec["annotations"]
     else
@@ -411,7 +418,6 @@ function main()
 
     Polee.init_python_modules()
 
-    excluded_transcripts = Set{String}()
     ts, ts_metadata = Polee.Transcripts(transcripts_filename, excluded_transcripts)
     # read_transcript_sequences!(ts, spec["genome"]) # don't need this
 
@@ -427,6 +433,65 @@ function main()
 
     @info string("Read ", length(cassette_exons), " cassette exons")
 
+    qx_feature_loc, qx_feature_scale = approximate_splicing_likelihood(
+        cassette_exons, loaded_samples)
+
+
+    # qx_feature_scale_var =
+    #     maximum(qx_feature_scale, dims=1)[1,:] .- minimum(qx_feature_scale, dims=1)[1,:]
+    # p = sortperm(qx_feature_scale_var, rev=true)
+
+
+    @show extrema(qx_feature_loc[:,1505])
+    @show extrema(qx_feature_scale[:,1505])
+
+    upperq = Float64[
+        quantile(qx_feature_scale[:,i], 0.9) for i in 1:size(qx_feature_scale, 2)]
+    lowerq = Float64[
+        quantile(qx_feature_scale[:,i], 0.1) for i in 1:size(qx_feature_scale, 2)]
+    p = sortperm(upperq .- lowerq, rev=true)
+
+
+    # qx_feature_scale_var = var(qx_feature_scale, dims=1)[1,:]
+    # p = sortperm(qx_feature_scale_var, rev=true)
+
+    # qx_feature_scale_var = minimum(qx_feature_scale, dims=1)[1,:]
+    # p = sortperm(qx_feature_scale_var)
+
+    loc = qx_feature_loc[:,p]
+    scale = qx_feature_scale[:,p]
+
+    open("qx_feature_loc.csv", "w") do output
+        for j in 1:size(loc, 2)
+            print(output, loc[1, j])
+            for i in 2:size(loc, 1)
+                print(output, ", ", loc[i, j])
+            end
+            println(output)
+        end
+    end
+
+    open("qx_feature_scale.csv", "w") do output
+        for j in 1:size(scale, 2)
+            print(output, scale[1, j])
+            for i in 2:size(scale, 1)
+                print(output, ", ", scale[i, j])
+            end
+            println(output)
+        end
+    end
+
+    # for i in 1:40
+    #     println((i, p[i]))
+    # end
+
+    # exit()
+
+
+    # qx_feature_loc = qx_feature_loc[:,p][:,1:250]
+    # qx_feature_scale = qx_feature_scale[:,p][:,1:250]
+    # cassette_exons = cassette_exons[p][1:250]
+
 
     # CNN using small amount of sequence around splice junctions
     donor_seqs, acceptor_seqs, alt_donor_seqs, alt_acceptor_seqs,
@@ -437,8 +502,6 @@ function main()
     # kmer_usage_matrix = extract_sequence_kmer_features(
     #     genome_filename, conservation_filename, cassette_exons)
 
-    qx_feature_loc, qx_feature_scale = approximate_splicing_likelihood(
-        cassette_exons, loaded_samples)
 
     # @show size(qx_feature_loc)
     # @show size(qx_feature_scale)
@@ -446,15 +509,27 @@ function main()
     # tmp_mu = qx_feature_loc[1:4,:]
     # tmp_sd = qx_feature_scale[1:4,:]
 
-    # p = sortperm(var(tmp_mu, dims=1)[1,:], rev=true)
+    # tmp_sd_var = var(tmp_sd, dims=1)[1,:]
+
+    # p = sortperm(tmp_sd_var, rev=true)
     # tmp_mu = tmp_mu[:,p]
     # tmp_sd = tmp_sd[:,p]
 
+    # @show tmp_sd_var[p][1:10]
     # for i in 1:10
     #     println(i)
     #     println(tmp_mu[:,i])
     #     println(tmp_sd[:,i])
     # end
+
+    # @show tmp_sd_var[p][100:110]
+    # for i in 100:110
+    #     println(i)
+    #     println(tmp_mu[:,i])
+    #     println(tmp_sd[:,i])
+    # end
+
+    # exit()
 
     # println("---------------")
 

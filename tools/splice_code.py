@@ -53,8 +53,15 @@ def estimate_splicing_code(
     shuffled_feature_idxs = np.arange(num_features)
     np.random.shuffle(shuffled_feature_idxs)
 
+
     seqs_train_len = int(np.floor(0.75 * num_features))
     seqs_test_len  = num_features - seqs_train_len
+
+    print(num_features)
+    print(seqs_train_len)
+    print(seqs_test_len)
+    print(qx_feature_loc.shape)
+    print(qx_feature_scale.shape)
 
     train_idxs = shuffled_feature_idxs[:seqs_train_len]
     test_idxs = shuffled_feature_idxs[seqs_train_len:]
@@ -68,37 +75,96 @@ def estimate_splicing_code(
     qx_feature_loc_test = qx_feature_loc[:,test_idxs]
     qx_feature_scale_test = qx_feature_scale[:,test_idxs]
 
+
+
+
+
+    # invented data to test my intuition
+
+    # seqs_train = np.array(
+    #     [[[1.0, 0.0],
+    #       [1.0, 0.0],
+    #       [1.0, 0.0],
+    #       [1.0, 0.0]],
+    #      [[0.0, 1.0],
+    #       [0.0, 1.0],
+    #       [0.0, 1.0],
+    #       [0.0, 1.0]]],
+    #     dtype=np.float32)
+
+    # seqs_test = np.copy(seqs_train)
+
+    # tissue_matrix = np.array(
+    #     [[1],
+    #      [1],
+    #      [1]],
+    #     dtype=np.float32)
+
+    # qx_feature_loc_train = np.array(
+    #     [[-1.0, 1.0],
+    #      [-1.1, 1.1],
+    #     #  [-0.5, 0.5]],
+    #      [0.9, -0.9]],
+    #     dtype=np.float32)
+
+    # qx_feature_scale_train = np.array(
+    #     [[0.1, 0.1],
+    #      [0.1, 0.1],
+    #     #  [0.1, 0.1]],
+    #      [1.0, 1.0]],
+    #     dtype=np.float32)
+
+    # qx_feature_loc_test = np.copy(qx_feature_loc_train)
+    # qx_feature_scale_test = np.copy(qx_feature_scale_train)
+
+    # num_tissues = 1
+    # num_samples = qx_feature_loc_train.shape[0]
+    # seqs_train_len = 2
+
+
+
+
+    # print(qx_feature_loc_train)
+    # print(qx_feature_scale_train)
+    # sys.exit()
+
     keep_prob = tf.placeholder(tf.float32)
 
     # model
-    lyr0_input = tf.placeholder(tf.float32, (None, seqs.shape[1], seqs.shape[2]))
+    lyr0_input = tf.placeholder(tf.float32, (None, seqs_train.shape[1], seqs_train.shape[2]))
     # lyr0 = tf.layers.flatten(lyr0_input)
     lyr0 = lyr0_input
 
     print(lyr0)
 
+    training_flag = tf.placeholder(tf.bool)
+
     conv1 = tf.layers.conv1d(
         inputs=lyr0,
-        filters=64,
+        filters=32,
         kernel_size=4,
         activation=tf.nn.leaky_relu,
+        kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-1),
         name="conv1")
 
-    print(conv1)
+    conv1_dropout = tf.layers.dropout(
+        inputs=conv1,
+        rate=0.5,
+        training=training_flag,
+        name="conv1_dropout")
 
     pool1 = tf.layers.max_pooling1d(
-        inputs=conv1,
+        inputs=conv1_dropout,
         pool_size=2,
         strides=2,
         name="pool1")
-
-    print(pool1)
 
     conv2 = tf.layers.conv1d(
         inputs=pool1,
         filters=64,
         kernel_size=4,
         activation=tf.nn.leaky_relu,
+        kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-1),
         name="conv2")
 
     pool2 = tf.layers.max_pooling1d(
@@ -110,28 +176,39 @@ def estimate_splicing_code(
     pool2_flat = tf.layers.flatten(
         pool2, name="pool2_flat")
 
+    # pool2_flat = tf.layers.flatten(conv1_dropout)
+
     dense1 = tf.layers.dense(
         inputs=pool2_flat,
         units=256,
         activation=tf.nn.leaky_relu,
+        kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-1),
         name="dense1")
 
-    training_flag = tf.placeholder(tf.bool)
-
-    dropout1 = tf.layers.dropout(
-        inputs=dense1,
-        rate=0.4,
-        training=training_flag,
-        name="dropout1")
+    # dropout1 = tf.layers.dropout(
+    #     inputs=dense1,
+    #     rate=0.5,
+    #     training=training_flag,
+    #     name="dropout1")
 
     prediction_layer = tf.layers.dense(
-        inputs=dropout1,
+        # inputs=dropout1,
+        inputs=dense1,
         units=num_tissues,
         activation=tf.identity)
         # [num_features, num_tissues]
 
     # TODO: eventually this should be a latent variable
-    x_scale = 0.1
+    # x_scale = 0.2
+    x_scale_prior = tfd.InverseGamma(
+        concentration=0.001,
+        rate=0.001,
+        name="x_scale_prior")
+
+    x_scale = tf.nn.softplus(tf.Variable(tf.fill([seqs_train_len], -3.0)))
+    # x_scale = tf.constant(0.1)
+
+    print(tissue_matrix.shape)
 
     x_mu = tf.matmul(
         tf.constant(tissue_matrix),
@@ -160,12 +237,15 @@ def estimate_splicing_code(
     # x = x_likelihood
 
     x = tf.Variable(
-        # qx_feature_loc_train,
+        qx_feature_loc_train,
         # tf.random_normal(qx_feature_loc_train.shape),
         # tf.zeros(qx_feature_loc_train.shape),
-        qx_feature_loc_train + qx_feature_scale_train * np.float32(np.random.randn(*qx_feature_loc_train.shape)),
+        # qx_feature_loc_train + qx_feature_scale_train * np.float32(np.random.randn(*qx_feature_loc_train.shape)),
         # trainable=False,
         name="x")
+
+    print("X")
+    print(x)
 
     # x_delta = tf.Variable(
     #     # qx_feature_loc_train,
@@ -188,16 +268,18 @@ def estimate_splicing_code(
     # log_prior = tf.reduce_sum(x_prior.log_prob(x_delta))
     # log_likelihood = tf.reduce_sum(x_likelihood.distribution.log_prob(x_mu + x_delta))
 
-    log_prior = tf.reduce_sum(x_prior.log_prob(x))
+
+    log_prior = tf.reduce_sum(x_prior.log_prob(x)) + tf.reduce_sum(x_scale_prior.log_prob(x_scale))
     log_likelihood = tf.reduce_sum(x_likelihood.distribution.log_prob(x))
 
     log_posterior = log_prior + log_likelihood
+
 
     # log_posterior = x_likelihood.distribution.log_prob(x_mu)
 
     sess = tf.Session()
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=1e-4)
+    optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
     train = optimizer.minimize(-log_posterior)
 
     sess.run(tf.global_variables_initializer())
@@ -216,21 +298,38 @@ def estimate_splicing_code(
         x_likelihood_loc: qx_feature_loc_test,
         x_likelihood_scale: qx_feature_scale_test }
 
-    n_iter = 10000
+    n_iter = 1000
     mad_sample = median_absolute_deviance_sample(x_mu, x_likelihood)
     for iter in range(n_iter):
-        _, log_prior_value, log_likelihood_value = sess.run(
-            [train, log_prior, log_likelihood],
-            feed_dict=train_feed_dict)
-
-        # sess.run(
-        #     [train],
+        # _, log_prior_value, log_likelihood_value = sess.run(
+        #     [train, log_prior, log_likelihood],
         #     feed_dict=train_feed_dict)
 
-        print((log_prior_value, log_likelihood_value))
+        sess.run(
+            [train],
+            feed_dict=train_feed_dict)
+
+
+        # print((log_prior_value, log_likelihood_value))
 
         if iter % 100 == 0:
-            print(iter)
+            # print(iter)
+            # print("x")
+            # print(sess.run(x))
+            # print("x likelihood")
+            # print(sess.run(x_likelihood.distribution.log_prob(x), feed_dict=train_feed_dict))
+            # print("x_mu")
+            # print(sess.run(x_mu, feed_dict=train_feed_dict))
+            # print(sess.run(x_mu, feed_dict=test_feed_dict))
+            # print("x_mu likelihood")
+            # print(sess.run(x_likelihood.distribution.log_prob(x_mu), feed_dict=train_feed_dict))
+            # print(sess.run(x_likelihood.distribution.log_prob(x_mu), feed_dict=test_feed_dict))
+
+            print(sess.run(tf.reduce_sum(x_likelihood.distribution.log_prob(x_mu)), feed_dict=train_feed_dict))
+            print(sess.run(tf.reduce_sum(x_likelihood.distribution.log_prob(x_mu)), feed_dict=test_feed_dict))
+            print(sess.run(tfp.distributions.percentile(x_likelihood.distribution.log_prob(x_mu), 50.0), feed_dict=train_feed_dict))
+            print(sess.run(tfp.distributions.percentile(x_likelihood.distribution.log_prob(x_mu), 50.0), feed_dict=test_feed_dict))
+
             print(est_expected_median_absolute_deviance(sess, mad_sample, train_feed_dict))
             print(est_expected_median_absolute_deviance(sess, mad_sample, test_feed_dict))
 

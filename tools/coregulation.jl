@@ -14,6 +14,8 @@ pushfirst!(PyVector(pyimport("sys")["path"]), dirname(@__FILE__))
 import Polee
 import YAML
 
+
+
 function main()
     # read specification
     spec = YAML.load_file(ARGS[1])
@@ -60,7 +62,6 @@ function main()
     batch_size = nothing
     loaded_samples = Polee.load_samples_from_specification(
         spec, ts, ts_metadata, max_num_samples, batch_size)
-
 
     # Fit heirarchical model (of transcript expression)
     num_samples, n = size(loaded_samples.x0_values)

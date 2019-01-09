@@ -1,5 +1,7 @@
 
 import numpy as np
+import scipy
+import scipy.stats as sps
 import tensorflow as tf
 import tensorflow_probability as tfp
 import sys
@@ -18,7 +20,6 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
     n = qx_loc.shape[1]
 
     # [num_samples, n]
-    # TODO: testing with fixed qx
     qx = ed.Normal(
         loc=qx_loc,
         scale=qx_scale,
@@ -29,7 +30,6 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
     qw_loc = tf.Variable(qw_loc_init, name="qw_loc")
 
     qw_scale_softminus_init = tf.placeholder(tf.float32, (n, batch_size), name="qw_scale_softminus_init")
-    # TODO: seems very sensitive to how we initialize this. That's not such a great property.
     qw_scale_softminus_init_value = np.full((n,batch_size), -2.0, dtype=np.float32)
     qw_scale = tf.nn.softplus(tf.Variable(qw_scale_softminus_init, name="qw_scale"))
 
@@ -39,15 +39,75 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
         scale=qw_scale,
         name="qw")
 
-    # TODO: testing with no distribution
-    # qw = qw_loc
+    # TODO: variational distribution over sigma
 
-    # TODO: maybe try something like horseshoe prior
+    # sigma
+    # -----
+    qsigma_loc_init_value = np.full((1,), -1.0, dtype=np.float32)
+    qsigma_loc_init = tf.placeholder(tf.float32, (1,), name="qsigma_loc_init")
+    qsigma_loc = tf.Variable(qsigma_loc_init, name="qsigma_loc")
+
+    qsigma_scale_init_value = np.full((1,), -1.0, dtype=np.float32)
+    qsigma_scale_init = tf.placeholder(tf.float32, (1,), name="qsigma_scale_init")
+    qsigma_scale = tf.Variable(qsigma_scale_init, name="qsigma_scale")
+
+    qsigma = ed.TransformedDistribution(
+        distribution=
+            tfp.distributions.Normal(
+                loc=qsigma_loc,
+                scale=qsigma_scale),
+        bijector=tfp.bijectors.Exp(),
+        name="qsigma")
+
+    # tau
+    # ---
+    tau_prior = tfd.HalfCauchy(
+        loc=0.0,
+        scale=qsigma)
+
+    qtau_loc_init_value = np.full((1,), -1.0, dtype=np.float32)
+    qtau_loc_init = tf.placeholder(tf.float32, (1,), name="qtau_loc_init")
+    qtau_loc = tf.Variable(qtau_loc_init, name="qtau_loc")
+
+    qtau_scale_init_value = np.full((1,), -1.0, dtype=np.float32)
+    qtau_scale_init = tf.placeholder(tf.float32, (1,), name="qtau_scale_init")
+    qtau_scale = tf.Variable(qtau_scale_init, name="qtau_scale")
+
+    qtau = ed.TransformedDistribution(
+        distribution=
+            tfp.distributions.Normal(
+                loc=qtau_loc,
+                scale=qtau_scale),
+        bijector=tfp.bijectors.Exp(),
+        name="qtau")
+
+    # w_scale
+    # -------
+    w_scale_prior = tfd.HalfCauchy(
+        loc=tf.fill([n, batch_size], 0.0),
+        scale=qtau)
+
+    qw_scale_loc_init_value = np.full((n, batch_size), -2.0, dtype=np.float32)
+    qw_scale_loc_init = tf.placeholder(tf.float32, (n, batch_size), name="qw_scale_loc_init")
+    qw_scale_loc = tf.Variable(qw_scale_loc_init, name="qw_scale_loc")
+
+    qw_scale_scale_init_value = np.full((n, batch_size), -2.0, dtype=np.float32)
+    qw_scale_scale_init = tf.placeholder(tf.float32, (n, batch_size), name="qw_scale_scale_init")
+    qw_scale_scale = tf.nn.softplus(tf.Variable(qw_scale_loc_init, name="qw_scale_scale"))
+
+    qw_scale = ed.TransformedDistribution(
+        distribution=
+            tfp.distributions.Normal(
+                loc=qw_scale_loc,
+                scale=qw_scale_scale),
+        bijector=tfp.bijectors.Exp(),
+        name="qw_scale")
+
+    # w
+    # -
     w_prior = tfd.Normal(
         loc=0.0,
-        scale=0.01)
-
-    err_scale = 0.1
+        scale=qw_scale)
 
     # [n, batch_size]
     mask_init = tf.placeholder(tf.float32, (n, batch_size), name="mask_init")
@@ -58,13 +118,14 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
     # x_var = tf.Print(x_var, [tf.reduce_min(x_var), tf.reduce_mean(x_var), tf.reduce_max(x_var)], "x_var")
 
     x_std = (qx - x_mean) / tf.sqrt(x_var) # [num_samples, n]
-    # x_std = qx
+    # x_std = qx - x_mean
     # x_std = tf.Print(x_std, [tf.reduce_min(x_std), tf.reduce_mean(x_std), tf.reduce_max(x_std)], "x_std")
 
-    qw_masked = qw * mask
-    # qw_masked = qw
+    # qw_masked = qw * mask
+    qw_masked = qw
 
     # [num_samples, batch_size]
+    err_scale = 1.0 # TODO: consider what to do with this shit
     y_dist = tfd.Normal(
         loc=tf.matmul(x_std, qw_masked),
         scale=err_scale)
@@ -76,7 +137,10 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
 
     log_posterior = \
         tf.reduce_sum(y_dist.log_prob(y)) + \
-        tf.reduce_sum(w_prior.log_prob(qw_masked))
+        tf.reduce_sum(w_prior.log_prob(qw_masked)) + \
+        tf.reduce_sum(w_scale_prior.log_prob(qw_scale)) + \
+        tf.reduce_sum(tau_prior.log_prob(qtau)) + \
+        tf.reduce_sum(-2 * tf.log(qsigma)) # jefferys prior
 
     elbo = tf.reduce_sum(qw.distribution.entropy()) + log_posterior
     # elbo = log_posterior
@@ -86,8 +150,14 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
 
     sess = tf.Session()
 
-    niter = 1000
+    niter = 2000
     feed_dict = dict()
+    feed_dict[qsigma_loc_init] = qsigma_loc_init_value
+    feed_dict[qsigma_scale_init] = qsigma_scale_init_value
+    feed_dict[qtau_loc_init] = qtau_loc_init_value
+    feed_dict[qtau_scale_init] = qtau_scale_init_value
+    feed_dict[qw_scale_loc_init] = qw_scale_loc_init_value
+    feed_dict[qw_scale_scale_init] = qw_scale_scale_init_value
     feed_dict[qw_loc_init] = qw_loc_init_value
     feed_dict[qw_scale_softminus_init] = qw_scale_softminus_init_value
     feed_dict[mask_init] = mask_init_value
@@ -102,6 +172,8 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
         for t in range(niter):
             _, elbo_val = sess.run([train, elbo])
             print((t, elbo_val))
+            # print(sess.run(qtau))
+            # print(sess.run(qsigma))
             # print(sess.run(tf.reduce_sum(y_dist.log_prob(y))))
             # print(sess.run(tf.reduce_sum(w_prior.log_prob(qw_masked))))
             # print(sess.run([tf.reduce_min(qw_loc), tf.reduce_max(qw_loc)]))
@@ -121,12 +193,50 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
 
         print("nonzeros per transcript")
         # print(np.sum((sess.run(qw.distribution.quantile(0.05)) > 0) | (sess.run(qw.distribution.quantile(0.95)) < 0)) / batch_size)
-        print(np.sum((sess.run(qw.distribution.quantile(0.01)) > 0)) / batch_size)
-        print(np.sum((sess.run(qw.distribution.quantile(0.99)) < 0)) / batch_size)
+        # print(np.sum((sess.run(qw.distribution.quantile(0.01)) > 0)) / batch_size)
+        # print(np.sum((sess.run(qw.distribution.quantile(0.99)) < 0)) / batch_size)
 
-        print(np.sum((sess.run(qw.distribution.quantile(0.001)) > 0)) / batch_size)
-        print(np.sum((sess.run(qw.distribution.quantile(0.999)) < 0)) / batch_size)
+        lower_credible = sess.run(qw.distribution.quantile(0.001))
+        upper_credible = sess.run(qw.distribution.quantile(0.999))
 
+        print(np.sum((lower_credible > 0)) / batch_size)
+
+        pos_idxs = np.array(range(n))[lower_credible[:,0] > 0]
+        print(pos_idxs)
+
+        print(np.sum((upper_credible < 0)) / batch_size)
+        neg_idxs = np.array(range(n))[upper_credible[:,0] < 0]
+        print(neg_idxs)
+
+
+        print([(l[0],u[0]) for (l,u) in zip(lower_credible[pos_idxs], upper_credible[pos_idxs])])
+        print([(l[0],u[0]) for (l,u) in zip(lower_credible[neg_idxs], upper_credible[neg_idxs])])
+
+        us = qx_loc[:,start_j]
+        vs = qx_loc[:,pos_idxs[0]]
+        ws = qx_loc[:,neg_idxs[0]]
+
+        print(us)
+        print(sps.pearsonr(us, vs))
+        print(vs)
+        print(sps.pearsonr(us, ws))
+        print(ws)
+
+        # us = (us - np.mean(us)) / np.sqrt(np.var(us))
+        # vs = (vs - np.mean(vs)) / np.sqrt(np.var(vs))
+        # ws = (ws - np.mean(ws)) / np.sqrt(np.var(ws))
+
+        us = (us - np.mean(us))
+        vs = (vs - np.mean(vs))
+        ws = (ws - np.mean(ws))
+
+        print(us)
+        print(sps.pearsonr(us, vs))
+        print(vs)
+        print(sps.pearsonr(us, ws))
+        print(ws)
 
         break
+        # if start_j >= 3:
+            # break
 

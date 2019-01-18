@@ -101,9 +101,9 @@ function main()
 
     @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
 
-    # @show sum(idx)
-    # qx_loc = qx_loc[:,idx]
-    # qx_scale = qx_scale[:,idx]
+    @show sum(idx)
+    qx_loc = qx_loc[:,idx]
+    qx_scale = qx_scale[:,idx]
 
     @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
 

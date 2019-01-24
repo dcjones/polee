@@ -95,7 +95,11 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
 
     # w
     # -
-    w_scale_prior = tfd.Horseshoe(
+    # w_scale_prior = tfd.Horseshoe(
+    #     scale=1.0,
+    #     name="w_scale_prior")
+    w_scale_prior = tfd.HalfCauchy(
+        loc=0.0,
         scale=1.0,
         name="w_scale_prior")
 
@@ -167,7 +171,9 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1):
 
     entropy = \
         tf.reduce_sum(qb.distribution.entropy()) + \
-        tf.reduce_sum(qby.distribution.entropy()) # + \
+        tf.reduce_sum(qby.distribution.entropy()) + \
+        tf.reduce_sum(tf.log(qw_scale_scale * tf.exp(qw_scale_loc + 0.5)))
+        # tf.reduce_sum(qw_scale.distribution.entropy()) # + \
         # tf.reduce_sum(qw.distribution.entropy())
 
     elbo = entropy + log_posterior

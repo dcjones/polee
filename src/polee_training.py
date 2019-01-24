@@ -29,13 +29,13 @@ class Progbar:
         self.curr_text = progbar
 
 
-# From: https://github.com/tensorflow/probability/issues/100
-class HalfCauchy(tfp.distributions.TransformedDistribution):
-  def __init__(self, loc, scale, name, validate_args=False):
-    super(HalfCauchy, self).__init__(
-        distribution=tfp.distributions.Cauchy(loc, scale, validate_args=validate_args),
-        bijector=tfp.bijectors.AbsoluteValue(validate_args=validate_args),
-        name=name)
+# # From: https://github.com/tensorflow/probability/issues/100
+# class HalfCauchy(tfp.distributions.TransformedDistribution):
+#   def __init__(self, loc, scale, name, validate_args=False):
+#     super(HalfCauchy, self).__init__(
+#         distribution=tfp.distributions.Cauchy(loc, scale, validate_args=validate_args),
+#         bijector=tfp.bijectors.AbsoluteValue(validate_args=validate_args),
+#         name=name)
 
 
 def train(sess, objective, init_feed_dict, n_iter, learning_rate, var_list=None):

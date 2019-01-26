@@ -97,15 +97,26 @@ function main()
     end
 
     # TRY: lets just consider the stuff with high expression for now
-    idx = maximum(qx_loc, dims=1)[1,:] .> -10.0
+    # We should have some principles way of doing this
+
+    upper_credible = qx_loc .+ 3 .* qx_scale
+
+    idx = maximum(upper_credible, dims=1)[1,:] .> -10.0
+
+    # idx = maximum(qx_loc, dims=1)[1,:] .> -12.0
 
     @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
 
     @show sum(idx)
+
+
+    # qx_loc = qx_loc[:,1:20000]
+    # qx_scale = qx_scale[:,1:20000]
+
     # qx_loc = qx_loc[:,idx]
     # qx_scale = qx_scale[:,idx]
 
-    @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
+    # @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
 
     # Fit covariance matrix column by column
     coregulation_py.estimate_gmm_precision(

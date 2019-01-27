@@ -75,7 +75,7 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=5, err_scale=0.25):
     # variational estimate of w_scale
     # -------------------------------
 
-    qw_scale_loc_init_value = np.full((batch_size, n), -6.0, dtype=np.float32)
+    qw_scale_loc_init_value = np.full((batch_size, n), -2.0, dtype=np.float32)
     qw_scale_loc_init = tf.placeholder(tf.float32, (batch_size, n), name="qw_scale_loc_init")
     qw_scale_loc = tf.Variable(qw_scale_loc_init, name="qw_scale_loc")
 
@@ -113,8 +113,8 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=5, err_scale=0.25):
 
     w_prior = tfd.Normal(
         loc=0.0,
-        # scale=qw_scale_,
-        scale=0.1,
+        scale=qw_scale,
+        # scale=0.1,
         name="w_prior")
 
     # [n, batch_size]

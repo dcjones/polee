@@ -41,7 +41,7 @@ def fillmask(mask_init_value, start_j, batch_size):
         mask_init_value[k, j+1:] = 1
 
 
-def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1, err_scale=0.025):
+def estimate_gmm_precision(qx_loc, qx_scale, batch_size=5, err_scale=0.25):
     num_samples = qx_loc.shape[0]
     n = qx_loc.shape[1]
 
@@ -151,24 +151,22 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1, err_scale=0.025):
     qw_ = tf.Print(qw,
         [tf.reduce_min(qw), tf.reduce_max(qw)], "qw")
     w_log_prob = tf.reduce_sum(w_prior.log_prob(qw_))
-    w_scale_log_prob = tf.reduce_sum(w_scale_prior.log_prob(tf.transpose(qw_scale)))
-    log_posterior = y_log_prob # + w_log_prob + w_scale_log_prob
+
+    # w_scale_log_prob = tf.reduce_sum(w_scale_prior.log_prob(tf.transpose(qw_scale)))
+    w_scale_log_prob = tf.reduce_sum(w_scale_prior.log_prob(qw_scale))
+
+    log_posterior = y_log_prob + w_log_prob + w_scale_log_prob
 
     # entropy
-    # qb_entropy = tf.reduce_sum(qb.distribution.entropy())
-    # qby_entropy = tf.reduce_sum(qby.distribution.entropy())
     qw_scale_entropy = tf.reduce_sum(tf.log(qw_scale_scale * tf.exp(qw_scale_loc + 0.5)))
     # mask this to avoid optimizing entropy on the unused elements
 
     # TODO:
     # qw_entropy = tf.reduce_sum(mask * qw.distribution.entropy())
     qw_entropy = tf.reduce_sum(qw.distribution.entropy())
+    entropy = qw_entropy + qw_scale_entropy
 
-    # entropy = qb_entropy + qby_entropy + qw_scale_entropy + qw_entropy
-    entropy = qw_entropy # + qw_scale_entropy
-
-    # elbo = entropy + log_posterior
-    elbo = log_posterior
+    elbo = entropy + log_posterior
 
     optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
     train = optimizer.minimize(-elbo)
@@ -182,10 +180,6 @@ def estimate_gmm_precision(qx_loc, qx_scale, batch_size=1, err_scale=0.025):
     feed_dict[qw_loc_init] = qw_loc_init_value
     feed_dict[qw_scale_softminus_init] = qw_scale_softminus_init_value
     feed_dict[mask_init] = mask_init_value
-    # feed_dict[qb_loc_init] = qb_loc_init_value
-    # feed_dict[qb_scale_init] = qb_scale_init_value
-    # feed_dict[qby_loc_init] = qby_loc_init_value
-    # feed_dict[qby_scale_init] = qby_scale_init_value
     feed_dict[by_init] = by_init_value
 
     qx_loc_means = np.mean(qx_loc, axis=0)

@@ -56,6 +56,7 @@ function main()
     Polee.init_python_modules()
 
     ts, ts_metadata = Polee.Transcripts(transcripts_filename, excluded_transcripts)
+    n = length(ts)
 
     # Fit heirarchical model (of transcript expression)
     if isfile("qx_params.csv")
@@ -96,12 +97,18 @@ function main()
         end
     end
 
-    # TRY: lets just consider the stuff with high expression for now
-    # We should have some principles way of doing this
+    # upper_credible = qx_loc .+ 3 .* qx_scale
+    # idx = maximum(upper_credible, dims=1)[1,:] .> log(1e-6)
 
-    upper_credible = qx_loc .+ 3 .* qx_scale
+    # choose transcripts that are most probably above 1tpm in at least one transcript.
+    lower_credible = qx_loc .- 3 .* qx_scale
+    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-6)
 
-    idx = maximum(upper_credible, dims=1)[1,:] .> -10.0
+
+    idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-5)
+    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-4)
+    idxmap = (1:n)[idx]
+
 
     # idx = maximum(qx_loc, dims=1)[1,:] .> -12.0
 
@@ -113,14 +120,79 @@ function main()
     # qx_loc = qx_loc[:,1:20000]
     # qx_scale = qx_scale[:,1:20000]
 
-    # qx_loc = qx_loc[:,idx]
-    # qx_scale = qx_scale[:,idx]
+    qx_loc_subset = qx_loc[:,idx]
+    qx_scale_subset = qx_scale[:,idx]
+
+    # qx_loc_subset = qx_loc
+    # qx_scale_subset = qx_scale
+
 
     # @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
 
+    ts_names = [replace(t.metadata.name, "transcript:" => "") for t in ts]
+
     # Fit covariance matrix column by column
-    coregulation_py.estimate_gmm_precision(
-        qx_loc, qx_scale)
+    edges = coregulation_py.estimate_gmm_precision(
+        qx_loc_subset, qx_scale_subset)
+
+    out = open("coregulation-graph.dot", "w")
+    println(out, "graph coregulation {")
+    for (u, vs) in edges
+        i = ts_names[idxmap[u+1]]
+        for (v, lower, upper) in vs
+            j = ts_names[idxmap[v+1]]
+            println(out, "    node", i, " -- node", j, ";")
+        end
+    end
+    println(out, "}")
+    close(out)
+
+    out = open("coregulation-edges.csv", "w")
+    for (u, vs) in edges
+        # @show typeof(u)
+        # @show typeof(vs)
+        # @show length(vs)
+        # @show typeof(vs[1])
+        # @show length(vs[1])
+        i = ts_names[idxmap[u+1]]
+        for (v, lower, upper) in vs
+            j = ts_names[idxmap[v+1]]
+            println(out, i, ",", j, ",", lower, ",", upper)
+        end
+    end
+    close(out)
+
+    out = open("coregulation-expression.csv", "w")
+    for i in 1:n
+        print(out, ts_names[i])
+        for j in 1:size(qx_loc, 1)
+            print(out, ",", qx_loc[j, i])
+        end
+        println(out)
+    end
+    close(out)
+
+    degree = Dict{Int, Int}()
+    for (u, vs) in edges
+        if !haskey(degree, u)
+            degree[u] = 0
+        end
+        degree[u] += length(vs)
+
+        for (v, lower, upper) in vs
+            if !haskey(degree, v)
+                degree[v] = 0
+            end
+            degree[v] += 1
+        end
+    end
+
+    out = open("coregulation-graph-degree.csv", "w")
+    println(out, "transcript,degree")
+    for (u, count) in degree
+        println(out, ts_names[idxmap[u+1]], ",", count)
+    end
+    close(out)
 end
 
 main()

@@ -13,6 +13,7 @@ pushfirst!(PyVector(pyimport("sys")["path"]), dirname(@__FILE__))
 
 import Polee
 import YAML
+using Random
 using Statistics
 
 function main()
@@ -105,8 +106,13 @@ function main()
     # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-6)
 
 
-    idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-5)
-    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-4)
+    idx = maximum(lower_credible, dims=1)[1,:] .< log(1e-6)
+    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-5)
+    # idx = maximum(lower_credible, dims=1)[1,:] .> -Inf
+
+    # Random.seed!(123456)
+    # idx = [rand() < 0.5 for _ in 1:n]
+
     idxmap = (1:n)[idx]
 
 

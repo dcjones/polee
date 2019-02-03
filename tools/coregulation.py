@@ -40,8 +40,17 @@ def fillmask(mask_init_value, start_j, batch_size):
         mask_init_value[k, :] = 0
         mask_init_value[k, j+1:] = 1
 
+        # debugging: allow soft-edges
+        # mask_init_value[k, j:] = 1
 
-def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=500, err_scale=0.25):
+        # debugging: only allow self-edges
+        # mask_init_value[k, j] = 1
+
+
+def estimate_gmm_precision(
+        qx_loc, qx_scale, fixed_expression=True,
+        profile_trace=False, tensorboard_summaries=False,
+        batch_size=100, err_scale=0.1):
     num_samples = qx_loc.shape[0]
     n = qx_loc.shape[1]
 
@@ -50,10 +59,6 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
     # [num_samples, n]
     if fixed_expression:
         qx = qx_loc
-        # qx = ed.Normal(
-        #     loc=qx_loc,
-        #     scale=0.0,
-        #     name="qx")
     else:
         qx = ed.Normal(
             loc=qx_loc,
@@ -70,7 +75,8 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
     qw_loc = tf.Variable(qw_loc_init, name="qw_loc")
 
     qw_scale_softminus_init = tf.placeholder(tf.float32, (batch_size, n), name="qw_scale_softminus_init")
-    qw_scale_softminus_init_value = np.full((batch_size, n), -4.0, dtype=np.float32)
+    # TODO: this is the key parameter!!! Tweaking this a little wildly changes how many non-zeros there will be.
+    qw_scale_softminus_init_value = np.full((batch_size, n), -3.0, dtype=np.float32)
     qw_scale_param = tf.nn.softplus(tf.Variable(qw_scale_softminus_init, name="qw_scale_param"))
 
     # [batch_size, n]
@@ -86,9 +92,9 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
     qw_scale_loc_init = tf.placeholder(tf.float32, (batch_size, n), name="qw_scale_loc_init")
     qw_scale_loc = tf.Variable(qw_scale_loc_init, name="qw_scale_loc")
 
-    qw_scale_scale_init_value = np.full((batch_size, n), -4.0, dtype=np.float32)
+    qw_scale_scale_init_value = np.full((batch_size, n), -2.0, dtype=np.float32)
     qw_scale_scale_init = tf.placeholder(tf.float32, (batch_size, n), name="qw_scale_scale_init")
-    qw_scale_scale = tf.nn.softplus(tf.Variable(qw_scale_loc_init, name="qw_scale_scale"))
+    qw_scale_scale = tf.nn.softplus(tf.Variable(qw_scale_scale_init, name="qw_scale_scale"))
 
     qw_scale = ed.TransformedDistribution(
         distribution=
@@ -98,24 +104,23 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
         bijector=tfp.bijectors.Exp(),
         name="qw_scale")
 
-
     # variational estimate of b
     # -------------------------
 
     by_init_value = np.zeros((batch_size,), dtype=np.float32)
-    by_init = tf.placeholder(tf.float32, (batch_size,), name="by")
-    by = tf.Variable(by_init, name="by")
+    by_init = tf.placeholder(tf.float32, (batch_size,), name="by_init")
+    by = tf.Variable(by_init, name="by", trainable=False)
 
     sy_init_value = np.zeros((batch_size,), dtype=np.float32)
-    sy_init = tf.placeholder(tf.float32, (batch_size,), name="sy")
-    sy = tf.Variable(sy_init, name="sy")
+    sy_init = tf.placeholder(tf.float32, (batch_size,), name="sy_init")
+    sy = tf.Variable(sy_init, name="sy", trainable=False)
 
     # w
     # -
 
     w_scale_prior = tfd.HalfCauchy(
         loc=0.0,
-        scale=1.0,
+        scale=0.01,
         name="w_scale_prior")
 
     w_prior = tfd.Normal(
@@ -130,7 +135,6 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
     mask = tf.Variable(mask_init, name="mask", trainable=False)
 
     qw_masked = qw * mask
-    # qw_masked = qw
 
     # [num_samples, batch_size]
     qx_std = (qx - b) / s
@@ -162,7 +166,8 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
 
     elbo = entropy + log_posterior
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
+    # optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
+    optimizer = tf.train.AdagradOptimizer(learning_rate=1e-1)
     train = optimizer.minimize(-elbo)
 
     sess = tf.Session()
@@ -179,9 +184,12 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
 
     qx_loc_means = np.mean(qx_loc, axis=0)
 
-    # options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-    # run_metadata = tf.RunMetadata()
     # check_ops = tf.add_check_numerics_ops()
+    if tensorboard_summaries:
+        tf.summary.histogram("qw_loc_param", qw_loc)
+        tf.summary.histogram("qw_scale_param", qw_scale_param)
+        tf.summary.histogram("qw_scale_loc_param", qw_scale_loc)
+        tf.summary.histogram("qw_scale_scale_param", qw_scale_scale)
 
     edges = dict()
 
@@ -194,26 +202,40 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
         else:
             start_j = batch_num * batch_size
 
+
         fillmask(mask_init_value, start_j, batch_size)
         feed_dict[y_slice_start_init] = np.array([0, start_j], dtype=np.int32)
 
         for k in range(batch_size):
             by_init_value[k] = b[start_j+k]
             sy_init_value[k] = s[start_j+k]
+        print(sy_init_value)
 
         sess.run(tf.global_variables_initializer(), feed_dict=feed_dict)
 
-        # sess.run(elbo, options=options, run_metadata=run_metadata)
-        # fetched_timeline = timeline.Timeline(run_metadata.step_stats)
-        # chrome_trace = fetched_timeline.generate_chrome_trace_format()
-        # with open('log/timeline.json', 'w') as f:
-        #     f.write(chrome_trace)
-        # sys.exit()
+        # if requested, just benchmark one run of the training operation and return
+        if profile_trace:
+            print("WRITING PROFILING DATA")
+            options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            run_metadata = tf.RunMetadata()
+            sess.run(train, options=options, run_metadata=run_metadata)
+            fetched_timeline = timeline.Timeline(run_metadata.step_stats)
+            chrome_trace = fetched_timeline.generate_chrome_trace_format()
+            with open('log/timeline.json', 'w') as f:
+                f.write(chrome_trace)
+            break
+
+        if tensorboard_summaries:
+            train_writer = tf.summary.FileWriter("log/" + "batch-" + str(batch_num), sess.graph)
+            tf.summary.scalar("elbo", elbo)
+            merged_summary = tf.summary.merge_all()
 
         for t in range(niter):
             _, elbo_val = sess.run([train, elbo])
             if t % 100 == 0:
                 print((t, elbo_val))
+            if tensorboard_summaries:
+                train_writer.add_summary(sess.run(merged_summary), t)
 
         print("")
         print("batch")
@@ -227,8 +249,8 @@ def estimate_gmm_precision(qx_loc, qx_scale, fixed_expression=False, batch_size=
         print(np.min(upper_credible))
 
         print("nonzeros")
-        print(np.sum((lower_credible > 0.1)))
-        print(np.sum((upper_credible < -0.1)))
+        print(np.sum((lower_credible > 0.5)))
+        print(np.sum((upper_credible < -0.5)))
 
         for k in range(batch_size):
             neighbors = []

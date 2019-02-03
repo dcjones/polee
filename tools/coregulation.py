@@ -37,8 +37,13 @@ class Progbar:
 
 def fillmask(mask_init_value, start_j, batch_size):
     for (k, j) in enumerate(range(start_j, start_j+batch_size)):
-        mask_init_value[k, :] = 0
-        mask_init_value[k, j+1:] = 1
+        # anything but self-edges
+        mask_init_value[k, :] = 1
+        mask_init_value[k, j] = 0
+
+        # alternative: only indexes > j
+        # mask_init_value[k, :] = 0
+        # mask_init_value[k, j+1:] = 1
 
         # debugging: allow soft-edges
         # mask_init_value[k, j:] = 1
@@ -48,7 +53,7 @@ def fillmask(mask_init_value, start_j, batch_size):
 
 
 def estimate_gmm_precision(
-        qx_loc, qx_scale, fixed_expression=True,
+        qx_loc, qx_scale, fixed_expression=False,
         profile_trace=False, tensorboard_summaries=False,
         batch_size=100, err_scale=0.1):
     num_samples = qx_loc.shape[0]
@@ -66,7 +71,6 @@ def estimate_gmm_precision(
             name="qx")
 
     b = np.mean(qx_loc, axis=0)
-    s = np.std(qx_loc, axis=0)
 
     # variational estimate of w
     # -------------------------
@@ -111,10 +115,6 @@ def estimate_gmm_precision(
     by_init = tf.placeholder(tf.float32, (batch_size,), name="by_init")
     by = tf.Variable(by_init, name="by", trainable=False)
 
-    sy_init_value = np.zeros((batch_size,), dtype=np.float32)
-    sy_init = tf.placeholder(tf.float32, (batch_size,), name="sy_init")
-    sy = tf.Variable(sy_init, name="sy", trainable=False)
-
     # w
     # -
 
@@ -126,7 +126,6 @@ def estimate_gmm_precision(
     w_prior = tfd.Normal(
         loc=0.0,
         scale=qw_scale,
-        # scale=0.1,
         name="w_prior")
 
     # [n, batch_size]
@@ -137,10 +136,10 @@ def estimate_gmm_precision(
     qw_masked = qw * mask
 
     # [num_samples, batch_size]
-    qx_std = (qx - b) / s
+    qx_std = qx - b
     qxqw = tf.matmul(qx_std, qw_masked, transpose_b=True)
 
-    y_dist_loc = by + qxqw*sy
+    y_dist_loc = by + qxqw
     y_dist = tfd.Normal(
         loc=y_dist_loc,
         scale=err_scale)
@@ -180,7 +179,6 @@ def estimate_gmm_precision(
     feed_dict[qw_scale_softminus_init] = qw_scale_softminus_init_value
     feed_dict[mask_init] = mask_init_value
     feed_dict[by_init] = by_init_value
-    feed_dict[sy_init] = sy_init_value
 
     qx_loc_means = np.mean(qx_loc, axis=0)
 
@@ -208,8 +206,6 @@ def estimate_gmm_precision(
 
         for k in range(batch_size):
             by_init_value[k] = b[start_j+k]
-            sy_init_value[k] = s[start_j+k]
-        print(sy_init_value)
 
         sess.run(tf.global_variables_initializer(), feed_dict=feed_dict)
 

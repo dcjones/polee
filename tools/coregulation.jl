@@ -107,7 +107,7 @@ function main()
 
 
     idx = maximum(lower_credible, dims=1)[1,:] .< log(1e-6)
-    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-5)
+    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-4)
     # idx = maximum(lower_credible, dims=1)[1,:] .> -Inf
 
     # Random.seed!(123456)

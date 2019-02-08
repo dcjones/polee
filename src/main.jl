@@ -539,22 +539,19 @@ function main()
         t = HSBTransform(node_parent_idxs, node_js)
 
         num_samples = parsed_args["num-samples"]
-        samples = Array{Float32}((num_samples, n))
+        samples = Array{Float32}(undef, (num_samples, n))
 
-        zs0 = Array{Float32}(n-1)
-        zs = Array{Float32}(n-1)
-        ys = Array{Float64}(n-1)
-        xs = Array{Float32}(n)
+        als = ApproxLikelihoodSampler()
+        set_transform!(als, t, mu, sigma, alpha)
+        xs = Array{Float32}(undef, n)
+
+        @show size(efflens)
+        @show size(xs)
 
         prog = Progress(num_samples, 0.25, "Sampling from approx. likelihood ", 60)
         for i in 1:num_samples
             next!(prog)
-            for j in 1:n-1
-                zs0[j] = randn(Float32)
-            end
-            sinh_asinh_transform!(alpha, zs0, zs, Val{true})
-            logit_normal_transform!(mu, sigma, zs, ys, Val{true})
-            hsb_transform!(t, ys, xs, Val{true})
+            rand!(als, xs)
 
             # effective length transform
             xs ./= efflens

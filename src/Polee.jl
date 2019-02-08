@@ -64,6 +64,7 @@ import YAML
 using Base64: base64encode, base64decode
 using SparseArrays: findnz, sparse, SparseMatrixCSC
 using Printf: @printf, @sprintf
+using Statistics
 using Random
 # using Profile
 # using InteractiveUtils
@@ -112,15 +113,16 @@ include("kumaraswamy.jl")
 include("logitnormal.jl")
 include("sinh_arcsinh.jl")
 include("likelihood-approximation.jl")
+include("stick_breaking.jl")
 include("estimate.jl")
 include("gibbs.jl")
 include("em.jl")
-include("stick_breaking.jl")
 include("isometric_log_ratios.jl")
 include("additive_log_ratios.jl")
 include("sequences.jl")
 include("evaluate.jl")
 include("splicing.jl")
+include("approx-sampler.jl")
 
 include("models.jl")
 

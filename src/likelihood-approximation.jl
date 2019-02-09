@@ -606,7 +606,7 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
     ss_max_alpha_step = 2e-2
 
     # cluster transcripts for hierachrical stick breaking
-    t = HSBTransform(X, approx.treemethod)
+    t = PolyaTreeTransform(X, approx.treemethod)
 
     # Unifom distributed values
     zs0 = Array{Float32}(undef, n-1)
@@ -618,15 +618,9 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(undef, n)
 
-    hsb_inverse_transform!(t, fill(1.0f0/n, n), ys)
+    inverse_transform!(t, fill(1.0f0/n, n), ys)
     mu    = fill(0.0f0, n-1)
-    k = 1
-    for node in t.nodes
-        if node.j == 0
-            mu[k] = logit(ys[k])
-            k += 1
-        end
-    end
+    map!(logit, mu, ys)
 
     omega = fill(log(0.1f0), n-1)
     alpha = fill(0.0f0, n-1)
@@ -677,7 +671,7 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
             ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY}) # 0.004 seconds
             ys = clamp!(ys, eps, 1 - eps)
 
-            hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY}) # 0.023 seconds
+            hsb_ladj = transform!(t, ys, xs, Val(!GRADONLY)) # 0.023 seconds
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
@@ -686,7 +680,7 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
 
             elbo = lp + skew_ladj + ln_ladj + hsb_ladj
 
-            hsb_transform_gradients!(t, ys, y_grad, x_grad) # 0.025 seconds
+            transform_gradients!(t, ys, y_grad, x_grad) # 0.025 seconds
             logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad) # 0.003 seconds
             sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad) # 0.027 seconds
 
@@ -718,8 +712,12 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
         next!(prog)
     end
 
-    return merge(flattened_tree(t),
-                 Dict{String, Vector}("mu" => mu, "omega" => omega, "alpha" => alpha))
+    # return merge(flattened_tree(t),
+    #              Dict{String, Vector}("mu" => mu, "omega" => omega, "alpha" => alpha))
+    return Dict{String, Vector}(
+        "node_parent_idxs" => t.index[4,:],
+        "node_js"          => t.index[1,:],
+        "mu" => mu, "omega" => omega, "alpha" => alpha)
 end
 
 

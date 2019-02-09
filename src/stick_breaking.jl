@@ -177,7 +177,7 @@ function hclust(X::SparseMatrixCSC)
     idxs = (1:n)[sortperm(medreadidx)]
 
     # initial edges
-    queue = mutable_binary_minheap(HClustEdge)
+    queue = MutableBinaryMinHeap{HClustEdge}()
     queue_idxs = Dict{Tuple{Int, Int}, Int}()
     neighbors = MultiDict{Int, Int}()
     set_size = Dict{Int, Int}()

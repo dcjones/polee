@@ -471,7 +471,7 @@ function rand_hsb_tree(n)
 end
 
 
-function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector,
+function hsb_transform!(t::HSBTransform, ys::AbstractVector, xs::AbstractVector,
                         ::Type{Val{GRADONLY}}) where {GRADONLY}
     nodes = t.nodes
     nodes[1].input_value = 1.0f0
@@ -506,7 +506,7 @@ function hsb_transform!(t::HSBTransform, ys::Vector, xs::Vector,
 end
 
 
-function hsb_inverse_transform!(t::HSBTransform, xs::Vector, ys::Vector)
+function hsb_inverse_transform!(t::HSBTransform, xs::AbstractVector, ys::AbstractVector)
     nodes = t.nodes
     n = length(xs)
     k = n - 1 # internal node count

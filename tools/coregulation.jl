@@ -15,6 +15,7 @@ import Polee
 import YAML
 using Random
 using Statistics
+using Profile
 
 function main()
     # read specification
@@ -60,6 +61,8 @@ function main()
     n = length(ts)
 
     # Fit heirarchical model (of transcript expression)
+    # TODO: this is very dangerous: we just load the file if it exists, even though
+    # it may correspond to different data altogether.
     if isfile("qx_params.csv")
         # this is for testing, to save time
         open("qx_params.csv") do input
@@ -80,8 +83,8 @@ function main()
         max_num_samples = nothing
         batch_size = nothing
         loaded_samples = Polee.load_samples_from_specification(
+            spec, ts, ts_metadata, max_num_samples, batch_size)
 
-        spec, ts, ts_metadata, max_num_samples, batch_size)
         num_samples, n = size(loaded_samples.x0_values)
         x0_log = log.(loaded_samples.x0_values)
         qx_loc, qx_scale =
@@ -98,47 +101,24 @@ function main()
         end
     end
 
-    # upper_credible = qx_loc .+ 3 .* qx_scale
-    # idx = maximum(upper_credible, dims=1)[1,:] .> log(1e-6)
-
-    # choose transcripts that are most probably above 1tpm in at least one transcript.
-    lower_credible = qx_loc .- 3 .* qx_scale
-    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-6)
-
-
-    idx = maximum(lower_credible, dims=1)[1,:] .< log(1e-6)
-    # idx = maximum(lower_credible, dims=1)[1,:] .> log(1e-4)
-    # idx = maximum(lower_credible, dims=1)[1,:] .> -Inf
-
-    # Random.seed!(123456)
-    # idx = [rand() < 0.5 for _ in 1:n]
-
+    expression_mode = exp.(qx_loc)
+    expression_mode ./= sum(expression_mode, dims=2)
+    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-6
     idxmap = (1:n)[idx]
-
-
-    # idx = maximum(qx_loc, dims=1)[1,:] .> -12.0
-
-    @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
-
     @show sum(idx)
-
-
-    # qx_loc = qx_loc[:,1:20000]
-    # qx_scale = qx_scale[:,1:20000]
 
     qx_loc_subset = qx_loc[:,idx]
     qx_scale_subset = qx_scale[:,idx]
 
-    # qx_loc_subset = qx_loc
-    # qx_scale_subset = qx_scale
-
-
-    # @show quantile(reshape(qx_scale, (length(qx_scale),)), Float32[0.1, 0.5, 0.9])
+    # TODO: this will totally fuck up labels, but a useful test
+    # p = shuffle(1:size(qx_loc_subset, 2))
+    # qx_loc_subset = qx_loc_subset[:,p]
+    # qx_scale_subset = qx_loc_subset[:,p]
 
     ts_names = [replace(t.metadata.name, "transcript:" => "") for t in ts]
 
     # Fit covariance matrix column by column
-    edges = coregulation_py.estimate_gmm_precision(
+    @time edges = coregulation_py.estimate_gmm_precision(
         qx_loc_subset, qx_scale_subset)
 
     out = open("coregulation-graph.dot", "w")
@@ -155,11 +135,6 @@ function main()
 
     out = open("coregulation-edges.csv", "w")
     for (u, vs) in edges
-        # @show typeof(u)
-        # @show typeof(vs)
-        # @show length(vs)
-        # @show typeof(vs[1])
-        # @show length(vs[1])
         i = ts_names[idxmap[u+1]]
         for (v, lower, upper) in vs
             j = ts_names[idxmap[v+1]]
@@ -168,15 +143,15 @@ function main()
     end
     close(out)
 
-    out = open("coregulation-expression.csv", "w")
-    for i in 1:n
-        print(out, ts_names[i])
-        for j in 1:size(qx_loc, 1)
-            print(out, ",", qx_loc[j, i])
-        end
-        println(out)
-    end
-    close(out)
+    # out = open("coregulation-expression.csv", "w")
+    # for i in 1:n
+    #     print(out, ts_names[i])
+    #     for j in 1:size(qx_loc, 1)
+    #         print(out, ",", qx_loc[j, i])
+    #     end
+    #     println(out)
+    # end
+    # close(out)
 
     degree = Dict{Int, Int}()
     for (u, vs) in edges

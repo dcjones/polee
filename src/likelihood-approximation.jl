@@ -483,7 +483,7 @@ function approximate_likelihood(approx::LogitNormalHSBApprox,
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(n)
 
-    hsb_inverse_transform!(t, t.x0, ys)
+    hsb_inverse_transform!(t, fill(1.0f0/n, n), ys)
     mu    = fill(0.0f0, n-1)
     k = 1
     for node in t.nodes
@@ -618,7 +618,7 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(undef, n)
 
-    hsb_inverse_transform!(t, t.x0, ys)
+    hsb_inverse_transform!(t, fill(1.0f0/n, n), ys)
     mu    = fill(0.0f0, n-1)
     k = 1
     for node in t.nodes

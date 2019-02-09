@@ -55,7 +55,7 @@ def fillmask(mask_init_value, start_j, batch_size):
 def estimate_gmm_precision(
         qx_loc, qx_scale, fixed_expression=False,
         profile_trace=False, tensorboard_summaries=False,
-        batch_size=100, err_scale=0.1):
+        batch_size=50, err_scale=0.1):
     num_samples = qx_loc.shape[0]
     n = qx_loc.shape[1]
 
@@ -165,8 +165,8 @@ def estimate_gmm_precision(
 
     elbo = entropy + log_posterior
 
-    # optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
-    optimizer = tf.train.AdagradOptimizer(learning_rate=1e-1)
+    optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
+    # optimizer = tf.train.AdagradOptimizer(learning_rate=1e-1)
     train = optimizer.minimize(-elbo)
 
     sess = tf.Session()

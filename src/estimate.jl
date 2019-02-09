@@ -36,7 +36,7 @@ Input:
 """
 function load_samples_from_specification(
         spec, ts, ts_metadata, max_num_samples, batch_size;
-        check_gff_hash::Bool=true)
+        check_gff_hash::Bool=true, transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
 
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
     sample_names = String[]
@@ -65,7 +65,8 @@ function load_samples_from_specification(
 
     loaded_samples = load_samples(
         filenames, ts, ts_metadata, batch_size,
-        check_gff_hash=check_gff_hash)
+        check_gff_hash=check_gff_hash,
+        transforms=transforms)
     println("Sample data loaded")
 
     loaded_samples.sample_factors = sample_factors
@@ -94,15 +95,16 @@ Input:
 """
 function load_samples(
         filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
-        check_gff_hash::Bool=true)
+        check_gff_hash::Bool=true, transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
     return load_samples_hdf5(
-        filenames, ts, ts_metadata, batch_size, check_gff_hash=check_gff_hash)
+        filenames, ts, ts_metadata, batch_size,
+        check_gff_hash=check_gff_hash, transforms=transforms)
 end
 
 
 function load_samples_hdf5(
         filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
-        check_gff_hash::Bool=true)
+        check_gff_hash::Bool=true, transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
     num_samples = length(filenames)
     n = length(ts)
 
@@ -174,6 +176,9 @@ function load_samples_hdf5(
             y0[j] = clamp(logistic(sinh(alpha[j]) + mu[j]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
         end
         t = HSBTransform(node_parent_idxs, node_js)
+        if transforms !== nothing
+            push!(transforms, t)
+        end
         hsb_transform!(t, y0, x0, Val{true})
         x0_values[i, :] = x0 ./ efflen_values[i, :]
         x0_values[i, :] ./= sum(x0_values[i, :])

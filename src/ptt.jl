@@ -97,10 +97,12 @@ function PolyaTreeTransform(
         # the tree was serialized in DFS order, traversing the right branch
         # first, so we know if our parent's right pointer is not set, we are
         # it's right child, otherwise left.
-        if index[3, parent_idxs[i]] == 0
-            index[3, parent_idxs[i]] = i
-        else
-            index[2, parent_idxs[i]] = i
+        if parent_idxs[i] != 0
+            if index[3, parent_idxs[i]] == 0
+                index[3, parent_idxs[i]] = i
+            else
+                index[2, parent_idxs[i]] = i
+            end
         end
 
         index[4, i] = parent_idxs[i]
@@ -122,7 +124,7 @@ function transform!(
         xs::AbstractVector,
         ::Val{compute_ladj}) where {compute_ladj, T}
     ladj = zero(T)
-    t.us[1] = zero(T)
+    t.us[1] = one(T)
     k = 1 # internal node count
     num_nodes = size(t.index, 2)
     for i in 1:num_nodes

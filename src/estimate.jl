@@ -120,6 +120,13 @@ function load_samples_hdf5(
     right_index_values = Array{Int32}(undef, (num_samples, 2*n-1))
     leaf_index_values  = Array{Int32}(undef, (num_samples, 2*n-1))
 
+    mu    = Array{Float32}(undef, n-1)
+    sigma = Array{Float32}(undef, n-1)
+    alpha = Array{Float32}(undef, n-1)
+    node_parent_idxs = Array{Int32}(undef, 2*n-1)
+    node_js          = Array{Int32}(undef, 2*n-1)
+    efflen_values_i = Array{Float32}(undef, n)
+
     prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
     for (i, filename) in enumerate(filenames)
         input = h5open(filename)
@@ -146,18 +153,20 @@ function load_samples_hdf5(
 
         # TODO: record and check transcript blacklist hash.
 
-        mu = read(input["mu"])
-        sigma = exp.(read(input["omega"]))
-        alpha = read(input["alpha"])
+        HDF5.readarray(input["mu"], HDF5.hdf5_type_id(Float32), mu)
+        HDF5.readarray(input["omega"], HDF5.hdf5_type_id(Float32), sigma)
+        map!(exp, sigma, sigma)
+        HDF5.readarray(input["alpha"], HDF5.hdf5_type_id(Float32), alpha)
 
         la_mu_values[i, :]    = mu
         la_sigma_values[i, :] = sigma
         la_alpha_values[i, :] = alpha
 
-        efflen_values[i, :] = read(input["effective_lengths"])
+        HDF5.readarray(input["effective_lengths"], HDF5.hdf5_type_id(Float32), efflen_values_i)
+        efflen_values[i, :] = efflen_values_i
 
-        node_parent_idxs = read(input["node_parent_idxs"])
-        node_js = read(input["node_js"])
+        HDF5.readarray(input["node_parent_idxs"], HDF5.hdf5_type_id(Int32), node_parent_idxs)
+        HDF5.readarray(input["node_js"], HDF5.hdf5_type_id(Int32), node_js)
 
         close(input)
 
@@ -175,11 +184,11 @@ function load_samples_hdf5(
         for j in 1:n-1
             y0[j] = clamp(logistic(sinh(alpha[j]) + mu[j]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
         end
-        t = HSBTransform(node_parent_idxs, node_js)
+        t = PolyaTreeTransform(node_parent_idxs, node_js)
         if transforms !== nothing
             push!(transforms, t)
         end
-        hsb_transform!(t, y0, x0, Val{true})
+        transform!(t, y0, x0, Val(false))
         x0_values[i, :] = x0 ./ efflen_values[i, :]
         x0_values[i, :] ./= sum(x0_values[i, :])
 

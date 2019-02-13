@@ -8,8 +8,8 @@ from polee_training import *
 
 
 # TODO: other constants
-SIGMA_ALPHA0 = 0.001
-SIGMA_BETA0  = 0.001
+SIGMA_ALPHA0 = 0.1
+SIGMA_BETA0  = 0.1
 
 
 def transcript_expression_model(num_samples, n):
@@ -22,11 +22,18 @@ def transcript_expression_model(num_samples, n):
         name="x_mu")
 
     # pooled variance
-    x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n], dtype=tf.float32)
-    x_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[n], dtype=tf.float32)
-    x_sigma_sq = ed.InverseGamma(
-        concentration=x_sigma_alpha0,
-        rate=x_sigma_beta0,
+    # x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n], dtype=tf.float32)
+    # x_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[n], dtype=tf.float32)
+    # x_sigma_sq = ed.InverseGamma(
+    #     concentration=x_sigma_alpha0,
+    #     rate=x_sigma_beta0,
+    #     name="x_sigma_sq")
+    # x_sigma = tf.sqrt(x_sigma_sq, name="x_sigma")
+
+    x_sigma_sq_scale0 = tf.constant(0.1, shape=[n], dtype=tf.float32)
+    x_sigma_sq = ed.HalfCauchy(
+        loc=0.0,
+        scale=x_sigma_sq_scale0,
         name="x_sigma_sq")
     x_sigma = tf.sqrt(x_sigma_sq, name="x_sigma")
 

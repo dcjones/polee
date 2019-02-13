@@ -101,14 +101,64 @@ function main()
         end
     end
 
+
+
+    # Test case using XIST and highly expressed Y chromosome transcripts
+
+    # xist1 = "transcript:ENSMUST00000153883"
+    # xist2 = "transcript:ENSMUST00000127786"
+
+    # xist_idx = Int[]
+    # y_idx = Int[]
+    # ts_names = String[]
+    # for (i, t) in enumerate(ts)
+    #     if t.metadata.name == xist1 || t.metadata.name == xist2
+    #         push!(xist_idx, i)
+    #     elseif t.seqname == "Y"
+    #         push!(y_idx, i)
+    #         push!(ts_names, t.metadata.name)
+    #     end
+    # end
+
+    # qx_loc_y_means = maximum(qx_loc, dims=1)[1,y_idx]
+    # p = sortperm(qx_loc_y_means, rev=true)
+
+    # K = 1000
+
+    # qx_loc_y_subset = qx_loc[:,y_idx]
+    # qx_scale_y_subset = qx_scale[:,y_idx]
+    # qx_loc_y_subset = qx_loc_y_subset[1:4,p[1:K]]
+    # qx_scale_y_subset = qx_scale_y_subset[1:4,p[1:K]]
+
+    # ts_names = ts_names[p[1:K]]
+
+    # qx_loc_xist_subset = qx_loc[1:4, xist_idx]
+    # qx_scale_xist_subset = qx_scale[1:4, xist_idx]
+
+    # qx_loc_subset = hcat(qx_loc_xist_subset, qx_loc_y_subset)
+    # qx_scale_subset = hcat(qx_scale_xist_subset, qx_scale_y_subset)
+    # ts_names = vcat([xist1, xist2], ts_names)
+
+    # @show qx_loc_subset
+    # @show qx_scale_subset
+    # @show ts_names
+
+
     expression_mode = exp.(qx_loc)
     expression_mode ./= sum(expression_mode, dims=2)
-    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-6
+    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-4
     idxmap = (1:n)[idx]
     @show sum(idx)
 
     qx_loc_subset = qx_loc[:,idx]
     qx_scale_subset = qx_scale[:,idx]
+
+
+    # qx_loc_subset = qx_loc_subset[1:8,:]
+    # qx_scale_subset = qx_scale_subset[1:8,:]
+
+    # @show qx_loc_subset
+    # @show qx_scale_subset
 
     # TODO: this will totally fuck up labels, but a useful test
     # p = shuffle(1:size(qx_loc_subset, 2))

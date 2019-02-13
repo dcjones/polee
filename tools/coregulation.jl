@@ -153,6 +153,15 @@ function main()
     qx_loc_subset = qx_loc[:,idx]
     qx_scale_subset = qx_scale[:,idx]
 
+    # p = sortperm(var(qx_loc_subset, dims=1)[1,:], rev=true)
+
+    # println(qx_loc_subset[:,p[1]])
+    # println(qx_loc_subset[:,p[3]])
+    # exit()
+
+    # qx_loc_subset = qx_loc_subset[:,p]
+    # qx_scale_subset = qx_scale_subset[:,p]
+
 
     # qx_loc_subset = qx_loc_subset[1:8,:]
     # qx_scale_subset = qx_scale_subset[1:8,:]

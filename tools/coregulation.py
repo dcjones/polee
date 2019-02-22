@@ -89,11 +89,11 @@ def estimate_gmm_precision(
     # qw_scale_param = tf.Print(qw_scale_param, [tf.reduce_min(qw_scale_param), tf.reduce_max(qw_scale_param)], "qw_scale_param")
 
     # [batch_size, n]
-    # qw = ed.Normal(
-    #     loc=qw_loc,
-    #     scale=qw_scale_param,
-    #     name="qw")
-    qw = qw_loc
+    qw = ed.Normal(
+        loc=qw_loc,
+        scale=qw_scale_param,
+        name="qw")
+    # qw = qw_loc
 
     # variational estimate of w_scale
     # -------------------------------
@@ -106,12 +106,12 @@ def estimate_gmm_precision(
     qw_scale_scale_init = tf.placeholder(tf.float32, (batch_size, n), name="qw_scale_scale_init")
     qw_scale_scale = tf.nn.softplus(tf.Variable(qw_scale_scale_init, name="qw_scale_scale"))
 
-    qw_scale = tf.nn.softplus(qw_scale_loc)
+    # qw_scale = tf.nn.softplus(qw_scale_loc)
 
-    # qw_scale = ed.LogNormal(
-    #     loc=qw_scale_loc,
-    #     scale=qw_scale_scale,
-    #     name="qw_scale")
+    qw_scale = ed.LogNormal(
+        loc=qw_scale_loc,
+        scale=qw_scale_scale,
+        name="qw_scale")
 
     # qw_scale = ed.TransformedDistribution(
     #     distribution=
@@ -232,15 +232,15 @@ def estimate_gmm_precision(
     # entropy
 
     # qw_scale_entropy = tf.reduce_sum(mask * tf.log(qw_scale_scale * tf.exp(qw_scale_loc + 0.5)))
-    # qw_scale_entropy = tf.reduce_sum(mask * qw_scale.distribution.entropy())
+    qw_scale_entropy = tf.reduce_sum(mask * qw_scale.distribution.entropy())
 
-    # qw_entropy = tf.reduce_sum(mask * qw.distribution.entropy())
-    # entropy = qw_entropy + qw_scale_entropy
+    qw_entropy = tf.reduce_sum(mask * qw.distribution.entropy())
+    entropy = qw_entropy + qw_scale_entropy
     # entropy = qw_entropy
     # entropy = tf.Print(entropy, [entropy], "entropy")
 
-    # elbo = entropy + log_posterior
-    elbo = log_posterior
+    elbo = entropy + log_posterior
+    # elbo = log_posterior
 
     optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
     # optimizer = tf.train.AdagradOptimizer(learning_rate=5e-2)
@@ -249,7 +249,7 @@ def estimate_gmm_precision(
 
     sess = tf.Session()
 
-    niter = 5000
+    niter = 20000
     feed_dict = dict()
     feed_dict[qw_scale_loc_init] = qw_scale_loc_init_value
     feed_dict[qw_scale_scale_init] = qw_scale_scale_init_value
@@ -321,9 +321,9 @@ def estimate_gmm_precision(
         #     [tf.reduce_min(qw_scale), tf.reduce_mean(qw_scale), tf.reduce_max(qw_scale)])
         # print(("qw_scale span", qw_scale_min, qw_scale_mean, qw_scale_max))
 
-        # lower_credible = sess.run(qw.distribution.quantile(0.01))
-        # upper_credible = sess.run(qw.distribution.quantile(0.99))
-        lower_credible = upper_credible = sess.run(qw)
+        lower_credible = sess.run(qw.distribution.quantile(0.01))
+        upper_credible = sess.run(qw.distribution.quantile(0.99))
+        # lower_credible = upper_credible = sess.run(qw)
 
         print("credible span")
         print(np.max(lower_credible))

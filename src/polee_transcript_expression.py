@@ -7,11 +7,6 @@ from polee_approx_likelihood import *
 from polee_training import *
 
 
-# TODO: other constants
-SIGMA_ALPHA0 = 0.1
-SIGMA_BETA0  = 0.1
-
-
 def transcript_expression_model(num_samples, n):
     # pooled mean
     x_mu_mu0    = tf.constant(np.log(1.0/n), shape=[n], dtype=tf.float32)
@@ -20,15 +15,6 @@ def transcript_expression_model(num_samples, n):
         loc=x_mu_mu0,
         scale=x_mu_sigma0,
         name="x_mu")
-
-    # pooled variance
-    # x_sigma_alpha0 = tf.constant(SIGMA_ALPHA0, shape=[n], dtype=tf.float32)
-    # x_sigma_beta0 = tf.constant(SIGMA_BETA0, shape=[n], dtype=tf.float32)
-    # x_sigma_sq = ed.InverseGamma(
-    #     concentration=x_sigma_alpha0,
-    #     rate=x_sigma_beta0,
-    #     name="x_sigma_sq")
-    # x_sigma = tf.sqrt(x_sigma_sq, name="x_sigma")
 
     x_sigma_sq_scale0 = tf.constant(0.1, shape=[n], dtype=tf.float32)
     x_sigma_sq = ed.HalfCauchy(
@@ -55,12 +41,9 @@ def transcript_expression_variational_model(
         scale=tf.nn.softplus(qx_mu_softplus_sigma_param),
         name="qx_mu")
 
-    qx_sigma_sq = ed.TransformedDistribution(
-        distribution=
-            tfp.distributions.Normal(
-                loc=qx_sigma_sq_mu_param,
-                scale=tf.nn.softplus(qx_sigma_sq_softplus_sigma_param)),
-        bijector=tfp.bijectors.Exp(),
+    qx_sigma_sq = ed.LogNormal(
+        loc=qx_sigma_sq_mu_param,
+        scale=tf.nn.softplus(qx_sigma_sq_softplus_sigma_param),
         name="qx_sigma_sq")
 
     qx = ed.Normal(

@@ -23,6 +23,16 @@ function estimate_transcript_expression(input::ModelInput)
 end
 
 
+function estimate_gene_expression(input::ModelInput)
+    num_samples, n = size(input.loaded_samples.x0_values)
+    x0_log = log.(input.loaded_samples.x0_values)
+    return polee_py[:estimate_gene_expression](
+        input.loaded_samples.init_feed_dict, num_samples, n,
+        input.loaded_samples.variables, x0_log)
+end
+
+
+
 function estimate_linear_regression(input::ModelInput)
     if input.feature == :transcript
         return estimate_transcript_linear_regression(input)

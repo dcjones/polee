@@ -146,7 +146,7 @@ function main()
 
     expression_mode = exp.(qx_loc)
     expression_mode ./= sum(expression_mode, dims=2)
-    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-4
+    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
     idxmap = (1:n)[idx]
     @show sum(idx)
 
@@ -175,6 +175,9 @@ function main()
     # qx_scale_subset = qx_loc_subset[:,p]
 
     ts_names = [replace(t.metadata.name, "transcript:" => "") for t in ts]
+    ts_gene_names = [
+        get(ts_metadata.gene_name, get(ts_metadata.gene_id, t.metadata.name, ""), ts_name)
+        for (t, ts_name) in zip(ts, ts_names)]
 
     # Fit covariance matrix column by column
     @time edges = coregulation_py.estimate_gmm_precision(
@@ -182,11 +185,27 @@ function main()
 
     out = open("coregulation-graph.dot", "w")
     println(out, "graph coregulation {")
+    println(out, "    node [shape=plaintext];")
+
+    used_node_ids = Set{Int}()
     for (u, vs) in edges
-        i = ts_names[idxmap[u+1]]
         for (v, lower, upper) in vs
-            j = ts_names[idxmap[v+1]]
-            println(out, "    node", i, " -- node", j, ";")
+            push!(used_node_ids, u)
+            push!(used_node_ids, v)
+        end
+    end
+    for id in used_node_ids
+        gene_name = ts_gene_names[idxmap[id+1]]
+        println(out, "    node", id, " [label=\"", gene_name, "\"];")
+    end
+
+    for (u, vs) in edges
+        for (v, lower, upper) in vs
+            println(
+                out, "    node", u, " -- node", v,
+                " [color=", upper < 0.0 ? "darkgoldenrod2" : "dodgerblue4",
+                ", penwidth=", 1 + 4*abs((upper+lower)/2),
+                "];")
         end
     end
     println(out, "}")

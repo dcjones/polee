@@ -53,9 +53,9 @@ def fillmask(mask_init_value, start_j, batch_size):
 
 
 def estimate_gmm_precision(
-        qx_loc, qx_scale, fixed_expression=True,
+        qx_loc, qx_scale, fixed_expression=False,
         profile_trace=False, tensorboard_summaries=False,
-        batch_size=500, err_scale=0.1):
+        batch_size=250, err_scale=0.1):
     num_samples = qx_loc.shape[0]
     n = qx_loc.shape[1]
 
@@ -249,7 +249,7 @@ def estimate_gmm_precision(
 
     sess = tf.Session()
 
-    niter = 20000
+    niter = 10100
     feed_dict = dict()
     feed_dict[qw_scale_loc_init] = qw_scale_loc_init_value
     feed_dict[qw_scale_scale_init] = qw_scale_scale_init_value
@@ -341,8 +341,8 @@ def estimate_gmm_precision(
             edges[start_j+k] = neighbors
 
         count += 1
-        if count > 0:
-            break
+        # if count > 10:
+            # break
 
     return edges
 

@@ -25,10 +25,22 @@ end
 
 function estimate_gene_expression(input::ModelInput)
     num_samples, n = size(input.loaded_samples.x0_values)
-    x0_log = log.(input.loaded_samples.x0_values)
-    return polee_py[:estimate_gene_expression](
-        input.loaded_samples.init_feed_dict, num_samples, n,
-        input.loaded_samples.variables, x0_log)
+
+    num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
+        gene_feature_matrix(input.ts, input.ts_metadata)
+
+
+    p = sortperm(collect(zip(gene_idxs, transcript_idxs)))
+    gene_idxs = gene_idxs[p]
+    transcript_idxs = transcript_idxs[p]
+
+    qx_feature_loc, qx_feature_scale = polee_py[:approximate_feature_likelihood](
+        input.loaded_samples.init_feed_dict,
+        input.loaded_samples.variables,
+        num_samples, num_features, n,
+        gene_idxs .- 1, transcript_idxs .- 1)
+
+    return qx_feature_loc, qx_feature_scale, gene_ids, gene_names
 end
 
 

@@ -1113,8 +1113,8 @@ function gene_feature_matrix(ts::Transcripts, ts_metadata::TranscriptsMetadata)
     end
 
     m = length(gene_nums)
-    names = Array{String}(m)
-    ids = Array{String}(m)
+    names = Array{String}(undef, m)
+    ids = Array{String}(undef, m)
     for (gene_id, gene_num) in gene_nums
         ids[gene_num] = gene_id
         names[gene_num] = get(ts_metadata.gene_name, gene_id, "")

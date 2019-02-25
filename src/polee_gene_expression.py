@@ -60,8 +60,7 @@ def approximate_feature_likelihood(
     if sess is None:
         sess = tf.Session()
 
-    # train(sess, -log_prob, init_feed_dict, 1500, 1e-1)
-    train(sess, -log_prob, init_feed_dict, 500, 1e-1)
+    train(sess, -log_prob, init_feed_dict, 1000, 1e-1)
 
     return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
 

@@ -341,8 +341,8 @@ def estimate_gmm_precision(
             edges[start_j+k] = neighbors
 
         count += 1
-        # if count > 10:
-            # break
+        if count > 4:
+            break
 
     return edges
 

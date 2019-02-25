@@ -29,12 +29,11 @@ function estimate_gene_expression(input::ModelInput)
     num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
         gene_feature_matrix(input.ts, input.ts_metadata)
 
-
     p = sortperm(collect(zip(gene_idxs, transcript_idxs)))
     gene_idxs = gene_idxs[p]
     transcript_idxs = transcript_idxs[p]
 
-    qx_feature_loc, qx_feature_scale = polee_py[:approximate_feature_likelihood](
+    qx_feature_loc, qx_feature_scale = polee_py[:estimate_feature_expression](
         input.loaded_samples.init_feed_dict,
         input.loaded_samples.variables,
         num_samples, num_features, n,

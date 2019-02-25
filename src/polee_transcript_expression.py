@@ -102,14 +102,14 @@ def estimate_transcript_expression(init_feed_dict, num_samples, n, vars, x0_log,
             qx_sigma_sq_mu_param, qx_sigma_sq_softplus_sigma_param,
             qx_mu_param, qx_softplus_sigma_param))
 
-    entropy = variational_log_joint(
+    entropy = -variational_log_joint(
         qx_mu=qx_mu,
         qx_sigma_sq=qx_sigma_sq,
         qx=qx)
 
     approx_likelihood = rnaseq_approx_likelihood_from_vars(vars, qx)
 
-    elbo = lp + approx_likelihood - entropy
+    elbo = lp + approx_likelihood + entropy
 
     if sess is None:
         sess = tf.Session()

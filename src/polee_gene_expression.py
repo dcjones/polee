@@ -4,6 +4,7 @@ import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 from polee_approx_likelihood import *
 from polee_training import *
+from polee_transcript_expression import *
 
 
 """
@@ -59,6 +60,87 @@ def approximate_feature_likelihood(
     if sess is None:
         sess = tf.Session()
 
-    train(sess, -log_prob, init_feed_dict, 1500, 1e-1)
+    # train(sess, -log_prob, init_feed_dict, 1500, 1e-1)
+    train(sess, -log_prob, init_feed_dict, 500, 1e-1)
 
     return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
+
+
+"""
+Use approximate feature expression likelihood to estimate posteriors.
+"""
+def estimate_feature_expression(
+        init_feed_dict, vars, num_samples, num_features, n,
+        feature_idxs, transcript_idxs, sess=None):
+
+    if sess is None:
+        sess = tf.Session()
+
+    x_likelihood_loc, x_likelihood_scale = approximate_feature_likelihood(
+        init_feed_dict, vars, num_samples, num_features, n,
+        feature_idxs, transcript_idxs, sess=sess)
+
+    # reusing transcript expression model, since this will be the same except for
+    # handling of likelihood
+    log_joint = ed.make_log_joint_fn(
+        lambda: transcript_expression_model(num_samples, num_features))
+
+    qx_mu_mu_param = tf.Variable(
+        np.mean(x_likelihood_loc, 0),
+        name="qx_mu_mu_param",
+        dtype=tf.float32)
+    qx_mu_softplus_sigma_param = tf.Variable(
+        tf.fill([num_features], -1.0),
+        name="qx_mu_softplus_sigma_param",
+        dtype=tf.float32)
+
+    qx_sigma_sq_mu_param = tf.Variable(
+        tf.fill([num_features], 0.0),
+        name="qx_sigma_sq_mu_param",
+        dtype=tf.float32)
+    qx_sigma_sq_softplus_sigma_param = tf.Variable(
+        tf.fill([num_features], 1.0),
+        name="qx_sigma_sq_softplus_sigma_param",
+        dtype=tf.float32)
+
+    qx_mu_param = tf.Variable(
+        x_likelihood_loc,
+        name="qx_mu_param",
+        dtype=tf.float32)
+    qx_softplus_sigma_param = tf.Variable(
+        tf.fill([num_samples, num_features], -1.0),
+        name="qx_softplus_sigma_param",
+        dtype=tf.float32)
+
+    qx_mu, qx_sigma_sq, qx = transcript_expression_variational_model(
+        qx_mu_mu_param, qx_mu_softplus_sigma_param,
+        qx_sigma_sq_mu_param, qx_sigma_sq_softplus_sigma_param,
+        qx_mu_param, qx_softplus_sigma_param)
+
+    lp = log_joint(
+        x_mu=qx_mu,
+        x_sigma_sq=qx_sigma_sq,
+        x=qx)
+
+    variational_log_joint = ed.make_log_joint_fn(
+        lambda: transcript_expression_variational_model(
+            qx_mu_mu_param, qx_mu_softplus_sigma_param,
+            qx_sigma_sq_mu_param, qx_sigma_sq_softplus_sigma_param,
+            qx_mu_param, qx_softplus_sigma_param))
+
+    entropy = -variational_log_joint(
+        qx_mu=qx_mu,
+        qx_sigma_sq=qx_sigma_sq,
+        qx=qx)
+
+    approx_likelihood_dist = tfd.Normal(loc=x_likelihood_loc, scale=x_likelihood_scale)
+    approx_likelihood = tf.reduce_sum(approx_likelihood_dist.log_prob(
+        tf.log(tf.nn.softmax(qx))))
+
+    elbo = lp + approx_likelihood + entropy
+
+    if sess is None:
+        sess = tf.Session()
+    train(sess, -elbo, init_feed_dict, 500, 2e-2)
+
+    return sess.run(qx.distribution.loc), sess.run(qx.distribution.scale)

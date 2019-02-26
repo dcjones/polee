@@ -17,6 +17,7 @@ using Random
 using Statistics
 using Profile
 
+
 function main()
     # read specification
     spec = YAML.load_file(ARGS[1])
@@ -58,6 +59,7 @@ function main()
     Polee.init_python_modules()
 
     ts, ts_metadata = Polee.Transcripts(transcripts_filename, excluded_transcripts)
+    gene_db = Polee.write_transcripts("genes.db", ts, ts_metadata)
     n = length(ts)
 
     num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
@@ -82,6 +84,21 @@ function main()
                 qx_scale[i, j] = parse(Float32, row[4])
             end
         end
+
+        open("qx_splice_params.csv") do input
+            row = split(readline(input), ',')
+            sz1 = parse(Int, row[1])
+            sz2 = parse(Int, row[2])
+            qx_splice_loc = Array{Float32}(undef, (sz1, sz2))
+            qx_splice_scale = Array{Float32}(undef, (sz1, sz2))
+            for line in eachline(input)
+                row = split(line, ',')
+                i = parse(Int, row[1])
+                j = parse(Int, row[2])
+                qx_splice_loc[i, j] = parse(Float32, row[3])
+                qx_splice_scale[i, j] = parse(Float32, row[4])
+            end
+        end
     else
         max_num_samples = nothing
         batch_size = nothing
@@ -94,11 +111,14 @@ function main()
         gene_idxs = gene_idxs[p]
         transcript_idxs = transcript_idxs[p]
 
+        sess = Polee.tf[:Session]()
+
         qx_loc, qx_scale = Polee.polee_py[:estimate_feature_expression](
             loaded_samples.init_feed_dict,
             loaded_samples.variables,
             num_samples, num_features, n,
-            gene_idxs .- 1, transcript_idxs .- 1)
+            gene_idxs .- 1, transcript_idxs .- 1,
+            sess)
 
         open("qx_params.csv", "w") do output
             println(output, size(qx_loc, 1), ",", size(qx_loc, 2))
@@ -106,92 +126,64 @@ function main()
                 println(output, i, ",", j, ",", qx_loc[i, j], ",", qx_scale[i, j])
             end
         end
+
+        (num_features,
+        splice_feature_idxs, splice_feature_transcript_idxs,
+        splice_antifeature_idxs, splice_antifeature_transcript_idxs) =
+            Polee.splicing_features(ts, ts_metadata, gene_db, alt_ends=false)
+
+        splice_feature_indices = hcat(splice_feature_idxs .- 1, splice_feature_transcript_idxs .- 1)
+        splice_antifeature_indices = hcat(splice_antifeature_idxs .- 1, splice_antifeature_transcript_idxs .- 1)
+
+        qx_splice_loc, qx_splice_scale = Polee.polee_py[:approximate_splicing_likelihood](
+            loaded_samples.init_feed_dict,
+            loaded_samples.variables,
+            num_samples, num_features, n,
+            splice_feature_indices, splice_antifeature_indices,
+            sess)
+
+        open("qx_splice_params.csv", "w") do output
+            println(output, size(qx_splice_loc, 1), ",", size(qx_splice_loc, 2))
+            for i in 1:size(qx_splice_loc, 1), j in 1:size(qx_splice_loc, 2)
+               println(output, i, ",", j, ",", qx_splice_loc[i, j], ",", qx_splice_scale[i, j])
+            end
+        end
+
+        Polee.tf[:reset_default_graph]()
     end
 
-
-
-    # Test case using XIST and highly expressed Y chromosome transcripts
-
-    # xist1 = "transcript:ENSMUST00000153883"
-    # xist2 = "transcript:ENSMUST00000127786"
-
-    # xist_idx = Int[]
-    # y_idx = Int[]
-    # ts_names = String[]
-    # for (i, t) in enumerate(ts)
-    #     if t.metadata.name == xist1 || t.metadata.name == xist2
-    #         push!(xist_idx, i)
-    #     elseif t.seqname == "Y"
-    #         push!(y_idx, i)
-    #         push!(ts_names, t.metadata.name)
-    #     end
-    # end
-
-    # qx_loc_y_means = maximum(qx_loc, dims=1)[1,y_idx]
-    # p = sortperm(qx_loc_y_means, rev=true)
-
-    # K = 1000
-
-    # qx_loc_y_subset = qx_loc[:,y_idx]
-    # qx_scale_y_subset = qx_scale[:,y_idx]
-    # qx_loc_y_subset = qx_loc_y_subset[1:4,p[1:K]]
-    # qx_scale_y_subset = qx_scale_y_subset[1:4,p[1:K]]
-
-    # ts_names = ts_names[p[1:K]]
-
-    # qx_loc_xist_subset = qx_loc[1:4, xist_idx]
-    # qx_scale_xist_subset = qx_scale[1:4, xist_idx]
-
-    # qx_loc_subset = hcat(qx_loc_xist_subset, qx_loc_y_subset)
-    # qx_scale_subset = hcat(qx_scale_xist_subset, qx_scale_y_subset)
-    # ts_names = vcat([xist1, xist2], ts_names)
-
-    # @show qx_loc_subset
-    # @show qx_scale_subset
-    # @show ts_names
-
+    splice_labels = [string("splice", i) for i in 1:size(qx_splice_loc, 2)]
 
     expression_mode = exp.(qx_loc)
     expression_mode ./= sum(expression_mode, dims=2)
-    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
-    idxmap = (1:num_features)[idx]
-    @show sum(idx)
+    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-4
 
     qx_loc_subset = qx_loc[:,idx]
     qx_scale_subset = qx_scale[:,idx]
 
-    # p = sortperm(var(qx_loc_subset, dims=1)[1,:], rev=true)
+    @show size(qx_loc_subset)
+    @show size(qx_splice_loc)
 
-    # println(qx_loc_subset[:,p[1]])
-    # println(qx_loc_subset[:,p[3]])
-    # exit()
+    # Merge gene expression and splicing features
+    qx_merged_loc = hcat(qx_loc_subset, qx_splice_loc)
+    qx_merged_scale = hcat(qx_scale_subset, qx_splice_scale)
 
-    # qx_loc_subset = qx_loc_subset[:,p]
-    # qx_scale_subset = qx_scale_subset[:,p]
+    specific_labels = vcat(gene_ids[idx], splice_labels)
+    readable_labels = vcat(gene_names[idx], splice_labels)
 
+    # Shuffle so we can test on more interesting subsets
+    idx = shuffle(1:size(qx_merged_loc, 2))
+    qx_merged_loc = qx_merged_loc[:,idx]
+    qx_merged_scale = qx_merged_scale[:,idx]
+    specific_labels = specific_labels[idx]
+    readable_labels = readable_labels[idx]
 
-    # qx_loc_subset = qx_loc_subset[1:8,:]
-    # qx_scale_subset = qx_scale_subset[1:8,:]
-
-    # @show qx_loc_subset
-    # @show qx_scale_subset
-
-    # TODO: this will totally fuck up labels, but a useful test
-    # p = shuffle(1:size(qx_loc_subset, 2))
-    # qx_loc_subset = qx_loc_subset[:,p]
-    # qx_scale_subset = qx_loc_subset[:,p]
-
-    # ts_names = [replace(t.metadata.name, "transcript:" => "") for t in ts]
-    # ts_gene_names = [
-    #     get(ts_metadata.gene_name, get(ts_metadata.gene_id, t.metadata.name, ""), ts_name)
-    #     for (t, ts_name) in zip(ts, ts_names)]
-
-    ts_names = gene_ids
-    ts_gene_names = gene_names
+    # qx_merged_loc = qx_loc_subset
+    # qx_merged_scale = qx_scale_subset
 
     # Fit covariance matrix column by column
     @time edges = coregulation_py.estimate_gmm_precision(
-        qx_loc_subset, qx_scale_subset)
+        qx_merged_loc, qx_merged_scale)
 
     out = open("coregulation-graph.dot", "w")
     println(out, "graph coregulation {")
@@ -205,7 +197,7 @@ function main()
         end
     end
     for id in used_node_ids
-        gene_name = ts_gene_names[idxmap[id+1]]
+        gene_name = readable_labels[id+1]
         println(out, "    node", id, " [label=\"", gene_name, "\"];")
     end
 
@@ -223,9 +215,9 @@ function main()
 
     out = open("coregulation-edges.csv", "w")
     for (u, vs) in edges
-        i = ts_names[idxmap[u+1]]
+        i = specific_labels[u+1]
         for (v, lower, upper) in vs
-            j = ts_names[idxmap[v+1]]
+            j = specific_labels[v+1]
             println(out, i, ",", j, ",", lower, ",", upper)
         end
     end
@@ -259,7 +251,7 @@ function main()
     out = open("coregulation-graph-degree.csv", "w")
     println(out, "transcript,degree")
     for (u, count) in degree
-        println(out, ts_names[idxmap[u+1]], ",", count)
+        println(out, specific_labels[u+1], ",", count)
     end
     close(out)
 end

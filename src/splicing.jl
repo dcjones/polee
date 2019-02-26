@@ -89,20 +89,32 @@ Returns:
         features and transcripts which exclude that feature
 """
 function splicing_features(input::ModelInput)
+    return splicing_features(input.ts, input.ts_metadata, input.gene_db)
+end
+
+
+function splicing_features(ts, ts_metadata, gene_db; alt_ends::Bool=true)
     println("")
-    cassette_exons, mutex_exons = get_cassette_exons(input.ts)
-    alt_donacc_sites, retained_introns = get_alt_donor_acceptor_sites(input.ts)
-    alt_fp_ends, alt_tp_ends = get_alt_fp_tp_ends(input.ts, input.ts_metadata)
+    cassette_exons, mutex_exons = get_cassette_exons(ts)
+    alt_donacc_sites, retained_introns = get_alt_donor_acceptor_sites(ts)
+    alt_fp_ends, alt_tp_ends = get_alt_fp_tp_ends(ts, ts_metadata)
+
+    if !alt_ends
+        alt_fp_ends = Interval{Tuple{Int, Int, Vector{Int}, Vector{Int}}}[]
+        alt_tp_ends = Interval{Tuple{Int, Int, Vector{Int}, Vector{Int}}}[]
+    end
 
     println("Read ", length(cassette_exons), " cassette exons")
     println("     ", length(mutex_exons), " mutually exclusive exons")
     println("     ", length(alt_donacc_sites), " alternate acceptor/donor sites")
     println("     ", length(retained_introns), " retained introns")
-    println("     ", length(alt_fp_ends), " alternate 5' ends")
-    println("     ", length(alt_tp_ends), " alternate 3' ends")
+    if alt_ends
+        println("     ", length(alt_fp_ends), " alternate 5' ends")
+        println("     ", length(alt_tp_ends), " alternate 3' ends")
+    end
 
     @time write_splicing_features_to_gene_db(
-        input.gene_db, cassette_exons, mutex_exons,
+        gene_db, cassette_exons, mutex_exons,
         alt_donacc_sites, retained_introns,
         alt_fp_ends, alt_tp_ends)
 

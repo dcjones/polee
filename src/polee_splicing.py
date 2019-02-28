@@ -4,6 +4,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 from polee_approx_likelihood import *
+from polee_gene_expression import *
 from polee_training import *
 
 
@@ -67,6 +68,22 @@ def approximate_splicing_likelihood(
     if sess is None:
         sess = tf.Session()
 
-    train(sess, -log_prob, init_feed_dict, 1500, 1e-1)
+    train(sess, -log_prob, init_feed_dict, 2500, 1e-1)
 
     return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
+
+
+def estimate_splicing_log_ratios(
+        init_feed_dict, vars, num_samples, num_features, n,
+        feature_indices, antifeature_indices, sess=None):
+    if sess is None:
+        sess = tf.Session()
+
+    x_likelihood_loc, x_likelihood_scale = approximate_splicing_likelihood(
+        init_feed_dict, vars, num_samples, num_features, n,
+        feature_indices, antifeature_indices, sess=sess)
+
+    return estimate_feature_expression_from_normal_approx(
+        init_feed_dict, vars, num_samples, num_features, n,
+        x_likelihood_loc, x_likelihood_scale, sess=sess,
+        mu0=0.0, sigma0=2.0)

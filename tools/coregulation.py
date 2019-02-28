@@ -249,7 +249,7 @@ def estimate_gmm_precision(
 
     sess = tf.Session()
 
-    niter = 25100
+    niter = 20100
     feed_dict = dict()
     feed_dict[qw_scale_loc_init] = qw_scale_loc_init_value
     feed_dict[qw_scale_scale_init] = qw_scale_scale_init_value

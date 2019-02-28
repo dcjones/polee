@@ -79,10 +79,24 @@ def estimate_feature_expression(
         init_feed_dict, vars, num_samples, num_features, n,
         feature_idxs, transcript_idxs, sess=sess)
 
+    return estimate_feature_expression_from_normal_approx(
+        init_feed_dict, vars, num_samples, num_features, n,
+        x_likelihood_loc, x_likelihood_scale, sess=sess)
+
+
+def estimate_feature_expression_from_normal_approx(
+        init_feed_dict, vars, num_samples, num_features, n,
+        x_likelihood_loc, x_likelihood_scale, sess=None,
+        mu0=None, sigma0=4.0):
+
+    if sess is None:
+        sess = tf.Session()
+
     # reusing transcript expression model, since this will be the same except for
     # handling of likelihood
     log_joint = ed.make_log_joint_fn(
-        lambda: transcript_expression_model(num_samples, num_features))
+        lambda: transcript_expression_model(
+            num_samples, num_features, mu0=mu0, sigma0=sigma0))
 
     qx_mu_mu_param = tf.Variable(
         np.mean(x_likelihood_loc, 0),
@@ -101,6 +115,10 @@ def estimate_feature_expression(
         tf.fill([num_features], 1.0),
         name="qx_sigma_sq_softplus_sigma_param",
         dtype=tf.float32)
+
+    qx_sigma_sq_mu_param = tf.Print(qx_sigma_sq_mu_param,
+        [tf.reduce_min(qx_sigma_sq_mu_param), tf.reduce_max(qx_sigma_sq_mu_param)],
+        "qx_sigma_sq_mu_param")
 
     qx_mu_param = tf.Variable(
         x_likelihood_loc,

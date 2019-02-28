@@ -16,6 +16,23 @@ import YAML
 using Random
 using Statistics
 using Profile
+using SQLite
+
+
+function read_splice_feature_names(num_features)
+    db = SQLite.DB("genes.db")
+
+    feature_names = Array{String}(undef, num_features)
+    for row in SQLite.Query(db, "select * from splicing_features")
+        feature_names[row.feature_num] =
+            string(row.type, ":", row.seqname, ":",
+                min(row.included_first, row.excluded_first),
+                "-", max(row.included_last, row.excluded_last))
+    end
+
+    return feature_names
+end
+
 
 
 function main()
@@ -135,7 +152,7 @@ function main()
         splice_feature_indices = hcat(splice_feature_idxs .- 1, splice_feature_transcript_idxs .- 1)
         splice_antifeature_indices = hcat(splice_antifeature_idxs .- 1, splice_antifeature_transcript_idxs .- 1)
 
-        qx_splice_loc, qx_splice_scale = Polee.polee_py[:approximate_splicing_likelihood](
+        qx_splice_loc, qx_splice_scale = Polee.polee_py[:estimate_splicing_log_ratios](
             loaded_samples.init_feed_dict,
             loaded_samples.variables,
             num_samples, num_features, n,
@@ -152,24 +169,32 @@ function main()
         Polee.tf[:reset_default_graph]()
     end
 
-    splice_labels = [string("splice", i) for i in 1:size(qx_splice_loc, 2)]
+    exit()
+
+    # splice_labels = [string("splice", i) for i in 1:size(qx_splice_loc, 2)]
+    splice_labels = read_splice_feature_names(size(qx_splice_loc, 2))
 
     expression_mode = exp.(qx_loc)
     expression_mode ./= sum(expression_mode, dims=2)
-    idx = maximum(expression_mode, dims=1)[1,:] .> 1e-4
+    gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-4
 
-    qx_loc_subset = qx_loc[:,idx]
-    qx_scale_subset = qx_scale[:,idx]
+    qx_loc_subset = qx_loc[:,gene_idx]
+    qx_scale_subset = qx_scale[:,gene_idx]
+
+    splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.1
+
+    qx_splice_loc_subset = qx_splice_loc[:,splice_idx]
+    qx_splice_scale_subset = qx_splice_scale[:,splice_idx]
 
     @show size(qx_loc_subset)
-    @show size(qx_splice_loc)
+    @show size(qx_splice_loc_subset)
 
     # Merge gene expression and splicing features
-    qx_merged_loc = hcat(qx_loc_subset, qx_splice_loc)
-    qx_merged_scale = hcat(qx_scale_subset, qx_splice_scale)
+    qx_merged_loc = hcat(qx_loc_subset, qx_splice_loc_subset)
+    qx_merged_scale = hcat(qx_scale_subset, qx_splice_scale_subset)
 
-    specific_labels = vcat(gene_ids[idx], splice_labels)
-    readable_labels = vcat(gene_names[idx], splice_labels)
+    specific_labels = vcat(gene_ids[gene_idx], splice_labels[splice_idx])
+    readable_labels = vcat(gene_names[gene_idx], splice_labels[splice_idx])
 
     # Shuffle so we can test on more interesting subsets
     idx = shuffle(1:size(qx_merged_loc, 2))
@@ -194,6 +219,18 @@ function main()
         for (v, lower, upper) in vs
             push!(used_node_ids, u)
             push!(used_node_ids, v)
+
+            println("------")
+            println((lower, upper))
+            println(readable_labels[u], " -- ", readable_labels[v])
+            # @show qx_merged_loc[:,u] .- mean(qx_merged_loc[:,u])
+            @show qx_merged_loc[:,u]
+            @show qx_merged_scale[:,u]
+            # @show qx_merged_loc[:,v] .- mean(qx_merged_loc[:,v])
+            @show qx_merged_loc[:,v]
+            @show qx_merged_scale[:,v]
+            println(cor(qx_merged_loc[:,u] .- mean(qx_merged_loc[:,u]),
+                        qx_merged_loc[:,v] .- mean(qx_merged_loc[:,v])))
         end
     end
     for id in used_node_ids

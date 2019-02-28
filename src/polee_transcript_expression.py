@@ -7,10 +7,13 @@ from polee_approx_likelihood import *
 from polee_training import *
 
 
-def transcript_expression_model(num_samples, n):
+def transcript_expression_model(num_samples, n, mu0=None, sigma0=4.0):
+    if mu0 is None:
+        mu0 = np.log(1.0/n)
+
     # pooled mean
-    x_mu_mu0    = tf.constant(np.log(1.0/n), shape=[n], dtype=tf.float32)
-    x_mu_sigma0 = tf.constant(4.0, shape=[n], dtype=tf.float32)
+    x_mu_mu0    = tf.constant(mu0, shape=[n], dtype=tf.float32)
+    x_mu_sigma0 = tf.constant(sigma0, shape=[n], dtype=tf.float32)
     x_mu = ed.Normal(
         loc=x_mu_mu0,
         scale=x_mu_sigma0,

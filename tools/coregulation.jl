@@ -169,22 +169,30 @@ function main()
         Polee.tf[:reset_default_graph]()
     end
 
-    exit()
-
     # splice_labels = [string("splice", i) for i in 1:size(qx_splice_loc, 2)]
     splice_labels = read_splice_feature_names(size(qx_splice_loc, 2))
 
     expression_mode = exp.(qx_loc)
     expression_mode ./= sum(expression_mode, dims=2)
-    gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-4
+    gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
 
     qx_loc_subset = qx_loc[:,gene_idx]
     qx_scale_subset = qx_scale[:,gene_idx]
 
-    splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.1
+
+    gene_names = gene_names[gene_idx]
+    gene_ids = gene_ids[gene_idx]
+    gene_names = [
+        isempty(gene_name) ? gene_id : gene_name
+        for (gene_id, gene_name) in zip(gene_ids, gene_names)]
+
+
+    splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.2
 
     qx_splice_loc_subset = qx_splice_loc[:,splice_idx]
     qx_splice_scale_subset = qx_splice_scale[:,splice_idx]
+
+    splice_labels = splice_labels[splice_idx]
 
     @show size(qx_loc_subset)
     @show size(qx_splice_loc_subset)
@@ -193,8 +201,53 @@ function main()
     qx_merged_loc = hcat(qx_loc_subset, qx_splice_loc_subset)
     qx_merged_scale = hcat(qx_scale_subset, qx_splice_scale_subset)
 
-    specific_labels = vcat(gene_ids[gene_idx], splice_labels[splice_idx])
-    readable_labels = vcat(gene_names[gene_idx], splice_labels[splice_idx])
+    specific_labels = vcat(gene_ids, splice_labels)
+    readable_labels = vcat(gene_names, splice_labels)
+
+    # qx_merged_loc = qx_loc_subset
+    # qx_merged_scale = qx_scale_subset
+
+    # specific_labels = gene_ids
+    # readable_labels = gene_names
+
+    # qx_merged_loc = Float32[
+    #     -1  -1
+    #     -1  -1
+    #     -1  -1
+    #     -1  -1
+    #     -1  -1
+    #     -1  -1
+    #     -1  -1
+    #     -1  -1
+    #      1   1
+    #      1   1
+    #      1   1
+    #      1   1
+    #      1   1
+    #      1   1
+    #      1   1
+    #      1   1 ]
+    # qx_merged_scale = Float32[
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0
+    #     1.0  1.0 ]
+
+    # specific_labels = ["A", "B"]
+    # readable_labels = ["A", "B"]
+
 
     # Shuffle so we can test on more interesting subsets
     idx = shuffle(1:size(qx_merged_loc, 2))
@@ -216,7 +269,9 @@ function main()
 
     used_node_ids = Set{Int}()
     for (u, vs) in edges
+        u += 1 # make 1-based
         for (v, lower, upper) in vs
+            v += 1 # make 1-based
             push!(used_node_ids, u)
             push!(used_node_ids, v)
 
@@ -234,12 +289,14 @@ function main()
         end
     end
     for id in used_node_ids
-        gene_name = readable_labels[id+1]
+        gene_name = readable_labels[id]
         println(out, "    node", id, " [label=\"", gene_name, "\"];")
     end
 
     for (u, vs) in edges
+        u += 1 # 1-based
         for (v, lower, upper) in vs
+            v += 1 # 1-based
             println(
                 out, "    node", u, " -- node", v,
                 " [color=", upper < 0.0 ? "darkgoldenrod2" : "dodgerblue4",
@@ -252,9 +309,11 @@ function main()
 
     out = open("coregulation-edges.csv", "w")
     for (u, vs) in edges
-        i = specific_labels[u+1]
+        u += 1 # make 1-based
+        i = specific_labels[u]
         for (v, lower, upper) in vs
-            j = specific_labels[v+1]
+            v += 1 # make 1-based
+            j = specific_labels[v]
             println(out, i, ",", j, ",", lower, ",", upper)
         end
     end

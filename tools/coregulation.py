@@ -55,7 +55,7 @@ def fillmask(mask_init_value, start_j, batch_size):
 def estimate_gmm_precision(
         qx_loc, qx_scale, fixed_expression=False,
         profile_trace=False, tensorboard_summaries=False,
-        batch_size=400, err_scale=0.1):
+        batch_size=500, err_scale=0.1):
     num_samples = qx_loc.shape[0]
     n = qx_loc.shape[1]
 
@@ -80,8 +80,8 @@ def estimate_gmm_precision(
     # qw_loc = tf.Print(qw_loc, [qw_loc], "qw_loc", summarize=8)
 
     qw_scale_softminus_init = tf.placeholder(tf.float32, (batch_size, n), name="qw_scale_softminus_init")
-    qw_scale_softminus_init_value = np.full((batch_size, n), -5.0, dtype=np.float32)
-    qw_scale_param = tf.nn.softplus(tf.Variable(qw_scale_softminus_init, name="qw_scale_param", trainable=False))
+    qw_scale_softminus_init_value = np.full((batch_size, n), -4.0, dtype=np.float32)
+    qw_scale_param = tf.nn.softplus(tf.Variable(qw_scale_softminus_init, name="qw_scale_param", trainable=True))
     # qw_scale_param = tf.clip_by_value(qw_scale_param, 1e-6, np.inf)
     # qw_loc = tf.Print(qw_loc, [qw_loc], "qw_loc_param", summarize=16)
     # qw_loc = tf.Print(qw_loc, [tf.reduce_min(qw_loc), tf.reduce_max(qw_loc)], "qw_loc_param", summarize=16)
@@ -89,16 +89,16 @@ def estimate_gmm_precision(
     # qw_scale_param = tf.Print(qw_scale_param, [tf.reduce_min(qw_scale_param), tf.reduce_max(qw_scale_param)], "qw_scale_param")
 
     # [batch_size, n]
-    qw = ed.Normal(
-        loc=qw_loc,
-        scale=qw_scale_param,
-        name="qw")
-    # qw = qw_loc
+    # qw = ed.Normal(
+    #     loc=qw_loc,
+    #     scale=qw_scale_param,
+    #     name="qw")
+    qw = qw_loc
 
     # variational estimate of w_scale
     # -------------------------------
 
-    qw_scale_loc_init_value = np.full((batch_size, n), -5.0, dtype=np.float32)
+    qw_scale_loc_init_value = np.full((batch_size, n), -3.0, dtype=np.float32)
     qw_scale_loc_init = tf.placeholder(tf.float32, (batch_size, n), name="qw_scale_loc_init")
     qw_scale_loc = tf.Variable(qw_scale_loc_init, name="qw_scale_loc")
 
@@ -108,10 +108,12 @@ def estimate_gmm_precision(
 
     # qw_scale = tf.nn.softplus(qw_scale_loc)
 
-    qw_scale = ed.LogNormal(
-        loc=qw_scale_loc,
-        scale=qw_scale_scale,
-        name="qw_scale")
+    # qw_scale = ed.LogNormal(
+    #     loc=qw_scale_loc,
+    #     scale=qw_scale_scale,
+    #     name="qw_scale")
+
+    qw_scale = tf.nn.softplus(qw_scale_loc)
 
     # qw_scale = ed.TransformedDistribution(
     #     distribution=
@@ -144,7 +146,7 @@ def estimate_gmm_precision(
 
     by_init_value = np.zeros((batch_size,), dtype=np.float32)
     by_init = tf.placeholder(tf.float32, (batch_size,), name="by_init")
-    by = tf.Variable(by_init, name="by", trainable=False)
+    by = tf.Variable(by_init, name="by", trainable=False) # [batch_size]
 
     # w
     # -
@@ -161,13 +163,13 @@ def estimate_gmm_precision(
 
     # qw_scale_ = tf.Print(qw_scale, [qw_scale], "qw_scale", summarize=16)
     # qw_scale_ = tf.clip_by_value(qw_scale, 9e-2, 1.1e-1)
-    # qw_scale_ = tf.clip_by_value(qw_scale, 1e-6, 5e-2)
+    qw_scale = tf.clip_by_value(qw_scale, 1e-4, 10000.0)
     # w_prior = tfd.StudentT(
     #     loc=0.0,
     #     scale=0.1,
     #     df=1.0)
 
-    scale_tau = 0.1
+    scale_tau = 0.01
 
     w_prior = tfd.Normal(
         loc=0.0,
@@ -187,35 +189,46 @@ def estimate_gmm_precision(
 
     # qw_ = qw + (tf.cast(tf.equal(qw, 0.0), tf.float32) + tf.sign(qw)) * 1e-6
     # qw_ = tf.Print(qw_, [tf.reduce_min(tf.abs(qw_)), tf.reduce_max(tf.abs(qw_))], "qw")
-    qw_masked = qw * mask
-    # qw_masked = tf.Print(qw_masked, [tf.reduce_min(qw_masked), tf.reduce_max(qw_masked)], "qw_masked")
+    qw_masked = qw * mask # [batch_size, n]
 
-    # [num_samples, batch_size]
-    qx_std = qx - b
+    # qw_masked = tf.Print(qw_masked, [tf.reduce_min(qw_masked), tf.reduce_max(qw_masked)], "qw_masked span")
+
+    qx_std = qx - b # [num_samples, n]
     # qx_std = tf.Print(qx_std, [qx_std], summarize=16)
 
-    qxqw = tf.matmul(qx_std, qw_masked, transpose_b=True)
+    # CONDITIONAL CORRELATION
+    qxqw = tf.matmul(qx_std, qw_masked, transpose_b=True) # [num_samples, batch_size]
+    y_dist_loc = qxqw + by
 
-    y_dist_loc = by + qxqw
+    # UNCONDITIONAL CORRELATION
+    # qxqw = tf.expand_dims(qx_std, 1) * tf.expand_dims(qw_masked, 0) # [num_samples, num_batches, n]
+    # y_dist_loc = tf.expand_dims(tf.expand_dims(by, 0), -1) + qxqw # [num_samples, num_batches, n]
 
+    # y_dist_loc = tf.Print(y_dist_loc, [tf.expand_dims(tf.expand_dims(by, 0), -1)], "by", summarize=16)
     # y_dist_loc = tf.Print(y_dist_loc, [y_dist_loc], "y_dist_loc", summarize=16)
 
-    y_dist = tfd.Normal(
-        loc=y_dist_loc,
-        scale=err_scale)
+    # y_dist = tfd.Normal(
+    #     loc=y_dist_loc,
+    #     scale=err_scale)
 
+    y_dist = tfd.StudentT(
+        loc=y_dist_loc,
+        scale=err_scale,
+        df=200.0)
 
     y_slice_start_init = tf.placeholder(tf.int32, 2, name="y_slice_start_init") # set to [0, j]
     y_slice_start = tf.Variable(y_slice_start_init, name="y_slice_start", trainable=False)
     y = tf.slice(qx, y_slice_start, [num_samples, batch_size]) # [num_samples, batch_size]
 
-    # y = tf.Print(y_dist_loc, [y], "y", summarize=16)
+    # y = tf.Print(y, [tf.square(y_dist_loc - tf.expand_dims(y, -1))], "y", summarize=16)
 
     # objective function
     # ------------------
 
     # log posterior
+    # y_log_prob = tf.reduce_sum(y_dist.log_prob(tf.expand_dims(y, -1)))
     y_log_prob = tf.reduce_sum(y_dist.log_prob(y))
+
     w_log_prob = tf.reduce_sum(w_prior.log_prob(qw_masked))
     # w_log_prob = tf.reduce_sum(w_prior.log_prob(qw_))
     w_scale_log_prob = tf.reduce_sum(w_scale_prior.log_prob(qw_scale))
@@ -231,25 +244,24 @@ def estimate_gmm_precision(
 
     # entropy
 
-    # qw_scale_entropy = tf.reduce_sum(mask * tf.log(qw_scale_scale * tf.exp(qw_scale_loc + 0.5)))
-    qw_scale_entropy = tf.reduce_sum(mask * qw_scale.distribution.entropy())
+    # qw_scale_entropy = tf.reduce_sum(mask * qw_scale.distribution.entropy())
+    # qw_entropy = tf.reduce_sum(mask * qw.distribution.entropy())
+    # entropy = qw_entropy + qw_scale_entropy
 
-    qw_entropy = tf.reduce_sum(mask * qw.distribution.entropy())
-    entropy = qw_entropy + qw_scale_entropy
     # entropy = qw_entropy
     # entropy = tf.Print(entropy, [entropy], "entropy")
 
-    elbo = entropy + log_posterior
-    # elbo = log_posterior
+    # elbo = entropy + log_posterior
+    elbo = log_posterior
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
+    optimizer = tf.train.AdamOptimizer(learning_rate=1e-2)
     # optimizer = tf.train.AdagradOptimizer(learning_rate=5e-2)
     # optimizer = tf.train.AdadeltaOptimizer(learning_rate=5e-2)
     train = optimizer.minimize(-elbo)
 
     sess = tf.Session()
 
-    niter = 20100
+    niter = 2000
     feed_dict = dict()
     feed_dict[qw_scale_loc_init] = qw_scale_loc_init_value
     feed_dict[qw_scale_scale_init] = qw_scale_scale_init_value
@@ -264,6 +276,15 @@ def estimate_gmm_precision(
     if tensorboard_summaries:
         tf.summary.histogram("qw_loc_param", qw_loc)
         tf.summary.histogram("qw_scale_param", qw_scale_param)
+        tf.summary.scalar("y_log_prob", y_log_prob)
+        tf.summary.scalar("w_log_prob", w_log_prob)
+        tf.summary.scalar("w_scale_log_prob", w_scale_log_prob)
+
+        tf.summary.scalar("qw min", tf.reduce_min(qw))
+        tf.summary.scalar("qw max", tf.reduce_max(qw))
+        tf.summary.scalar("qw_scale min", tf.reduce_min(qw_scale))
+        tf.summary.scalar("qw_scale max", tf.reduce_max(qw_scale))
+
         # tf.summary.histogram("qw_scale_loc_param", qw_scale_loc)
         # tf.summary.histogram("qw_scale_scale_param", qw_scale_scale)
 
@@ -304,12 +325,13 @@ def estimate_gmm_precision(
             merged_summary = tf.summary.merge_all()
 
         for t in range(niter):
-            _, elbo_val = sess.run([train, elbo])
+            # _, elbo_val = sess.run([train, elbo])
             # _, entropy_val, log_posterior_val, elbo_val = sess.run([train, entropy, log_posterior, elbo])
-            # _, entropy_val, log_posterior_val, elbo_val = sess.run([train, entropy, log_posterior, elbo])
+            _, y_log_prob_value, w_log_prob_value, w_scale_log_prob_value = sess.run([train, y_log_prob, w_log_prob, w_scale_log_prob])
             if t % 100 == 0:
                 # print((t, elbo_val, log_posterior_val, entropy_val))
-                print((t, elbo_val))
+                print((y_log_prob_value, w_log_prob_value, w_scale_log_prob_value))
+                # print((t, elbo_val))
             if tensorboard_summaries:
                 train_writer.add_summary(sess.run(merged_summary), t)
 
@@ -321,27 +343,27 @@ def estimate_gmm_precision(
         #     [tf.reduce_min(qw_scale), tf.reduce_mean(qw_scale), tf.reduce_max(qw_scale)])
         # print(("qw_scale span", qw_scale_min, qw_scale_mean, qw_scale_max))
 
-        lower_credible = sess.run(qw.distribution.quantile(0.01))
-        upper_credible = sess.run(qw.distribution.quantile(0.99))
-        # lower_credible = upper_credible = sess.run(qw)
+        # lower_credible = sess.run(qw.distribution.quantile(0.01))
+        # upper_credible = sess.run(qw.distribution.quantile(0.99))
+        lower_credible = upper_credible = sess.run(qw)
 
         print("credible span")
         print(np.max(lower_credible))
         print(np.min(upper_credible))
 
         print("nonzeros")
-        print(np.sum((lower_credible > 0.1)))
-        print(np.sum((upper_credible < -0.1)))
+        print(np.sum((lower_credible > 0.5)))
+        print(np.sum((upper_credible < -0.5)))
 
         for k in range(batch_size):
             neighbors = []
             for j in range(n):
-                if lower_credible[k, j] > 0.1 or upper_credible[k, j] < -0.1:
+                if lower_credible[k, j] > 0.2 or upper_credible[k, j] < -0.2:
                     neighbors.append((j, lower_credible[k, j], upper_credible[k, j]))
             edges[start_j+k] = neighbors
 
         count += 1
-        if count > 0:
+        if count > 10:
             break
 
     return edges

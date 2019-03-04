@@ -17,6 +17,9 @@ using Random
 using Statistics
 using Profile
 using SQLite
+using StatsBase
+using InteractiveUtils
+using SIMD
 
 
 function read_splice_feature_names(num_features)
@@ -33,6 +36,191 @@ function read_splice_feature_names(num_features)
     return feature_names
 end
 
+
+function randn!(loc, scale, col, out)
+    for i in 1:size(loc, 1)
+        out[i] = loc[i, col] + randn(Float32) * scale[i, col]
+    end
+end
+
+
+function randn!(loc, scale, col, out_row, out)
+    for i in 1:size(loc, 1)
+        out[out_row, i] = loc[i, col] + randn(Float32) * scale[i, col]
+    end
+end
+
+
+"""
+We want to reduce the number of features we need to consider so we can reasonably
+attempt to estimate a full precision matrix.
+
+The heuristic we implement here is to exclude features that aren't
+siginificantly correlated with another feature.
+"""
+function filter_features(qx_loc, qx_scale)
+    @assert size(qx_loc) == size(qx_scale)
+    num_samples, n = size(qx_loc)
+    c = 0.5
+    pr = 0.5
+    num_reps = 20
+
+    # standard normal rand numbers
+    xs_std = Array{Float32}(undef, (num_samples, num_reps))
+    ys_std = Array{Float32}(undef, (num_samples, num_reps))
+
+    for u in 1:num_samples, v in 1:num_reps
+        xs_std[u, v] = randn(Float32)
+        ys_std[u, v] = randn(Float32)
+    end
+
+    # destandardized normals
+    xs = Array{Float32}(undef, (num_samples, num_reps))
+    ys = Array{Float32}(undef, (num_samples, num_reps))
+
+    # true if that index should be included (passes filter)
+    idx = fill(false, n)
+    mut = Threads.Mutex()
+
+    for i in 1:n
+    # for i in 1:100
+        # already included
+        @show i
+        already_included = idx[i]
+        if already_included
+            continue
+        end
+
+        # destandardize x
+        for u in 1:num_samples, v in 1:num_reps
+            xs[u, v] = xs_std[u, v] * qx_scale[u, i] + qx_loc[u, i]
+        end
+
+        for j in i+1:n
+            # destandardize y
+            for u in 1:num_samples, v in 1:num_reps
+                ys[u, v] = ys_std[u, v] * qx_scale[u, j] + qx_loc[u, j]
+            end
+
+            thresh_count = Threads.Atomic{Int}(0)
+            filter_features_i(thresh_count, c, xs, ys, num_samples, num_reps)
+
+            # thresh_count = Threads.Atomic{Int}(0)
+            # Threads.@threads for t in 1:num_reps
+            #     # pearson correlation
+            #     x_mu = 0.0f0
+            #     y_mu = 0.0f0
+            #     for u in 1:num_samples
+            #         x_mu += xs[u, t]
+            #         y_mu += ys[u, t]
+            #     end
+            #     x_mu /= num_samples
+            #     y_mu /= num_samples
+
+            #     xy_cov = 0.0f0
+            #     x_var = 0.0f0
+            #     y_var = 0.0f0
+            #     for u in 1:num_samples
+            #         x_diff = xs[u, t] - x_mu
+            #         y_diff = ys[u, t] - y_mu
+            #         xy_cov += x_diff * y_diff
+            #         x_var += x_diff^2
+            #         y_var += y_diff^2
+            #     end
+            #     ρ = xy_cov / (sqrt(x_var) * sqrt(y_var))
+            #     Threads.atomic_add!(thresh_count, Int(abs(ρ) > c))
+            # end
+
+            if thresh_count.value / num_reps > pr
+                @show (i, j, thresh_count.value / num_reps)
+                idx[i] = true
+                idx[j] = true
+                break
+            end
+        end
+    end
+
+    return idx
+end
+
+function filter_features_i(thresh_count, c, xs, ys, num_samples, num_reps)
+    # @inbounds for t in 1:num_reps
+    #     # pearson correlation
+    #     x_mu = 0.0f0
+    #     y_mu = 0.0f0
+    #     for u in 1:num_samples
+    #         x_mu += xs[u, t]
+    #         y_mu += ys[u, t]
+    #     end
+    #     x_mu /= num_samples
+    #     y_mu /= num_samples
+
+    #     xy_cov = 0.0f0
+    #     x_var = 0.0f0
+    #     y_var = 0.0f0
+    #     for u in 1:num_samples
+    #         x_diff = xs[u, t] - x_mu
+    #         y_diff = ys[u, t] - y_mu
+    #         xy_cov += x_diff * y_diff
+    #         x_var += x_diff^2
+    #         y_var += y_diff^2
+    #     end
+    #     ρ = xy_cov / (sqrt(x_var) * sqrt(y_var))
+    #     Threads.atomic_add!(thresh_count, Int(abs(ρ) > c))
+    # end
+
+    # SIMD version
+    xs_flat = reshape(xs, (num_samples * num_reps,))
+    ys_flat = reshape(ys, (num_samples * num_reps,))
+    num_samples_aligned = 8*div(num_samples, 8)
+
+    @inbounds for t in 1:num_reps
+        x_mu_v = Vec{8,Float32}(0.0f0)
+        y_mu_v = Vec{8,Float32}(0.0f0)
+        for u in 1:8:num_samples_aligned
+            x = vload(Vec{8,Float32}, xs_flat, num_samples*(t-1)+u)
+            y = vload(Vec{8,Float32}, ys_flat, num_samples*(t-1)+u)
+            x_mu_v += x
+            y_mu_v += y
+        end
+        x_mu = sum(x_mu_v)
+        y_mu = sum(y_mu_v)
+
+        for u in num_samples_aligned+1:num_samples
+            x_mu += xs[u, t]
+            y_mu += ys[u, t]
+        end
+        x_mu /= num_samples
+        y_mu /= num_samples
+
+        xy_cov_v = Vec{8, Float32}(0.0f0)
+        x_var_v = Vec{8, Float32}(0.0f0)
+        y_var_v = Vec{8, Float32}(0.0f0)
+        for u in 1:8:num_samples_aligned
+            x = vload(Vec{8,Float32}, xs_flat, num_samples*(t-1)+u)
+            y = vload(Vec{8,Float32}, ys_flat, num_samples*(t-1)+u)
+            x_diff = x - x_mu
+            y_diff = y - y_mu
+            xy_cov_v += x_diff * y_diff
+            x_var_v += x_diff * x_diff
+            y_var_v += y_diff * y_diff
+        end
+        xy_cov = sum(xy_cov_v)
+        x_var = sum(x_var_v)
+        y_var = sum(y_var_v)
+
+        for u in num_samples_aligned+1:num_samples
+            x_diff = xs[u, t] - x_mu
+            y_diff = ys[u, t] - y_mu
+            xy_cov += x_diff * y_diff
+            x_var += x_diff^2
+            y_var += y_diff^2
+        end
+
+        ρ = xy_cov / (sqrt(x_var) * sqrt(y_var))
+        Threads.atomic_add!(thresh_count, Int(abs(ρ) > c))
+    end
+end
 
 
 function main()
@@ -174,7 +362,9 @@ function main()
 
     expression_mode = exp.(qx_loc)
     expression_mode ./= sum(expression_mode, dims=2)
-    gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
+    # gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
+    # gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
+    gene_idx = 1:size(expression_mode, 2)
 
     qx_loc_subset = qx_loc[:,gene_idx]
     qx_scale_subset = qx_scale[:,gene_idx]
@@ -187,7 +377,9 @@ function main()
         for (gene_id, gene_name) in zip(gene_ids, gene_names)]
 
 
-    splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.2
+    # splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.2
+    # splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.2
+    splice_idx = 1:size(qx_splice_scale, 2)
 
     qx_splice_loc_subset = qx_splice_loc[:,splice_idx]
     qx_splice_scale_subset = qx_splice_scale[:,splice_idx]
@@ -203,6 +395,7 @@ function main()
 
     specific_labels = vcat(gene_ids, splice_labels)
     readable_labels = vcat(gene_names, splice_labels)
+
 
     # qx_merged_loc = qx_loc_subset
     # qx_merged_scale = qx_scale_subset
@@ -250,11 +443,19 @@ function main()
 
 
     # Shuffle so we can test on more interesting subsets
+    Random.seed!(1234)
     idx = shuffle(1:size(qx_merged_loc, 2))
     qx_merged_loc = qx_merged_loc[:,idx]
     qx_merged_scale = qx_merged_scale[:,idx]
     specific_labels = specific_labels[idx]
     readable_labels = readable_labels[idx]
+
+    filter_idx = filter_features(qx_merged_loc, qx_merged_scale)
+    @show sum(filter_idx)
+    # @profile filter_features(qx_merged_loc, qx_merged_scale)
+    # Profile.print()
+    exit()
+
 
     # qx_merged_loc = qx_loc_subset
     # qx_merged_scale = qx_scale_subset
@@ -284,8 +485,9 @@ function main()
             # @show qx_merged_loc[:,v] .- mean(qx_merged_loc[:,v])
             @show qx_merged_loc[:,v]
             @show qx_merged_scale[:,v]
-            println(cor(qx_merged_loc[:,u] .- mean(qx_merged_loc[:,u]),
-                        qx_merged_loc[:,v] .- mean(qx_merged_loc[:,v])))
+            println(corspearman(
+                qx_merged_loc[:,u] .- mean(qx_merged_loc[:,u]),
+                qx_merged_loc[:,v] .- mean(qx_merged_loc[:,v])))
         end
     end
     for id in used_node_ids

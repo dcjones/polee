@@ -61,8 +61,8 @@ siginificantly correlated with another feature.
 function filter_features(qx_loc, qx_scale)
     @assert size(qx_loc) == size(qx_scale)
     num_samples, n = size(qx_loc)
-    c = 0.5
-    pr = 0.5
+    c = 0.75
+    pr = 0.9
     num_reps = 20
 
     # standard normal rand numbers
@@ -75,18 +75,32 @@ function filter_features(qx_loc, qx_scale)
     end
 
     # destandardized normals
-    xs = Array{Float32}(undef, (num_samples, num_reps))
-    ys = Array{Float32}(undef, (num_samples, num_reps))
+    xss = [Array{Float32}(undef, (num_samples, num_reps)) for _ in 1:Threads.nthreads()]
+    yss = [Array{Float32}(undef, (num_samples, num_reps)) for _ in 1:Threads.nthreads()]
 
     # true if that index should be included (passes filter)
     idx = fill(false, n)
     mut = Threads.Mutex()
 
-    for i in 1:n
-    # for i in 1:100
+    filter_features_inner(
+        xss, yss, mut, idx, num_samples, num_reps, n, c, pr, xs_std, ys_std, qx_loc, qx_scale)
+
+    return idx
+end
+
+
+function filter_features_inner(
+        xss, yss, mut, idx, num_samples, num_reps, n, c, pr, xs_std, ys_std, qx_loc, qx_scale)
+    Threads.@threads for i in 1:n
+        thrid = Threads.threadid()
+        xs = xss[thrid]
+        ys = yss[thrid]
+
         # already included
+        lock(mut)
         @show i
         already_included = idx[i]
+        unlock(mut)
         if already_included
             continue
         end
@@ -102,48 +116,22 @@ function filter_features(qx_loc, qx_scale)
                 ys[u, v] = ys_std[u, v] * qx_scale[u, j] + qx_loc[u, j]
             end
 
-            thresh_count = Threads.Atomic{Int}(0)
-            filter_features_i(thresh_count, c, xs, ys, num_samples, num_reps)
+            proportion_passed = filter_features_i(c, xs, ys, num_samples, num_reps)
 
-            # thresh_count = Threads.Atomic{Int}(0)
-            # Threads.@threads for t in 1:num_reps
-            #     # pearson correlation
-            #     x_mu = 0.0f0
-            #     y_mu = 0.0f0
-            #     for u in 1:num_samples
-            #         x_mu += xs[u, t]
-            #         y_mu += ys[u, t]
-            #     end
-            #     x_mu /= num_samples
-            #     y_mu /= num_samples
-
-            #     xy_cov = 0.0f0
-            #     x_var = 0.0f0
-            #     y_var = 0.0f0
-            #     for u in 1:num_samples
-            #         x_diff = xs[u, t] - x_mu
-            #         y_diff = ys[u, t] - y_mu
-            #         xy_cov += x_diff * y_diff
-            #         x_var += x_diff^2
-            #         y_var += y_diff^2
-            #     end
-            #     ρ = xy_cov / (sqrt(x_var) * sqrt(y_var))
-            #     Threads.atomic_add!(thresh_count, Int(abs(ρ) > c))
-            # end
-
-            if thresh_count.value / num_reps > pr
-                @show (i, j, thresh_count.value / num_reps)
+            if proportion_passed > pr
+                lock(mut)
+                @show (i, j, proportion_passed)
                 idx[i] = true
                 idx[j] = true
+                unlock(mut)
                 break
             end
         end
     end
-
-    return idx
 end
 
-function filter_features_i(thresh_count, c, xs, ys, num_samples, num_reps)
+
+function filter_features_i(c, xs, ys, num_samples, num_reps)
     # @inbounds for t in 1:num_reps
     #     # pearson correlation
     #     x_mu = 0.0f0
@@ -173,6 +161,8 @@ function filter_features_i(thresh_count, c, xs, ys, num_samples, num_reps)
     xs_flat = reshape(xs, (num_samples * num_reps,))
     ys_flat = reshape(ys, (num_samples * num_reps,))
     num_samples_aligned = 8*div(num_samples, 8)
+
+    thresh_count = 0
 
     @inbounds for t in 1:num_reps
         x_mu_v = Vec{8,Float32}(0.0f0)
@@ -218,8 +208,10 @@ function filter_features_i(thresh_count, c, xs, ys, num_samples, num_reps)
         end
 
         ρ = xy_cov / (sqrt(x_var) * sqrt(y_var))
-        Threads.atomic_add!(thresh_count, Int(abs(ρ) > c))
+        thresh_count += Int(abs(ρ) > c)
     end
+
+    return thresh_count / num_reps
 end
 
 
@@ -450,7 +442,7 @@ function main()
     specific_labels = specific_labels[idx]
     readable_labels = readable_labels[idx]
 
-    filter_idx = filter_features(qx_merged_loc, qx_merged_scale)
+    @time filter_idx = filter_features(qx_merged_loc, qx_merged_scale)
     @show sum(filter_idx)
     # @profile filter_features(qx_merged_loc, qx_merged_scale)
     # Profile.print()

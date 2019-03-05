@@ -51,6 +51,51 @@ function randn!(loc, scale, col, out_row, out)
 end
 
 
+function connected_components(edges, n)
+    visited = fill(false, n)
+    num_visited = 0
+    next_unvisited = 1
+    components = Vector{Int}[]
+
+    while num_visited < n
+        while visited[next_unvisited]
+            next_unvisited += 1
+        end
+
+        if !haskey(edges, next_unvisited)
+            visited[next_unvisited] = true
+            num_visited += 1
+            continue
+        end
+
+        stack = Int[next_unvisited]
+        component = Int[]
+
+        while !isempty(stack)
+            i = pop!(stack)
+            if visited[i]
+                continue
+            end
+
+            @assert !visited[i]
+            @assert i ∉ component
+            push!(component, i)
+
+            visited[i] = true
+            num_visited += 1
+
+            for j in edges[i]
+                push!(stack, j)
+            end
+        end
+
+        push!(components, component)
+    end
+
+    return components
+end
+
+
 """
 We want to reduce the number of features we need to consider so we can reasonably
 attempt to estimate a full precision matrix.
@@ -61,9 +106,16 @@ siginificantly correlated with another feature.
 function filter_features(qx_loc, qx_scale)
     @assert size(qx_loc) == size(qx_scale)
     num_samples, n = size(qx_loc)
+
+    @show n
+
     c = 0.75
     pr = 0.9
     num_reps = 20
+
+
+    # how many repititions fall below the threshold c before an edge is rejected
+    max_miss_reps = num_reps - floor(pr * num_reps)
 
     # standard normal rand numbers
     xs_std = Array{Float32}(undef, (num_samples, num_reps))
@@ -76,34 +128,44 @@ function filter_features(qx_loc, qx_scale)
 
     # destandardized normals
     xss = [Array{Float32}(undef, (num_samples, num_reps)) for _ in 1:Threads.nthreads()]
-    yss = [Array{Float32}(undef, (num_samples, num_reps)) for _ in 1:Threads.nthreads()]
+    yss = [Array{Float32}(undef, num_samples) for _ in 1:Threads.nthreads()]
 
     # true if that index should be included (passes filter)
-    idx = fill(false, n)
+    edges = Dict{Int,Vector{Int}}()
+
     mut = Threads.Mutex()
 
-    filter_features_inner(
-        xss, yss, mut, idx, num_samples, num_reps, n, c, pr, xs_std, ys_std, qx_loc, qx_scale)
+    @time filter_features_inner(
+        xss, yss, mut, edges, num_samples, num_reps, n, c, pr, xs_std, ys_std, qx_loc, qx_scale)
 
-    return idx
+    @show div(sum([length(v) for (k, v) in edges]), 2)
+
+    components = connected_components(edges, n)
+
+    @show length(components)
+    @show maximum(map(length, components))
+    # @show collect(map(length, components))
+
+    # TODO: group into components
+
+    exit()
 end
 
 
 function filter_features_inner(
-        xss, yss, mut, idx, num_samples, num_reps, n, c, pr, xs_std, ys_std, qx_loc, qx_scale)
+        xss, yss, mut, edges, num_samples, num_reps, n,
+        c, max_miss_reps, xs_std, ys_std, qx_loc, qx_scale)
+
+    qx_loc_flat = reshape(qx_loc, (num_samples * n))
+    qx_scale_flat = reshape(qx_scale, (num_samples * n))
+    ys_std_flat = reshape(ys_std, (num_samples * num_reps,))
+
     Threads.@threads for i in 1:n
         thrid = Threads.threadid()
         xs = xss[thrid]
         ys = yss[thrid]
 
-        # already included
-        lock(mut)
-        @show i
-        already_included = idx[i]
-        unlock(mut)
-        if already_included
-            continue
-        end
+        xs_flat = reshape(xs, (num_samples * num_reps,))
 
         # destandardize x
         for u in 1:num_samples, v in 1:num_reps
@@ -111,65 +173,83 @@ function filter_features_inner(
         end
 
         for j in i+1:n
+
+            # TODO: only destardardize rows as needed, and use SIMD
+
             # destandardize y
-            for u in 1:num_samples, v in 1:num_reps
-                ys[u, v] = ys_std[u, v] * qx_scale[u, j] + qx_loc[u, j]
-            end
+            # for u in 1:num_samples, v in 1:num_reps
+            #     ys[u, v] = ys_std[u, v] * qx_scale[u, j] + qx_loc[u, j]
+            # end
 
-            proportion_passed = filter_features_i(c, xs, ys, num_samples, num_reps)
+            passed = filter_features_i(
+                j, c, xs, xs_flat, ys, ys_std_flat,
+                qx_loc_flat, qx_scale_flat, num_samples, num_reps, max_miss_reps)
 
-            if proportion_passed > pr
+            if passed
                 lock(mut)
-                @show (i, j, proportion_passed)
-                idx[i] = true
-                idx[j] = true
+                if !haskey(edges, i)
+                    edges[i] = Int[j]
+                else
+                    push!(edges[i], j)
+                end
+
+                if !haskey(edges, j)
+                    edges[j] = Int[i]
+                else
+                    push!(edges[j], i)
+                end
                 unlock(mut)
-                break
             end
         end
+
+        lock(mut)
+        if haskey(edges, i)
+            println(i, ": ", length(edges[i]), " edges found")
+        end
+        unlock(mut)
     end
 end
 
 
-function filter_features_i(c, xs, ys, num_samples, num_reps)
-    # @inbounds for t in 1:num_reps
-    #     # pearson correlation
-    #     x_mu = 0.0f0
-    #     y_mu = 0.0f0
-    #     for u in 1:num_samples
-    #         x_mu += xs[u, t]
-    #         y_mu += ys[u, t]
-    #     end
-    #     x_mu /= num_samples
-    #     y_mu /= num_samples
 
-    #     xy_cov = 0.0f0
-    #     x_var = 0.0f0
-    #     y_var = 0.0f0
-    #     for u in 1:num_samples
-    #         x_diff = xs[u, t] - x_mu
-    #         y_diff = ys[u, t] - y_mu
-    #         xy_cov += x_diff * y_diff
-    #         x_var += x_diff^2
-    #         y_var += y_diff^2
-    #     end
-    #     ρ = xy_cov / (sqrt(x_var) * sqrt(y_var))
-    #     Threads.atomic_add!(thresh_count, Int(abs(ρ) > c))
-    # end
+function filter_features_i(
+        j, c, xs, xs_flat, ys, ys_std_flat,
+        qx_loc_flat, qx_scale_flat,
+        num_samples, num_reps, max_miss_reps)
 
     # SIMD version
-    xs_flat = reshape(xs, (num_samples * num_reps,))
-    ys_flat = reshape(ys, (num_samples * num_reps,))
     num_samples_aligned = 8*div(num_samples, 8)
 
-    thresh_count = 0
+    miss_count = 0
 
-    @inbounds for t in 1:num_reps
+    # @inbounds for t in 1:num_reps
+    for t in 1:num_reps
+        coloff = num_samples*(t-1)
+
+        # destandardize ys
+        for u in 1:8:num_samples_aligned
+            z = vload(Vec{8,Float32}, ys_std_flat, coloff+u)
+            loc = vload(Vec{8,Float32}, qx_loc_flat, num_samples*(j-1)+u)
+            scale = vload(Vec{8,Float32}, qx_scale_flat, num_samples*(j-1)+u)
+            vstore(z*scale+loc, ys, u)
+        end
+
+        for u in num_samples_aligned+1:num_samples
+            z = ys_std_flat[coloff+u]
+            loc = qx_loc_flat[num_samples*(j-1)+u]
+            scale = qx_scale_flat[num_samples*(j-1)+u]
+            ys[u] = z*scale+loc
+        end
+
+        # for u in 1:num_samples
+        #     ys[u] = ys_std[u, t] * qx_scale[u, j] + qx_loc[u, j]
+        # end
+
         x_mu_v = Vec{8,Float32}(0.0f0)
         y_mu_v = Vec{8,Float32}(0.0f0)
         for u in 1:8:num_samples_aligned
-            x = vload(Vec{8,Float32}, xs_flat, num_samples*(t-1)+u)
-            y = vload(Vec{8,Float32}, ys_flat, num_samples*(t-1)+u)
+            x = vload(Vec{8,Float32}, xs_flat, coloff+u)
+            y = vload(Vec{8,Float32}, ys, u)
             x_mu_v += x
             y_mu_v += y
         end
@@ -178,7 +258,7 @@ function filter_features_i(c, xs, ys, num_samples, num_reps)
 
         for u in num_samples_aligned+1:num_samples
             x_mu += xs[u, t]
-            y_mu += ys[u, t]
+            y_mu += ys[u]
         end
         x_mu /= num_samples
         y_mu /= num_samples
@@ -187,8 +267,8 @@ function filter_features_i(c, xs, ys, num_samples, num_reps)
         x_var_v = Vec{8, Float32}(0.0f0)
         y_var_v = Vec{8, Float32}(0.0f0)
         for u in 1:8:num_samples_aligned
-            x = vload(Vec{8,Float32}, xs_flat, num_samples*(t-1)+u)
-            y = vload(Vec{8,Float32}, ys_flat, num_samples*(t-1)+u)
+            x = vload(Vec{8,Float32}, xs_flat, coloff+u)
+            y = vload(Vec{8,Float32}, ys, u)
             x_diff = x - x_mu
             y_diff = y - y_mu
             xy_cov_v += x_diff * y_diff
@@ -201,17 +281,20 @@ function filter_features_i(c, xs, ys, num_samples, num_reps)
 
         for u in num_samples_aligned+1:num_samples
             x_diff = xs[u, t] - x_mu
-            y_diff = ys[u, t] - y_mu
+            y_diff = ys[u] - y_mu
             xy_cov += x_diff * y_diff
             x_var += x_diff^2
             y_var += y_diff^2
         end
 
         ρ = xy_cov / (sqrt(x_var) * sqrt(y_var))
-        thresh_count += Int(abs(ρ) > c)
+        miss_count += Int(abs(ρ) < c)
+        if miss_count > max_miss_reps
+            break
+        end
     end
 
-    return thresh_count / num_reps
+    return miss_count <= max_miss_reps
 end
 
 
@@ -260,7 +343,8 @@ function main()
     n = length(ts)
 
     num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
-        Polee.gene_feature_matrix(ts, ts_metadata)
+        Polee.gene_feature_matrix(
+            ts, ts_metadata)
 
     # Fit heirarchical model (of transcript expression)
     # TODO: this is very dangerous: we just load the file if it exists, even though
@@ -326,6 +410,7 @@ function main()
 
         (num_features,
         splice_feature_idxs, splice_feature_transcript_idxs,
+        # TODO: exclude MT, X, Y
         splice_antifeature_idxs, splice_antifeature_transcript_idxs) =
             Polee.splicing_features(ts, ts_metadata, gene_db, alt_ends=false)
 

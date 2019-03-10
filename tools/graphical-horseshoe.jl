@@ -1,6 +1,7 @@
 
 using Distributions
 using LinearAlgebra
+using Profile
 
 # Gibbs sampler for a gaussian graphical model with graphical horseshoe prior.
 
@@ -28,8 +29,16 @@ struct GHSBlock
     Ν::Matrix{Float32}
     νi::Vector{Float32}
 
-    a::Vector{Float32} # p-1 length intermedian value
+    a::Vector{Float32} # p-1 length intermediate value
     β::Vector{Float32}
+
+    # intermediate arrays for drawing samples
+    A::Matrix{Float32} # (p x p)
+    z::Vector{Float32} # p
+    U::UpperTriangular{Float32, Matrix{Float32}} # (P x p)
+    f::Vector{Float32} # p
+    g::Vector{Float32} # p
+    h::Vector{Float32} # p
 end
 
 
@@ -81,7 +90,15 @@ function GHSBlock(i::Int, j::Int, n::Int)
 
         # a, β
         Array{Float32}(undef, p-1),
-        Array{Float32}(undef, p-1))
+        Array{Float32}(undef, p-1),
+
+        # A, z
+        Array{Float32}(undef, (p, p)),
+        Array{Float32}(undef, p),
+        UpperTriangular(Array{Float32}(undef, (p, p))),
+        Array{Float32}(undef, p),
+        Array{Float32}(undef, p),
+        Array{Float32}(undef, p))
 end
 
 
@@ -107,7 +124,7 @@ function principal_minor!(Xi::Matrix, xi::Vector,  X::Matrix, i::Int)
 
         if u == i
             unsafe_copyto!(xi, 1, X, soff+1, i-1)
-            unsafe_copyto!(xi, i, X, soff+i+1, size(X, 1)-1)
+            unsafe_copyto!(xi, i, X, soff+i+1, size(X, 1)-i)
             continue
         end
 
@@ -186,7 +203,7 @@ function randn!(zs::Vector{T}) where {T}
 end
 
 
-function sample!(block::GHSBlock, τ)
+function sample!(block::GHSBlock, τ2)
     p = block.p
     n = block.n
 
@@ -212,8 +229,6 @@ function sample!(block::GHSBlock, τ)
     a = block.a
     β = block.β
 
-    τ2 = τ^2
-
     for i in 1:p
         principal_minor!(Σi, σi, Σ, i)
         load_rowcol!(λi, Λ, i)
@@ -237,6 +252,8 @@ function sample!(block::GHSBlock, τ)
         end
         symmetrize_from_upper!(Cinv)
 
+        # TODO: this is the bottleneck. Since we already require
+        # tensorflow, we should just compute cholesky in the GPU
         Cinv_chol = cholesky!(Cinv)
         randn!(β)
         ldiv!(Cinv_chol, β)
@@ -289,25 +306,201 @@ function sample!(block::GHSBlock, τ)
         store_rowcol!(Λ, λi, i)
         store_rowcol!(Ν, νi, i)
     end
+end
 
-    # TODO: this has to happen outside all the blocks
 
-    # sample τ
-    # TODO:
+function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vector{Int}})
 
-    # sample ξ
-    # TODO:
+    # using the notation of the Li et al paper here:
+    # n: number of observations
+    # p: dimensionality
+    n, p = size(qx_mu)
+    sqrt_n = Float32(sqrt(n))
+
+    # indexes occuring in a block
+    block_indexes = Set{Int}()
+
+    # permutation of the indexs of qx_mu, qx_scale used for sampling
+    reorder = Int[]
+
+    blocks = GHSBlock[]
+    for component in components
+        @assert !isempty(component)
+        block_i = length(reorder)+1
+        for idx in component
+            push!(reorder, idx)
+            push!(block_indexes, idx)
+        end
+        block_j = length(reorder)
+        push!(blocks, GHSBlock(block_i, block_j, n))
+    end
+
+    # find diagonal elements not occuring in blocks
+    num_nonblocked = 0
+    nonblocked_offset = length(reorder)
+    for i in 1:p
+        if i ∉ block_indexes
+            push!(reorder)
+            num_nonblocked += 1
+        end
+    end
+    @assert length(reorder) == p
+
+    # precision parameters for diagonal (non-blocked) elements
+    ω_diag = ones(Float32, num_nonblocked)
+
+    # reorganize the likelihood approximation parameters
+    qμ = Array{Float32}(undef, (p, n))
+    qω = Array{Float32}(undef, (p, n))
+    for i in 1:p, j in 1:n
+        qμ[i,j] = qx_mu[j, reorder[i]]
+        qω[i,j] = 1.0f0 / qx_scale[j, reorder[i]]^2
+    end
+
+    # shape parameter for sampling τ2
+    τ2_shape = (Float32(binomial(p, 2)) + 1.0f0)/2.0f0
+
+    # expression estimates
+    μ = mean(qx_mu, dims=1)[1,:]
+    x = copy(qx_mu)
+    y = x .- μ # this is always x .- μ
+
+    τ2 = 1.0f0
+    ξ = 1.0f0
+
+    num_burnin = 100
+    num_iterations = 100
+
+    for it in 1:num_burnin+num_iterations
+        # sample precision matrix blockes
+        for block in blocks
+            update_S!(block, y)
+            sample!(block, τ2)
+        end
+
+        # sample precision for nonblocked (diagonal) elements
+        for i in 1:length(ω_diag)
+            sii = 0.0f0
+            for j in 1:n
+                sii += y[nonblocked_offset+i, j]^2
+            end
+            ω_diag[i] = rand(Gamma(n/2.0f0+1.0f0, 2.0f0/sii))
+        end
+
+        # sample τ and ξ
+        τ2_scale = 1.0f0/ξ
+        for block in blocks
+            for i in 1:block.p
+                for j in 1:i-1
+                    τ2_scale += block.Ω[i,j]^2 / (2.0f0 * block.Λ[i,j])
+                end
+            end
+        end
+
+        τ2 = rand(InverseGamma(τ2_shape, τ2_scale))
+        ξ = rand(InverseGamma(1.0f0, 1.0f0 + 1.0f0/τ2))
+
+        # sample μ
+
+        # generate zero-centered randoms
+        for block in blocks
+            randn!(block.z)
+            copy!(block.A, block.Σ)
+            block.A .*= 1.0f0/n
+            U = cholesky!(block.A).U
+            mul!(view(μ, block.span), U, block.z)
+        end
+
+        for i in 1:num_nonblocked
+            σi = sqrt(1.0f0/ω_diag[i])
+            μ[nonblocked_offset+i] = randn(Float32) * (1.0f0/sqrt_n) * σi
+        end
+
+        # add sample mean
+        for i in 1:p
+            m = 0.0f0
+            for j in 1:n
+                m += x[i,j]
+            end
+            m /= n
+            μ[i] += m
+        end
+
+        # sample x
+
+        Ωμ = block.g
+        for block in blocks
+            mul!(Ωμ, block.Ω, view(μ, block.span))
+
+            x_μ = block.h
+
+            for j in 1:n
+                randn!(block.z)
+                x_block = view(x, block.span, j)
+
+                x_Ω = block.A
+                copy!(x_Ω, block.Ω)
+                for k in 1:block.p
+                    x_Ω[k,k] += qω[block.span.start+k-1, j]
+                end
+
+                x_ΩLU = cholesky!(x_Ω)
+
+                # dram zero centered multivariate normal
+                x_ΩU = block.U
+                copy!(x_ΩU.data, x_ΩLU.U.data)
+                LinearAlgebra.inv!(x_ΩU)
+                ΩUinv = x_ΩU
+                mul!(x_block, ΩUinv, block.z)
+
+                # compute the mean
+                LinearAlgebra.inv!(x_ΩLU)
+                x_ΣLU = x_ΩLU
+
+                wμ = block.f
+                for i in 1:block.p
+                    wμ[i] = Ωμ[i] + qω[block.span.first+i-1, j] * qμ[block.span.first+i-1, j]
+                end
+
+                mul!(x_μ, x_ΣLU, wμ)
+                x_block .+= x_μ
+            end
+        end
+
+        for i in 1:num_nonblocked
+            z = randn(Float32)
+            ω_x = ω_diag[i] + qω[nonblocked_offset+i]
+            σ_x = sqrt(1/ω_x)
+
+            wμ =
+                qω[nonblocked_offset+i] * qμ[nonblocked_offset+i] +
+                ω_diag[i] * μ[nonblocked_offset+i]
+            μ_x = (1/ω_x) * wμ
+
+            x[nonblocked_offset+i] = μ_x + z*σ_x
+        end
+
+        copy!(y, x)
+        y .-= μ
+
+        if it > num_burnin
+            # TODO: record.
+            # what we really want to know is which entries in the precision matrix
+            # are probably non-zero. (either very probably to be positive or very
+            # probably to be negative.)
+        end
+    end
 end
 
 
 
-Ωtrue = [
-    20.0 -15.0 0.0 0.0
-    -15.0 20.0 0.0 0.0
-    0.0 0.0 20.0 0.0
-    0.0 0.0 0.0 20.0 ]
+# Ωtrue = [
+#     20.0 -15.0 0.0 0.0
+#     -15.0 20.0 0.0 0.0
+#     0.0 0.0 20.0 0.0
+#     0.0 0.0 0.0 20.0 ]
 
-# Ωtrue = ident(4)
+Ωtrue = ident(1000)
 
 Σtrue = inv(Ωtrue)
 
@@ -318,10 +511,21 @@ block = GHSBlock(1, size(X, 2), n)
 update_S!(block, X)
 @show size(block.S)
 
-for _ in 1:1000
-    sample!(block, 1.0f0)
-    @show block.Ω
-    @show block.Λ
-end
+BLAS.set_num_threads(8)
+sample!(block, 1.0f0)
+@time sample!(block, 1.0f0)
+@time sample!(block, 1.0f0)
+@time sample!(block, 1.0f0)
+@time sample!(block, 1.0f0)
+# @profile sample!(block, 1.0f0)
+# Profile.print()
+
+# for _ in 1:10
+#     sample!(block, 1.0f0)
+#     @show extrema(block.Ω)
+#     @show extrema(block.Σ)
+#     # @show block.Ω
+#     # @show block.Λ
+# end
 
 

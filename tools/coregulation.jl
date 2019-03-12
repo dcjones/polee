@@ -21,6 +21,8 @@ using StatsBase
 using InteractiveUtils
 using SIMD
 
+include("graphical-horseshoe.jl")
+
 
 function read_splice_feature_names(num_features)
     db = SQLite.DB("genes.db")
@@ -103,7 +105,7 @@ attempt to estimate a full precision matrix.
 The heuristic we implement here is to exclude features that aren't
 siginificantly correlated with another feature.
 """
-function filter_features(qx_loc, qx_scale)
+function find_components(qx_loc, qx_scale)
     @assert size(qx_loc) == size(qx_scale)
     num_samples, n = size(qx_loc)
 
@@ -146,9 +148,7 @@ function filter_features(qx_loc, qx_scale)
     @show maximum(map(length, components))
     # @show collect(map(length, components))
 
-    # TODO: group into components
-
-    exit()
+    return components
 end
 
 
@@ -298,6 +298,39 @@ function filter_features_i(
 end
 
 
+function write_graphviz(filename, edges, readable_labels)
+    out = open(filename, "w")
+    println(out, "graph coregulation {")
+    println(out, "    node [shape=plaintext];")
+
+    max_abs_ω = 0.0f0
+    for (u, v, ω) in edges
+        max_abs_ω = max(max_abs_ω, ω)
+    end
+
+    used_node_ids = Set{Int}()
+    for (u, v, ω) in edges
+        push!(used_node_ids, u)
+        push!(used_node_ids, v)
+    end
+
+    for id in used_node_ids
+        gene_name = readable_labels[id]
+        println(out, "    node", id, " [label=\"", gene_name, "\"];")
+    end
+
+    for (u, v, ω) in edges
+        println(
+            out, "    node", u, " -- node", v,
+            " [color=", ω > 0.0 ? "darkgoldenrod2" : "dodgerblue4",
+            ", penwidth=", 1 + 4*abs(ω)/max_abs_ω,
+            "];")
+    end
+    println(out, "}")
+    close(out)
+end
+
+
 function main()
     # read specification
     spec = YAML.load_file(ARGS[1])
@@ -408,6 +441,10 @@ function main()
             end
         end
 
+        # TODO: we need to reset the graph here to save space, but
+        # have to re-add the likelihood approximation parameters.
+        # Polee.tf[:reset_default_graph]()
+
         (num_features,
         splice_feature_idxs, splice_feature_transcript_idxs,
         # TODO: exclude MT, X, Y
@@ -467,18 +504,21 @@ function main()
     @show size(qx_splice_loc_subset)
 
     # Merge gene expression and splicing features
-    qx_merged_loc = hcat(qx_loc_subset, qx_splice_loc_subset)
-    qx_merged_scale = hcat(qx_scale_subset, qx_splice_scale_subset)
-
-    specific_labels = vcat(gene_ids, splice_labels)
-    readable_labels = vcat(gene_names, splice_labels)
 
 
-    # qx_merged_loc = qx_loc_subset
-    # qx_merged_scale = qx_scale_subset
 
-    # specific_labels = gene_ids
-    # readable_labels = gene_names
+    # qx_merged_loc = hcat(qx_loc_subset, qx_splice_loc_subset)
+    # qx_merged_scale = hcat(qx_scale_subset, qx_splice_scale_subset)
+
+    # specific_labels = vcat(gene_ids, splice_labels)
+    # readable_labels = vcat(gene_names, splice_labels)
+
+
+    qx_merged_loc = qx_loc_subset
+    qx_merged_scale = qx_scale_subset
+
+    specific_labels = gene_ids
+    readable_labels = gene_names
 
     # qx_merged_loc = Float32[
     #     -1  -1
@@ -527,12 +567,22 @@ function main()
     specific_labels = specific_labels[idx]
     readable_labels = readable_labels[idx]
 
-    @time filter_idx = filter_features(qx_merged_loc, qx_merged_scale)
-    @show sum(filter_idx)
-    # @profile filter_features(qx_merged_loc, qx_merged_scale)
-    # Profile.print()
-    exit()
+    # @time components = find_components(qx_merged_loc, qx_merged_scale)
+    # sample_gaussian_graphical_model(qx_merged_loc, qx_merged_scale, components)
 
+
+    # subset_idx = 1:30000
+    # @time components = find_components(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx])
+    # edges = sample_gaussian_graphical_model(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx], components)
+
+    @time components = find_components(qx_merged_loc, qx_merged_scale)
+    sample_gaussian_graphical_model(qx_merged_loc, qx_merged_scale, components)
+
+    @show length(edges)
+    write_graphviz("coexpression-graph.dot", edges, readable_labels)
+
+    exit()
+    #################### old stuff
 
     # qx_merged_loc = qx_loc_subset
     # qx_merged_scale = qx_scale_subset

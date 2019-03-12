@@ -1,5 +1,6 @@
 
 using Distributions
+using StatsFuns
 using LinearAlgebra
 using Profile
 
@@ -31,6 +32,13 @@ struct GHSBlock
 
     a::Vector{Float32} # p-1 length intermediate value
     β::Vector{Float32}
+
+    # keeping track of number of iterations that Ω entries pass the edge filter
+    Ω_pos_filter_count::Matrix{Int}
+    Ω_neg_filter_count::Matrix{Int}
+
+    # posterior mean
+    Ω_post_mean::Matrix{Float32}
 
     # intermediate arrays for drawing samples
     A::Matrix{Float32} # (p x p)
@@ -92,6 +100,13 @@ function GHSBlock(i::Int, j::Int, n::Int)
         Array{Float32}(undef, p-1),
         Array{Float32}(undef, p-1),
 
+        # Ω_filter_count
+        zeros(Int, (p, p)),
+        zeros(Int, (p, p)),
+
+        # posterior mean
+        zeros(Float32, (p, p)),
+
         # A, z
         Array{Float32}(undef, (p, p)),
         Array{Float32}(undef, p),
@@ -103,8 +118,8 @@ end
 
 
 function update_S!(block, X)
-    Xblock = view(X, :, block.span)
-    mul!(block.S, transpose(Xblock), Xblock)
+    Xblock = view(X, block.span, :)
+    mul!(block.S, Xblock, transpose(Xblock))
 end
 
 
@@ -236,7 +251,7 @@ function sample!(block::GHSBlock, τ2)
         load_rowcol!(νi, Ν, i)
 
         # sample γ
-        γ = rand(Gamma(n/2+1, 2/S[i,i]))
+        γ = gammarand(n/2+1, 2/S[i,i])
 
         # sample β
         for u in 1:p-1, v in u:p-1
@@ -248,7 +263,9 @@ function sample!(block::GHSBlock, τ2)
             Cinv[u,v] = S[i,i]*Ωinvi[u,v]
         end
         for u in 1:p-1
-            Cinv[u,u] += inv(λi[u] * τ2)
+            # can't let this get too small or we can end up with nans
+            scale = max(1e-8, λi[u] * τ2)
+            Cinv[u,u] += inv(scale)
         end
         symmetrize_from_upper!(Cinv)
 
@@ -256,7 +273,8 @@ function sample!(block::GHSBlock, τ2)
         # tensorflow, we should just compute cholesky in the GPU
         Cinv_chol = cholesky!(Cinv)
         randn!(β)
-        ldiv!(Cinv_chol, β)
+        # ldiv!(Cinv_chol, β) # FIXME: seems like this was mistake
+        ldiv!(Cinv_chol.U, β)
 
         ldiv!(Cinv_chol, si)
         neg_μ_β = si
@@ -276,14 +294,11 @@ function sample!(block::GHSBlock, τ2)
         # sample λ and ν
         for u in 1:p-1
             h = u < i ? u : u + 1
-            scale = 1.0f0/νi[u] + Ω[i,h]^2/(2*τ^2)
-            λi[u] = rand(InverseGamma(1.0, scale))
-
-            # TODO: these local shrinkage parameters can get too small
-            # causing things to break. We should threshold them somehow.
+            scale = 1.0f0/νi[u] + Ω[i,h]^2/(2*τ2)
+            λi[u] = invgammarand(1.0, scale)
 
             scale = 1.0f0 + 1.0f0/λi[u]
-            νi[u] = rand(InverseGamma(1.0, scale))
+            νi[u] = invgammarand(1.0, scale)
         end
 
         # update Σ
@@ -309,12 +324,27 @@ function sample!(block::GHSBlock, τ2)
 end
 
 
-function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vector{Int}})
+"""
+A little patch since there is no Float32 version of this right now.
+"""
+function gammarand(α::Real, θ::Real)
+    return Float32(StatsFuns.RFunctions.gammarand(Float64(α), Float64(θ)))
+end
+
+
+function invgammarand(α::Real, θ::Real)
+    return Float32(1 / StatsFuns.RFunctions.gammarand(Float64(α), Float64(1/θ)))
+end
+
+
+function sample_gaussian_graphical_model(
+        qx_loc, qx_scale, components::Vector{Vector{Int}},
+        edge_sig_pr=0.9, edge_sig_ω=2.0)
 
     # using the notation of the Li et al paper here:
     # n: number of observations
     # p: dimensionality
-    n, p = size(qx_mu)
+    n, p = size(qx_loc)
     sqrt_n = Float32(sqrt(n))
 
     # indexes occuring in a block
@@ -323,24 +353,30 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
     # permutation of the indexs of qx_mu, qx_scale used for sampling
     reorder = Int[]
 
+    @show p
+
     blocks = GHSBlock[]
     for component in components
         @assert !isempty(component)
         block_i = length(reorder)+1
         for idx in component
             push!(reorder, idx)
+            @assert idx ∉ block_indexes
             push!(block_indexes, idx)
         end
         block_j = length(reorder)
         push!(blocks, GHSBlock(block_i, block_j, n))
     end
 
+    # TODO: Why bother with any of the diagonal elements. We don't have to
+    # consider them and that can't produce any edges. Am I a fucking idiot?
+
     # find diagonal elements not occuring in blocks
     num_nonblocked = 0
     nonblocked_offset = length(reorder)
     for i in 1:p
         if i ∉ block_indexes
-            push!(reorder)
+            push!(reorder, i)
             num_nonblocked += 1
         end
     end
@@ -353,16 +389,21 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
     qμ = Array{Float32}(undef, (p, n))
     qω = Array{Float32}(undef, (p, n))
     for i in 1:p, j in 1:n
-        qμ[i,j] = qx_mu[j, reorder[i]]
+        qμ[i,j] = qx_loc[j, reorder[i]]
         qω[i,j] = 1.0f0 / qx_scale[j, reorder[i]]^2
     end
 
     # shape parameter for sampling τ2
-    τ2_shape = (Float32(binomial(p, 2)) + 1.0f0)/2.0f0
+    # τ2_shape = (Float32(binomial(p, 2)) + 1.0f0)/2.0f0
+    τ2_shape = 0.0f0
+    for block in blocks
+        τ2_shape += Float32(binomial(block.p, 2))
+    end
+    τ2_shape = (τ2_shape + 1.0f0)/2.0f0
 
     # expression estimates
-    μ = mean(qx_mu, dims=1)[1,:]
-    x = copy(qx_mu)
+    μ = mean(qμ, dims=2)[:,1] # (p,)
+    x = copy(qμ) # (p,n)
     y = x .- μ # this is always x .- μ
 
     τ2 = 1.0f0
@@ -372,6 +413,8 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
     num_iterations = 100
 
     for it in 1:num_burnin+num_iterations
+        @show it
+
         # sample precision matrix blockes
         for block in blocks
             update_S!(block, y)
@@ -384,7 +427,7 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
             for j in 1:n
                 sii += y[nonblocked_offset+i, j]^2
             end
-            ω_diag[i] = rand(Gamma(n/2.0f0+1.0f0, 2.0f0/sii))
+            ω_diag[i] = gammarand(n/2.0f0+1.0f0, 2.0f0/sii)
         end
 
         # sample τ and ξ
@@ -397,8 +440,10 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
             end
         end
 
-        τ2 = rand(InverseGamma(τ2_shape, τ2_scale))
-        ξ = rand(InverseGamma(1.0f0, 1.0f0 + 1.0f0/τ2))
+        τ2 = invgammarand(τ2_shape, τ2_scale)
+        @show τ2
+
+        ξ = invgammarand(1.0f0, 1.0f0 + 1.0f0/τ2)
 
         # sample μ
 
@@ -428,8 +473,8 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
 
         # sample x
 
-        Ωμ = block.g
         for block in blocks
+            Ωμ = block.g
             mul!(Ωμ, block.Ω, view(μ, block.span))
 
             x_μ = block.h
@@ -454,15 +499,12 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
                 mul!(x_block, ΩUinv, block.z)
 
                 # compute the mean
-                LinearAlgebra.inv!(x_ΩLU)
-                x_ΣLU = x_ΩLU
-
                 wμ = block.f
                 for i in 1:block.p
-                    wμ[i] = Ωμ[i] + qω[block.span.first+i-1, j] * qμ[block.span.first+i-1, j]
+                    wμ[i] = Ωμ[i] + qω[block.span.start+i-1, j] * qμ[block.span.start+i-1, j]
                 end
 
-                mul!(x_μ, x_ΣLU, wμ)
+                ldiv!(x_μ, x_ΩLU, wμ)
                 x_block .+= x_μ
             end
         end
@@ -484,48 +526,82 @@ function sample_gaussian_graphical_model(qx_mu, qx_scale, components::Vector{Vec
         y .-= μ
 
         if it > num_burnin
-            # TODO: record.
-            # what we really want to know is which entries in the precision matrix
-            # are probably non-zero. (either very probably to be positive or very
-            # probably to be negative.)
+            for block in blocks
+                block.Ω_post_mean .+= block.Ω
+                for i in 1:block.p, j in 1:block.p
+                    if block.Ω[i,j] <= -edge_sig_ω
+                        block.Ω_neg_filter_count[i,j] += 1
+                    elseif block.Ω[i,j] >= edge_sig_ω
+                        block.Ω_pos_filter_count[i,j] += 1
+                    end
+                end
+            end
         end
     end
+
+    # find and record edges
+    edges = Tuple{Int,Int,Float32}[]
+    for block in blocks
+        block.Ω_post_mean ./= num_iterations
+        for i in 1:block.p, j in i+1:block.p
+            u = reorder[block.span.start+i-1]
+            v = reorder[block.span.start+j-1]
+            ωij_post_mean = block.Ω_post_mean[i,j]
+
+            if block.Ω_neg_filter_count[i,j]/num_iterations >= edge_sig_pr ||
+               block.Ω_pos_filter_count[i,j]/num_iterations >= edge_sig_pr
+                push!(edges, (u, v, ωij_post_mean))
+            end
+        end
+    end
+
+    return edges
 end
 
 
 
-# Ωtrue = [
-#     20.0 -15.0 0.0 0.0
-#     -15.0 20.0 0.0 0.0
-#     0.0 0.0 20.0 0.0
-#     0.0 0.0 0.0 20.0 ]
+if false
+    Ωtrue = [
+        20.0 -15.0 0.0 0.0
+        -15.0 20.0 0.0 0.0
+        0.0 0.0 20.0 0.0
+        0.0 0.0 0.0 20.0 ]
 
-Ωtrue = ident(1000)
+    # Ωtrue = ident(1000)
 
-Σtrue = inv(Ωtrue)
+    p = size(Ωtrue, 1)
 
-n = 50
-X = transpose(rand(MultivariateNormal(Σtrue), n))
+    Σtrue = inv(Ωtrue)
+    @show Σtrue
 
-block = GHSBlock(1, size(X, 2), n)
-update_S!(block, X)
-@show size(block.S)
+    n = 500
+    X = rand(MultivariateNormal(Σtrue), n)
 
-BLAS.set_num_threads(8)
-sample!(block, 1.0f0)
-@time sample!(block, 1.0f0)
-@time sample!(block, 1.0f0)
-@time sample!(block, 1.0f0)
-@time sample!(block, 1.0f0)
-# @profile sample!(block, 1.0f0)
-# Profile.print()
+    # Σ_sample = (1/(n-1)) * (X * X')
+    # Ω_sample = inv(Σ_sample)
+    # @show Σ_sample
+    # @show Ω_sample
+    # exit()
 
-# for _ in 1:10
-#     sample!(block, 1.0f0)
-#     @show extrema(block.Ω)
-#     @show extrema(block.Σ)
-#     # @show block.Ω
-#     # @show block.Λ
-# end
+    block = GHSBlock(1, p, n)
+    update_S!(block, X)
+    @show block.S
 
+    # BLAS.set_num_threads(8)
+    # sample!(block, 1.0f0)
+    # @time sample!(block, 1.0f0)
+    # @time sample!(block, 1.0f0)
+    # @time sample!(block, 1.0f0)
+    # @time sample!(block, 1.0f0)
+    # @profile sample!(block, 1.0f0)
+    # Profile.print()
+
+    for _ in 1:10
+        sample!(block, 1.0f0)
+        # @show extrema(block.Ω)
+        # @show extrema(block.Σ)
+        @show block.Ω
+        @show block.Λ
+    end
+end
 

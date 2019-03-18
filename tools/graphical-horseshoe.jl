@@ -1,8 +1,12 @@
 
+import Polee
 using Distributions
 using StatsFuns
 using LinearAlgebra
 using Profile
+using PyCall
+
+include("mkl-cholesky.jl")
 
 # Gibbs sampler for a gaussian graphical model with graphical horseshoe prior.
 
@@ -124,6 +128,17 @@ end
 
 
 
+
+"""
+Compute cholesky decomposition using tensorflow.
+"""
+function tf_cholesky(sess, X::Matrix{Float32})
+    factors = sess[:run](Polee.tf[:cholesky](X))
+    return Cholesky(factors, 'L', 0)
+end
+
+
+
 """
 Compute ith principal minor (matrix formed by deleting ith row and column)
 and store in Xi.
@@ -218,7 +233,7 @@ function randn!(zs::Vector{T}) where {T}
 end
 
 
-function sample!(block::GHSBlock, τ2)
+function sample!(block::GHSBlock, τ2, exclusions)
     p = block.p
     n = block.n
 
@@ -269,11 +284,11 @@ function sample!(block::GHSBlock, τ2)
         end
         symmetrize_from_upper!(Cinv)
 
-        # TODO: this is the bottleneck. Since we already require
-        # tensorflow, we should just compute cholesky in the GPU
-        Cinv_chol = cholesky!(Cinv)
+        # Cinv_chol = cholesky!(Cinv)
+        Cinv_chol = mkl_cholesky!(Cinv)
+        # Cinv_chol = tf_cholesky(sess, Cinv)
+
         randn!(β)
-        # ldiv!(Cinv_chol, β) # FIXME: seems like this was mistake
         ldiv!(Cinv_chol.U, β)
 
         ldiv!(Cinv_chol, si)
@@ -299,6 +314,12 @@ function sample!(block::GHSBlock, τ2)
 
             scale = 1.0f0 + 1.0f0/λi[u]
             νi[u] = invgammarand(1.0, scale)
+
+            # forced extreme shrinkage of precision entries in the
+            # excluded set
+            if (block.span.start + i - 1, block.span.start + h - 1) ∈ exclusions
+                λi[u] = 1e-8
+            end
         end
 
         # update Σ
@@ -339,7 +360,11 @@ end
 
 function sample_gaussian_graphical_model(
         qx_loc, qx_scale, components::Vector{Vector{Int}},
+        exclusions::Set{Tuple{Int, Int}},
         edge_sig_pr=0.9, edge_sig_ω=2.0)
+
+    # Pseduo POINT ESTIMATES!!!
+    # fill!(qx_scale, 1f-9)
 
     # using the notation of the Li et al paper here:
     # n: number of observations
@@ -352,8 +377,6 @@ function sample_gaussian_graphical_model(
 
     # permutation of the indexs of qx_mu, qx_scale used for sampling
     reorder = Int[]
-
-    @show p
 
     blocks = GHSBlock[]
     for component in components
@@ -382,6 +405,23 @@ function sample_gaussian_graphical_model(
     end
     @assert length(reorder) == p
 
+    # reorder exclusion tuples
+    reorder_rev = Array{Int}(undef, p)
+    for (i, j) in enumerate(reorder)
+        reorder_rev[j] = i
+    end
+
+    # @show reorder_rev[27106]
+    # @show reorder_rev[99565]
+
+    exclusions_reorder = Set{Tuple{Int, Int}}()
+    for (a, b) in exclusions
+        if a <= p && b <= p
+            push!(exclusions_reorder, (reorder_rev[a], reorder_rev[b]))
+        end
+    end
+    exclusions = exclusions_reorder
+
     # precision parameters for diagonal (non-blocked) elements
     ω_diag = ones(Float32, num_nonblocked)
 
@@ -409,8 +449,8 @@ function sample_gaussian_graphical_model(
     τ2 = 1.0f0
     ξ = 1.0f0
 
-    num_burnin = 100
-    num_iterations = 100
+    num_burnin = 200
+    num_iterations = 200
 
     for it in 1:num_burnin+num_iterations
         @show it
@@ -418,7 +458,7 @@ function sample_gaussian_graphical_model(
         # sample precision matrix blockes
         for block in blocks
             update_S!(block, y)
-            sample!(block, τ2)
+            sample!(block, τ2, exclusions)
         end
 
         # sample precision for nonblocked (diagonal) elements

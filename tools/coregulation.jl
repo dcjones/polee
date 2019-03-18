@@ -33,9 +33,46 @@ function read_splice_feature_names(num_features)
             string(row.type, ":", row.seqname, ":",
                 min(row.included_first, row.excluded_first),
                 "-", max(row.included_last, row.excluded_last))
+            # string(row.type, ":", row.seqname, ":",
+            #     row.included_first, ",", row.excluded_first,
+            #     "-", row.included_last, ",", row.excluded_last)
     end
 
     return feature_names
+end
+
+
+"""
+Return a set of feature_num, gene_num pairs where (a,b) is in the set iff
+gene b involves feature a.
+"""
+function read_splice_feature_gene_idxs()
+    db = SQLite.DB("genes.db")
+    splice_gene_idxs = Set{Tuple{Int, Int}}()
+
+    qry1 =
+        """
+        select distinct feature_num, gene_num
+        from splicing_feature_including_transcripts
+        join transcripts
+        on splicing_feature_including_transcripts.transcript_num == transcripts.transcript_num;
+        """
+
+    qry2 =
+        """
+        select distinct feature_num, gene_num
+        from splicing_feature_excluding_transcripts
+        join transcripts
+        on splicing_feature_excluding_transcripts.transcript_num == transcripts.transcript_num;
+        """
+
+    for qry in [qry1, qry2]
+        for row in SQLite.Query(db, qry)
+            push!(splice_gene_idxs, (row.feature_num, row.gene_num))
+        end
+    end
+
+    return splice_gene_idxs
 end
 
 
@@ -53,6 +90,10 @@ function randn!(loc, scale, col, out_row, out)
 end
 
 
+"""
+Return an array of arrays giving all connected components in the graph with more
+than one vertex.
+"""
 function connected_components(edges, n)
     visited = fill(false, n)
     num_visited = 0
@@ -473,112 +514,195 @@ function main()
 
     # splice_labels = [string("splice", i) for i in 1:size(qx_splice_loc, 2)]
     splice_labels = read_splice_feature_names(size(qx_splice_loc, 2))
+    splice_gene_idxs = read_splice_feature_gene_idxs()
 
-    expression_mode = exp.(qx_loc)
-    expression_mode ./= sum(expression_mode, dims=2)
-    # gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
-    # gene_idx = maximum(expression_mode, dims=1)[1,:] .> 1e-5
-    gene_idx = 1:size(expression_mode, 2)
-
-    qx_loc_subset = qx_loc[:,gene_idx]
-    qx_scale_subset = qx_scale[:,gene_idx]
-
-
-    gene_names = gene_names[gene_idx]
-    gene_ids = gene_ids[gene_idx]
     gene_names = [
         isempty(gene_name) ? gene_id : gene_name
         for (gene_id, gene_name) in zip(gene_ids, gene_names)]
 
-
-    # splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.2
-    # splice_idx = minimum(qx_splice_scale, dims=1)[1,:] .< 0.2
-    splice_idx = 1:size(qx_splice_scale, 2)
-
-    qx_splice_loc_subset = qx_splice_loc[:,splice_idx]
-    qx_splice_scale_subset = qx_splice_scale[:,splice_idx]
-
-    splice_labels = splice_labels[splice_idx]
-
-    @show size(qx_loc_subset)
-    @show size(qx_splice_loc_subset)
-
     # Merge gene expression and splicing features
+    qx_merged_loc = hcat(qx_loc, qx_splice_loc)
+    qx_merged_scale = hcat(qx_scale, qx_splice_scale)
+
+    specific_labels = vcat(gene_ids, splice_labels)
+    readable_labels = vcat(gene_names, splice_labels)
+
+    # make a big set of pairs, where if (i,j) is in the
+    # set, the precision should be shrunk to 0.
+    exclusions = Set{Tuple{Int, Int}}()
+    gene_splice_features = Dict{Int, Vector{Int}}()
+    for (splice_feature_num, gene_num) in splice_gene_idxs
+        if !haskey(gene_splice_features, gene_num)
+            gene_splice_features[gene_num] = []
+        end
+        push!(gene_splice_features[gene_num], splice_feature_num)
+    end
+
+    @show get(gene_splice_features, 5154, Int[])
+    @show get(gene_splice_features, 5138, Int[])
 
 
+    for (gene_num, splice_feature_nums) in gene_splice_features
+        i = gene_num
 
-    # qx_merged_loc = hcat(qx_loc_subset, qx_splice_loc_subset)
-    # qx_merged_scale = hcat(qx_scale_subset, qx_splice_scale_subset)
+        # exclude edges between genes and their splice features
+        for splice_feature_num in splice_feature_nums
+            j = size(qx_loc, 2) + splice_feature_num
+            push!(exclusions, (i, j))
+            push!(exclusions, (j, i))
+        end
 
-    # specific_labels = vcat(gene_ids, splice_labels)
-    # readable_labels = vcat(gene_names, splice_labels)
+        for splice_feature_num_a in splice_feature_nums
+            for splice_feature_num_b in splice_feature_nums
+                if splice_feature_num_a == splice_feature_num_b
+                    continue
+                end
+
+                ja = size(qx_loc, 2) + splice_feature_num_a
+                jb = size(qx_loc, 2) + splice_feature_num_b
+
+                push!(exclusions, (ja, jb))
+            end
+        end
+    end
+
+    println(length(exclusions), " excluded pairs")
 
 
-    qx_merged_loc = qx_loc_subset
-    qx_merged_scale = qx_scale_subset
-
-    specific_labels = gene_ids
-    readable_labels = gene_names
-
-    # qx_merged_loc = Float32[
-    #     -1  -1
-    #     -1  -1
-    #     -1  -1
-    #     -1  -1
-    #     -1  -1
-    #     -1  -1
-    #     -1  -1
-    #     -1  -1
-    #      1   1
-    #      1   1
-    #      1   1
-    #      1   1
-    #      1   1
-    #      1   1
-    #      1   1
-    #      1   1 ]
-    # qx_merged_scale = Float32[
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0
-    #     1.0  1.0 ]
-
-    # specific_labels = ["A", "B"]
-    # readable_labels = ["A", "B"]
 
 
     # Shuffle so we can test on more interesting subsets
+
+
+
+
+    # feature_num_a = (1:size(qx_splice_loc, 2))[splice_labels .== "cassette_exon:2:206596163-206617578"][1]
+    # # feature_num_b = (1:size(qx_splice_loc, 2))[splice_labels .== "retained_intron:1:-1-111760986"][1]
+
+    # @show feature_num_a
+
+    # @show qx_splice_loc[1:10, feature_num_a]
+    # # @show qx_splice_loc[1:10, feature_num_b]
+
+    # ja = size(qx_loc, 2) + feature_num_a
+    # # jb = size(qx_loc, 2) + feature_num_b
+
+    # for (a, b) in exclusions
+    #     if a == ja || b == ja
+    #         @show (a, b)
+    #     end
+    # end
+
+    # # @show (ja, jb) ∈ exclusions
+    # # @show (jb, ja) ∈ exclusions
+
+    # # @show qx_merged_loc[1:10, ja]
+    # # @show qx_merged_loc[1:10, jb]
+
+    # # @show feature_num_b
+
+    # exit()
+
+
+    # # FIXME: these should be excluded but seem not to be
+    # feature_num_a = (1:size(qx_splice_loc, 2))[splice_labels .== "cassette_exon:2:206596163-206617578"]
+    # feature_num_b = (1:size(qx_loc, 2))[gene_names .== "ADAM23"]
+
+    # @show gene_names[5154]
+    # @show gene_names[5138]
+
+    # exit()
+
+    # @show feature_num_a
+    # @show feature_num_b
+
+    # # ja = idx_rev[size(qx_loc, 2) .+ feature_num_a]
+    # # jb = idx_rev[feature_num_b]
+
+    # ja = size(qx_loc, 2) .+ feature_num_a
+    # for (a, b) in exclusions
+    #     if a == ja || b == ja
+    #         @show (a,b)
+    #     end
+    # end
+
+    # jb = feature_num_b
+
+    # @show ja
+    # @show jb
+
+    # @show readable_labels[ja]
+    # @show readable_labels[jb]
+
+    # for ja_i in ja, jb_i in jb
+    #     @show (ja_i, jb_i)
+    #     @show (ja_i, jb_i) ∈ exclusions
+    #     @show (jb_i, ja_i) ∈ exclusions
+    # end
+
+    # exit()
+
+
+
+
     Random.seed!(1234)
     idx = shuffle(1:size(qx_merged_loc, 2))
+
+    # reassign indexes for exclusions set
+    idx_rev = Array{Int}(undef, size(qx_merged_loc, 2))
+    for (i, j) in enumerate(idx)
+        idx_rev[j] = i
+    end
+    exclusions_shuffled = Set{Tuple{Int, Int}}()
+    for (a, b) in exclusions
+        push!(exclusions_shuffled, (idx_rev[a], idx_rev[b]))
+    end
+    exclusions = exclusions_shuffled
+
     qx_merged_loc = qx_merged_loc[:,idx]
     qx_merged_scale = qx_merged_scale[:,idx]
     specific_labels = specific_labels[idx]
     readable_labels = readable_labels[idx]
 
+
+
+
+
     # @time components = find_components(qx_merged_loc, qx_merged_scale)
     # sample_gaussian_graphical_model(qx_merged_loc, qx_merged_scale, components)
 
 
-    # subset_idx = 1:30000
+    subset_idx = 1:30000
+    # components = find_components(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx])
+    # @profile edges = sample_gaussian_graphical_model(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx], components)
+    # Profile.print()
+    # exit()
+
     # @time components = find_components(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx])
-    # edges = sample_gaussian_graphical_model(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx], components)
+    # @time edges = sample_gaussian_graphical_model(
+    #     qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx],
+    #     components, exclusions)
 
     @time components = find_components(qx_merged_loc, qx_merged_scale)
-    sample_gaussian_graphical_model(qx_merged_loc, qx_merged_scale, components)
+    edges = sample_gaussian_graphical_model(
+        qx_merged_loc, qx_merged_scale, components, exclusions)
 
     @show length(edges)
+
+    for (a, b, ω) in edges
+        # if (a == ja && b == jb) || (a == jb && b == ja)
+        # if a == ja || b == ja
+        if readable_labels[a] == "ADAM23" || readable_labels[b] == "ADAM23"
+            println("FOUND QUESTIONABLE EDGE")
+            @show (a, b, ω)
+
+            # (a, b, ω) = (15255, 27456, -14.76821f0)
+            # But this is different than (ja, jb) = (27106, 99565)
+            #
+            # I'm so confused. Is there another index assigned to ADAM23?
+        end
+    end
+
     write_graphviz("coexpression-graph.dot", edges, readable_labels)
 
     exit()

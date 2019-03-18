@@ -947,6 +947,26 @@ end
 
 
 """
+Assign numbers to genes. Return a gene_id -> number dict.
+"""
+function assigne_gene_nums(ts, ts_metadata)
+    used_genes = Set{String}()
+    for t in ts
+        push!(used_genes, ts_metadata.gene_id[t.metadata.name])
+    end
+
+    gene_nums = Dict{String, Int}()
+    for (transcript_id, gene_id) in ts_metadata.gene_id
+        if gene_id in used_genes
+            get!(gene_nums, gene_id, length(gene_nums) + 1)
+        end
+    end
+
+    return gene_nums
+end
+
+
+"""
 Serialize a GFF3 file into sqlite3 database.
 """
 function write_transcripts(output_filename, transcripts, metadata)
@@ -955,10 +975,7 @@ function write_transcripts(output_filename, transcripts, metadata)
     # Gene Table
     # ----------
 
-    gene_nums = Dict{String, Int}()
-    for (transcript_id, gene_id) in metadata.gene_id
-        get!(gene_nums, gene_id, length(gene_nums) + 1)
-    end
+    gene_nums = assigne_gene_nums(transcripts, metadata)
 
     SQLite.execute!(db, "drop table if exists genes")
     SQLite.execute!(db,
@@ -1089,25 +1106,16 @@ Generate a m-by-n sparse 0/1 matrix F where m is the number of genes, and n
 is the number of transcripts, such that givin transcript expression y, Fy
 gives gene expression.
 """
-function gene_feature_matrix(ts::Transcripts, ts_metadata::TranscriptsMetadata)
-    # it's possible that there are genes in the metadata that have no
-    # transcripts, if transcripts are being blacklisted
-    used_genes = Set{String}()
-    for t in ts
-        push!(used_genes, ts_metadata.gene_id[t.metadata.name])
-    end
+function gene_feature_matrix(
+        ts::Transcripts, ts_metadata::TranscriptsMetadata)
 
-    gene_nums = Dict{String, Int}()
-    for (transcript_id, gene_id) in ts_metadata.gene_id
-        if gene_id ∈ used_genes
-            get!(gene_nums, gene_id, length(gene_nums) + 1)
-        end
-    end
+    gene_nums = assigne_gene_nums(ts, ts_metadata)
 
     I = Int[]
     J = Int[]
     for t in ts
-        gene_num = gene_nums[ts_metadata.gene_id[t.metadata.name]]
+        gene_id = ts_metadata.gene_id[t.metadata.name]
+        gene_num = gene_nums[gene_id]
         push!(I, gene_num)
         push!(J, t.metadata.id)
     end

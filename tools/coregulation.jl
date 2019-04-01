@@ -372,6 +372,16 @@ function write_graphviz(filename, edges, readable_labels)
 end
 
 
+function write_edgelist(filename, edges, readable_labels)
+    out = open(filename, "w")
+    for (u, v, ω) in edges
+        println(
+            out, "\"", readable_labels[u], "\",\"", readable_labels[v], "\",", ω)
+    end
+    close(out)
+end
+
+
 function main()
     # read specification
     spec = YAML.load_file(ARGS[1])
@@ -672,7 +682,8 @@ function main()
     # sample_gaussian_graphical_model(qx_merged_loc, qx_merged_scale, components)
 
 
-    subset_idx = 1:30000
+    # subset_idx = 1:30000
+
     # components = find_components(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx])
     # @profile edges = sample_gaussian_graphical_model(qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx], components)
     # Profile.print()
@@ -689,21 +700,22 @@ function main()
 
     @show length(edges)
 
-    for (a, b, ω) in edges
-        # if (a == ja && b == jb) || (a == jb && b == ja)
-        # if a == ja || b == ja
-        if readable_labels[a] == "ADAM23" || readable_labels[b] == "ADAM23"
-            println("FOUND QUESTIONABLE EDGE")
-            @show (a, b, ω)
+    # for (a, b, ω) in edges
+    #     # if (a == ja && b == jb) || (a == jb && b == ja)
+    #     # if a == ja || b == ja
+    #     if readable_labels[a] == "ADAM23" || readable_labels[b] == "ADAM23"
+    #         println("FOUND QUESTIONABLE EDGE")
+    #         @show (a, b, ω)
 
-            # (a, b, ω) = (15255, 27456, -14.76821f0)
-            # But this is different than (ja, jb) = (27106, 99565)
-            #
-            # I'm so confused. Is there another index assigned to ADAM23?
-        end
-    end
+    #         # (a, b, ω) = (15255, 27456, -14.76821f0)
+    #         # But this is different than (ja, jb) = (27106, 99565)
+    #         #
+    #         # I'm so confused. Is there another index assigned to ADAM23?
+    #     end
+    # end
 
     write_graphviz("coexpression-graph.dot", edges, readable_labels)
+    write_edgelist("coexpression-edges.csv", edges, readable_labels)
 
     exit()
     #################### old stuff

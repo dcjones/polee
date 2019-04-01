@@ -127,8 +127,6 @@ function update_S!(block, X)
 end
 
 
-
-
 """
 Compute cholesky decomposition using tensorflow.
 """
@@ -234,6 +232,10 @@ end
 
 
 function sample!(block::GHSBlock, τ2, exclusions)
+    # smallest, largest allowable λ values
+    λmin = 1f-5
+    λmax = 1f5
+
     p = block.p
     n = block.n
 
@@ -279,18 +281,17 @@ function sample!(block::GHSBlock, τ2, exclusions)
         end
         for u in 1:p-1
             # can't let this get too small or we can end up with nans
-            scale = max(1e-8, λi[u] * τ2)
+            scale = clamp(λi[u] * τ2, λmin, λmax) 
             Cinv[u,u] += inv(scale)
         end
         symmetrize_from_upper!(Cinv)
 
-        # Cinv_chol = cholesky!(Cinv)
+        #Cinv_chol = cholesky!(Cinv)
         Cinv_chol = mkl_cholesky!(Cinv)
         # Cinv_chol = tf_cholesky(sess, Cinv)
 
         randn!(β)
         ldiv!(Cinv_chol.U, β)
-
         ldiv!(Cinv_chol, si)
         neg_μ_β = si
         β .-= neg_μ_β
@@ -318,7 +319,7 @@ function sample!(block::GHSBlock, τ2, exclusions)
             # forced extreme shrinkage of precision entries in the
             # excluded set
             if (block.span.start + i - 1, block.span.start + h - 1) ∈ exclusions
-                λi[u] = 1e-8
+                λi[u] = λmin
             end
         end
 
@@ -363,8 +364,9 @@ function sample_gaussian_graphical_model(
         exclusions::Set{Tuple{Int, Int}},
         edge_sig_pr=0.9, edge_sig_ω=2.0)
 
+    # TODO: don't do this this way
     # Pseduo POINT ESTIMATES!!!
-    # fill!(qx_scale, 1f-9)
+    #fill!(qx_scale, 1f-9)
 
     # using the notation of the Li et al paper here:
     # n: number of observations
@@ -449,8 +451,8 @@ function sample_gaussian_graphical_model(
     τ2 = 1.0f0
     ξ = 1.0f0
 
-    num_burnin = 200
-    num_iterations = 200
+    num_burnin = 100
+    num_iterations = 100
 
     for it in 1:num_burnin+num_iterations
         @show it
@@ -492,7 +494,9 @@ function sample_gaussian_graphical_model(
             randn!(block.z)
             copy!(block.A, block.Σ)
             block.A .*= 1.0f0/n
-            U = cholesky!(block.A).U
+
+            #U = cholesky!(block.A).U
+            U = mkl_cholesky!(block.A).U
             mul!(view(μ, block.span), U, block.z)
         end
 

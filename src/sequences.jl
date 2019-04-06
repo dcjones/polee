@@ -42,7 +42,7 @@ function read_transcript_sequences_from_fasta!(ts, filename)
 
     for seqname in keys(ts.trees)
         if seqname ∉ seen_seqs
-            warn("FASTA file has sequence for ", seqname)
+            @warn string("FASTA file has sequence for ", seqname)
         end
     end
 

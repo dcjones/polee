@@ -213,22 +213,7 @@ function load_samples_hdf5(
         right_index_values,
         leaf_index_values]
 
-    # Set up tensorflow variables with placeholders to feed likelihood
-    # approximation parameters to inference.
-    variables = Dict{String, PyObject}()
-    init_feed_dict = Dict{Any, Any}()
-    for (name, val) in zip(var_names, var_values)
-        typ = eltype(val) == Float32 ? tf[:float32] : tf[:int32]
-        # sz = (batch_size, size(val)[2:end]...)
-        # sz = (nothing, size(val)[2:end]...)
-        sz = size(val)
-        var_init = tf[:placeholder](typ, shape=sz)
-        var = tf[:Variable](var_init, name=name, trainable=false)
-        variables[name] = var
-        init_feed_dict[var_init] = val
-    end
-
-    return LoadedSamples(
+    ls = LoadedSamples(
         efflen_values,
         x0_values,
         la_mu_values,
@@ -237,9 +222,50 @@ function load_samples_hdf5(
         left_index_values,
         right_index_values,
         leaf_index_values,
-        variables,
-        init_feed_dict,
+        Dict{String, Any}(),
+        Dict{Any, Any}(),
         Vector{String}[], String[])
+
+    create_tensorflow_variables!(ls)
+
+    return ls
+end
+
+
+function create_tensorflow_variables!(ls::LoadedSamples)
+    var_names = [
+        "efflen",
+        "la_mu",
+        "la_sigma",
+        "la_alpha",
+        "left_index",
+        "right_index",
+        "leaf_index"]
+
+    var_values = Any[
+        ls.efflen_values,
+        ls.la_mu_values,
+        ls.la_sigma_values,
+        ls.la_alpha_values,
+        ls.left_index,
+        ls.right_index,
+        ls.leaf_index]
+
+    # Set up tensorflow variables with placeholders to feed likelihood
+    # approximation parameters to inference.
+    empty!(ls.variables)
+    empty!(ls.init_feed_dict)
+
+    for (name, val) in zip(var_names, var_values)
+        typ = eltype(val) == Float32 ? tf[:float32] : tf[:int32]
+        # sz = (batch_size, size(val)[2:end]...)
+        # sz = (nothing, size(val)[2:end]...)
+        sz = size(val)
+        var_init = tf[:placeholder](typ, shape=sz)
+        var = tf[:Variable](var_init, name=name, trainable=false)
+        ls.variables[name] = var
+        ls.init_feed_dict[var_init] = val
+    end
 end
 
 

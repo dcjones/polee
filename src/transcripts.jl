@@ -199,7 +199,7 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
     end
 
     finish!(prog)
-    println("Read ", length(transcript_by_id), " transcripts")
+    println(stderr, "Read ", length(transcript_by_id), " transcripts")
     transcripts = IntervalCollection(transcript_by_id, true)
 
     # reassign transcript indexes to group by position

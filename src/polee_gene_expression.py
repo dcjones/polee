@@ -70,7 +70,7 @@ Use approximate feature expression likelihood to estimate posteriors.
 """
 def estimate_feature_expression(
         init_feed_dict, vars, num_samples, num_features, n,
-        feature_idxs, transcript_idxs, sess=None):
+        feature_idxs, transcript_idxs, sess=None, sigma0=4.0):
 
     if sess is None:
         sess = tf.Session()
@@ -81,13 +81,16 @@ def estimate_feature_expression(
 
     return estimate_feature_expression_from_normal_approx(
         init_feed_dict, vars, num_samples, num_features, n,
-        x_likelihood_loc, x_likelihood_scale, sess=sess)
+        x_likelihood_loc, x_likelihood_scale, sess=sess, sigma0=sigma0)
 
-
+"""
+If x_likelihood_loc and x_likelihood_scale are parameters to an approximated
+likelihood function for x, estimate x using a pooled mean.
+"""
 def estimate_feature_expression_from_normal_approx(
         init_feed_dict, vars, num_samples, num_features, n,
         x_likelihood_loc, x_likelihood_scale, sess=None,
-        mu0=None, sigma0=4.0):
+        softmax_x=True, mu0=None, sigma0=4.0):
 
     if sess is None:
         sess = tf.Session()
@@ -147,8 +150,9 @@ def estimate_feature_expression_from_normal_approx(
         qx=qx)
 
     approx_likelihood_dist = tfd.Normal(loc=x_likelihood_loc, scale=x_likelihood_scale)
-    approx_likelihood = tf.reduce_sum(approx_likelihood_dist.log_prob(
-        tf.log(tf.nn.softmax(qx))))
+
+    qx_ = tf.log(tf.nn.softmax(qx)) if softmax_x else qx
+    approx_likelihood = tf.reduce_sum(approx_likelihood_dist.log_prob(qx_))
 
     elbo = lp + approx_likelihood + entropy
 

@@ -75,7 +75,7 @@ def approximate_splicing_likelihood(
 
 def estimate_splicing_log_ratios(
         init_feed_dict, vars, num_samples, num_features, n,
-        feature_indices, antifeature_indices, sess=None):
+        feature_indices, antifeature_indices, sess=None, sigma0=2.0):
     if sess is None:
         sess = tf.Session()
 
@@ -86,4 +86,5 @@ def estimate_splicing_log_ratios(
     return estimate_feature_expression_from_normal_approx(
         init_feed_dict, vars, num_samples, num_features, n,
         x_likelihood_loc, x_likelihood_scale, sess=sess,
-        mu0=0.0, sigma0=2.0)
+        mu0=0.0, sigma0=sigma0, softmax_x=False)
+

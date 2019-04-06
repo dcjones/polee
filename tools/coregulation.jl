@@ -382,7 +382,7 @@ function write_edgelist(filename, edges, readable_labels)
 end
 
 
-function main()
+function main(use_point_estimates=false)
     # read specification
     spec = YAML.load_file(ARGS[1])
     if isempty(spec)
@@ -483,7 +483,7 @@ function main()
             loaded_samples.variables,
             num_samples, num_features, n,
             gene_idxs .- 1, transcript_idxs .- 1,
-            sess)
+            sess, sigma0=10.0)
 
         open("qx_params.csv", "w") do output
             println(output, size(qx_loc, 1), ",", size(qx_loc, 2))
@@ -492,13 +492,13 @@ function main()
             end
         end
 
-        # TODO: we need to reset the graph here to save space, but
-        # have to re-add the likelihood approximation parameters.
-        # Polee.tf[:reset_default_graph]()
+        # free up some space
+        Polee.tf[:reset_default_graph]()
+        sess = Polee.tf[:Session]()
+        Polee.create_tensorflow_variables!(loaded_samples)
 
         (num_features,
         splice_feature_idxs, splice_feature_transcript_idxs,
-        # TODO: exclude MT, X, Y
         splice_antifeature_idxs, splice_antifeature_transcript_idxs) =
             Polee.splicing_features(ts, ts_metadata, gene_db, alt_ends=false)
 
@@ -510,7 +510,7 @@ function main()
             loaded_samples.variables,
             num_samples, num_features, n,
             splice_feature_indices, splice_antifeature_indices,
-            sess)
+            sess, sigma0=10.0)
 
         open("qx_splice_params.csv", "w") do output
             println(output, size(qx_splice_loc, 1), ",", size(qx_splice_loc, 2))
@@ -547,10 +547,6 @@ function main()
         end
         push!(gene_splice_features[gene_num], splice_feature_num)
     end
-
-    @show get(gene_splice_features, 5154, Int[])
-    @show get(gene_splice_features, 5138, Int[])
-
 
     for (gene_num, splice_feature_nums) in gene_splice_features
         i = gene_num
@@ -655,24 +651,24 @@ function main()
 
 
 
-    Random.seed!(1234)
-    idx = shuffle(1:size(qx_merged_loc, 2))
+    #Random.seed!(1234)
+    #idx = shuffle(1:size(qx_merged_loc, 2))
 
-    # reassign indexes for exclusions set
-    idx_rev = Array{Int}(undef, size(qx_merged_loc, 2))
-    for (i, j) in enumerate(idx)
-        idx_rev[j] = i
-    end
-    exclusions_shuffled = Set{Tuple{Int, Int}}()
-    for (a, b) in exclusions
-        push!(exclusions_shuffled, (idx_rev[a], idx_rev[b]))
-    end
-    exclusions = exclusions_shuffled
+    ## reassign indexes for exclusions set
+    #idx_rev = Array{Int}(undef, size(qx_merged_loc, 2))
+    #for (i, j) in enumerate(idx)
+        #idx_rev[j] = i
+    #end
+    #exclusions_shuffled = Set{Tuple{Int, Int}}()
+    #for (a, b) in exclusions
+        #push!(exclusions_shuffled, (idx_rev[a], idx_rev[b]))
+    #end
+    #exclusions = exclusions_shuffled
 
-    qx_merged_loc = qx_merged_loc[:,idx]
-    qx_merged_scale = qx_merged_scale[:,idx]
-    specific_labels = specific_labels[idx]
-    readable_labels = readable_labels[idx]
+    #qx_merged_loc = qx_merged_loc[:,idx]
+    #qx_merged_scale = qx_merged_scale[:,idx]
+    #specific_labels = specific_labels[idx]
+    #readable_labels = readable_labels[idx]
 
 
 
@@ -693,6 +689,13 @@ function main()
     # @time edges = sample_gaussian_graphical_model(
     #     qx_merged_loc[:, subset_idx], qx_merged_scale[:, subset_idx],
     #     components, exclusions)
+    #
+    #
+
+    # simulated point estimates by making the scale parameter tiny
+    if use_point_estimates
+        fill!(qx_merged_scale, 1f-9)
+    end
 
     @time components = find_components(qx_merged_loc, qx_merged_scale)
     edges = sample_gaussian_graphical_model(

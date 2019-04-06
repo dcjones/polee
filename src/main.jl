@@ -168,7 +168,7 @@ function main()
         end
 
         if !haskey(spec, "samples")
-            warn("No samples specified the experiment specification.")
+            @warn "No samples specified the experiment specification."
             exit(1)
         end
 
@@ -201,8 +201,8 @@ function main()
             end
 
             if reads_decompress_cmd !== nothing
-                reads_input, reads_cmd_proc =
-                    open(Cmd(vcat(reads_decompress_cmd, reads_file)))
+                reads_input =
+                    open(Cmd(Vector{String}(vcat(reads_decompress_cmd, reads_file))))
             else
                 reads_input = reads_file
             end

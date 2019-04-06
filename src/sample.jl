@@ -1,9 +1,19 @@
 
+"""
+Representation of a an RNA-Seq with a sparse read-transcript compatibility
+matrix.
+"""
 mutable struct RNASeqSample
-    m::Int
-    n::Int
+    m::Int # number of reads
+    n::Int # number of transcripts
+
+    # X[i,j] gives the probability of observing read i from transcript j.
     X::SparseMatrixCSC{Float32, UInt32}
+
+    # effective_lengths[j] if the effective length of transcript j
     effective_lengths::Vector{Float32}
+
+    # transcript set and accompanying metadata
     ts::Transcripts
     transcript_metadata::TranscriptsMetadata
 end
@@ -14,6 +24,9 @@ function Base.size(s::RNASeqSample)
 end
 
 
+"""
+Read a likelihood matrix from a h5 file.
+"""
 function Base.read(filename::String, ::Type{RNASeqSample})
     input = h5open(filename, "r")
     m = read(input["m"]) # number of reads
@@ -28,7 +41,15 @@ function Base.read(filename::String, ::Type{RNASeqSample})
 end
 
 
-function parallel_intersection_loop(ts, rs, fm, effective_lengths, aln_idx_map)
+"""
+Intersect transcripts and reads very efficiently.
+  * ts: transcripts
+  * rs: reads
+  * fm: fragment model
+  * effective_lengths: effective lengths
+  * aln_idx_map: map read indexes to indexs in the compatibility matrix
+"""
+function parallel_intersection_loop( ts, rs, fm, effective_lengths, aln_idx_map)
     # join matching trees from ts and rs
     T = Tuple{GenomicFeatures.ICTree{TranscriptMetadata},
               GenomicFeatures.ICTree{AlignmentPairMetadata}}
@@ -51,6 +72,12 @@ function intersect_contains(a, b)
 end
 
 
+"""
+Multithreaded core loop for intersecting transcripts and read alignments.
+
+(Julia sometimes has problems with multithreaded loops if it isn't basically
+in its own function like this.)
+"""
 function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, aln_idx_map)
     Is = [UInt32[] for _ in 1:Threads.nthreads()]
     Js = [UInt32[] for _ in 1:Threads.nthreads()]
@@ -297,7 +324,6 @@ function RNASeqSample(fm::FragModel,
         effective_lengths[t.metadata.id] = effective_length(fm, t)
     end
 
-
     # if isa(fm, BiasedFragModel)
     #     open("effective-lengths.csv", "w") do output
     #         println(output, "transcript_id,efflen")
@@ -348,48 +374,6 @@ function RNASeqSample(fm::FragModel,
         get(aln_idx_rev_map_ref).x = aln_idx_rev_map
     end
     @toc("Rearranging sparse matrix indexes")
-
-    # TODO: diagnostics
-    # if isa(fm, BiasedFragModel)
-    #     tidoi1 = 0
-    #     tidoi2 = 0
-    #     for t in ts
-    #         # if t.metadata.name == "transcript:ENST00000361851"
-    #         # if t.metadata.name == "transcript:ENST00000550856"
-    #         if t.metadata.name == "transcript:ENST00000383966"
-    #             tidoi1 = t.metadata.id
-    #         # elseif t.metadata.name == "transcript:ENST00000613359"
-    #         # elseif t.metadata.name == "transcript:ENST00000491934"
-    #         elseif t.metadata.name == "transcript:ENST00000639399"
-    #             tidoi2 = t.metadata.id
-    #         end
-    #     end
-
-    #     @show (tidoi1, tidoi2)
-
-    #     @show effective_lengths[tidoi1]
-    #     @show effective_lengths[tidoi2]
-
-    #     function f(tid)
-    #         c = 0
-    #         count = 0
-    #         for i in I[J .== tid]
-    #             @show V[I .== i]
-    #             c += sum(I .== i)
-    #             count += 1
-    #         end
-    #         return c / count
-    #     end
-
-    #     @show sum(J .== tidoi1)
-    #     @show sum(J .== tidoi2)
-    #     @show quantile(V[J .== tidoi1], [0.0, 0.25, 0.5, 0.75, 1.0])
-    #     @show quantile(V[J .== tidoi2], [0.0, 0.25, 0.5, 0.75, 1.0])
-    #     @show f(tidoi1)
-    #     @show f(tidoi2)
-
-    #     # exit()
-    # end
 
     m = isempty(I) ? 0 : Int(maximum(I))
     n = length(ts)

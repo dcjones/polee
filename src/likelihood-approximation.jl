@@ -102,6 +102,7 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
     h5open(output_filename, "w") do out
         n = sample.n
         out["n"] = sample.n
+        out["m"] = sample.m
         out["effective_lengths"] = sample.effective_lengths
 
         for (key, val) in params

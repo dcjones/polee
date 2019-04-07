@@ -16,6 +16,10 @@ mutable struct RNASeqSample
     # transcript set and accompanying metadata
     ts::Transcripts
     transcript_metadata::TranscriptsMetadata
+
+    # sequences filename
+    sequences_filename::String
+    sequences_file_hash::Vector{UInt8}
 end
 
 
@@ -160,11 +164,46 @@ function RNASeqSample(transcripts_filename::String,
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     @tic()
     read_transcript_sequences!(ts, genome_filename)
+    sequences_file_hash = SHA.sha1(open(genome_filename))
     @toc("Reading transcripts")
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output, no_bias=no_bias,
+        excluded_transcripts, genome_filename,
+        sequences_file_hash, output, no_bias=no_bias,
         dump_bias_training_examples=dump_bias_training_examples)
+end
+
+
+"""
+Build a Transcripts set assuming each entry in a fasta file is one transcript.
+"""
+function read_transcripts_from_fasta(filename, excluded_transcripts)
+    println("Reading transcript sequences")
+    tic()
+    reader = open(FASTA.Reader, transcript_sequence_filename)
+    entry = eltype(reader)()
+
+    transcripts = Transcript[]
+    while !isnull(tryread!(reader, entry))
+        seqname = FASTA.identifier(entry)
+        if seqname ∈ excluded_transcripts
+            continue
+        end
+        seq = FASTA.sequence(entry)
+        id = length(transcripts) + 1
+        t = Transcript(seqname, 1, length(seq), STRAND_POS,
+                TranscriptMetadata(seqname, id, [Exon(1, length(seq))], seq))
+        push!(transcripts, t)
+    end
+    close(reader)
+
+    ts = Transcripts(transcripts, true)
+    ts_metadata = TranscriptsMetadata()
+
+    toc()
+    println("Read ", length(transcripts), " transcripts")
+
+    return ts, ts_metadata
 end
 
 
@@ -180,30 +219,14 @@ function RNASeqSample(transcript_sequence_filename::String,
                       no_bias::Bool=false,
                       dump_bias_training_examples::Bool=false)
 
-    println("Reading transcript sequences")
-    tic()
-    reader = open(FASTA.Reader, transcript_sequence_filename)
-    entry = eltype(reader)()
-
-    transcripts = Transcript[]
-    while !isnull(tryread!(reader, entry))
-        seqname = FASTA.identifier(entry)
-        seq = FASTA.sequence(entry)
-        id = length(transcripts) + 1
-        t = Transcript(seqname, 1, length(seq), STRAND_POS,
-                TranscriptMetadata(seqname, id, [Exon(1, length(seq))], seq))
-        push!(transcripts, t)
-    end
-
-    ts = Transcripts(transcripts, true)
-    ts_metadata = TranscriptsMetadata()
-
-    toc()
-    println("Read ", length(transcripts), " transcripts")
+    ts, ts_metadata = read_transcripts_from_fasta(
+        transcript_sequence_filename, excluded_transcripts)
+    sequences_file_hash = SHA.sha1(open(transcript_sequence_filename))
 
     return RNASeqSample(
         ts, ts_metadata, reads_filename, excluded_seqs,
-        excluded_transcripts, output, no_bias=no_bias,
+        excluded_transcripts, transcript_sequence_filename,
+        sequences_file_hash, output, no_bias=no_bias,
         dump_bias_training_examples=dump_bias_training_examples)
 end
 
@@ -217,6 +240,8 @@ function RNASeqSample(ts::Transcripts,
                       reads_filename::Union{IO, String},
                       excluded_seqs::Set{String},
                       excluded_transcripts::Set{String},
+                      sequences_filename::String,
+                      sequences_file_hash::Vector{UInt8},
                       output=Nullable{String}();
                       no_bias::Bool=false,
                       num_training_reads::Int=200000,
@@ -235,7 +260,7 @@ function RNASeqSample(ts::Transcripts,
         aln_idx_rev_map_ref = Ref{Vector{UInt32}}()
         sample_train  = RNASeqSample(
             simplistic_fm, rs_train, ts, ts_metadata,
-            Nullable{String}(), Nullable(aln_idx_rev_map_ref))
+            "", UInt8[], Nullable{String}(), Nullable(aln_idx_rev_map_ref))
         aln_idx_rev_map = aln_idx_rev_map_ref.x
 
         # assign reads to transcripts
@@ -277,7 +302,8 @@ function RNASeqSample(ts::Transcripts,
         fm = simplistic_fm
     end
 
-    return RNASeqSample(fm, rs, ts, ts_metadata, output)
+    return RNASeqSample(
+        fm, rs, ts, ts_metadata, sequences_filename, sequences_file_hash, output)
 end
 
 
@@ -288,6 +314,8 @@ function RNASeqSample(fm::FragModel,
                       rs::Reads,
                       ts::Transcripts,
                       ts_metadata::TranscriptsMetadata,
+                      sequences_filename::String,
+                      sequences_file_hash::Vector{UInt8},
                       output=Nullable{String}(),
                       aln_idx_rev_map_ref=Nullable{Ref{Vector{UInt32}}}())
 
@@ -399,5 +427,8 @@ function RNASeqSample(fm::FragModel,
         end
     end
 
-    return RNASeqSample(m, n, M, effective_lengths, ts, ts_metadata)
+    return RNASeqSample(
+        m, n, M, effective_lengths, ts, ts_metadata,
+        sequences_filename, sequences_file_hash)
 end
+

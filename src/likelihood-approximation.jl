@@ -115,7 +115,12 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
         attrs(g)["approximation"] = string(typeof(approximation))
         attrs(g)["gfffilename"] = sample.transcript_metadata.filename
         attrs(g)["gffhash"]     = base64encode(sample.transcript_metadata.gffhash)
-        attrs(g)["gffsize"]     = sample.transcript_metadata.gffsize
+        attrs(g)["fafilename"] = sample.sequences_filename
+        attrs(g)["fahash"]     = base64encode(sample.sequences_file_hash)
+        # TODO: some other things we might write:
+        #   - command line
+        #   - date/time
+        #   - polee version
     end
 end
 

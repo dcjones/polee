@@ -9,7 +9,7 @@ const INFORMATIVE_PRIOR = false
 
 # Increment this whenever we introduce a non-backward compatible change to
 # the approximated likelihood function or its serialization format.
-const PREPARED_SAMPLE_FORMAT_VERSION = 1
+const PREPARED_SAMPLE_FORMAT_VERSION = 2
 
 
 # mask of flags we care about

@@ -41,174 +41,178 @@ function read_line_set(filename)
 end
 
 
+# These are global just so they can get precompiled. ArgParse is slow at
+# parsing these arg tables.
+const arg_settings = ArgParseSettings()
+arg_settings.prog = "polee"
+arg_settings.commands_are_required = true
+
+@add_arg_table arg_settings begin
+    "prep"
+        help = "Approximate likelihood for every sample in an experiment."
+        action = :command
+    "prep-sample"
+        help = "Approximate likelihood for one sample."
+        action = :command
+    "sample"
+        help = "Sample from approximate likelihood."
+        action = :command
+    "debug-sample"
+        help = "Generate samples from a gibbs sampler for diagnostics/benchmarking."
+        action = :command
+    "debug-optimize"
+        help = "Find ML point estimates using expectation maximization for diagnostics/benchmarking."
+        action = :command
+end
+
+@add_arg_table arg_settings["prep"] begin
+    "experiment"
+        metavar = "experiment.yml"
+        help = "Experiment specification file."
+        required = true
+    "--force"
+        help = "Overwrite output files if they already exist."
+        action = :store_true
+    "--num-threads", "-t" # handled by the wrapper script
+        metavar = "N"
+        help = "Number of threads to use. (Defaults to number of cores.)"
+        required = false
+end
+
+@add_arg_table arg_settings["prep-sample"] begin
+    "--output", "-o"
+        metavar = "prepared-sample.h5"
+        help = "Output filename."
+        default = "prepared-sample.h5"
+    "--exclude-seqs"
+        metavar = "excluded-seqs.txt"
+        help = "file with list (one per line) of sequence names to exclude."
+        required = false
+    "--exclude-transcripts"
+        metavar = "excluded-transcripts.txt"
+        help = "File with list (one per line) of transcript ids to exclude."
+        required = false
+    "--likelihood-matrix"
+        metavar = "likelihood-matrix.h5"
+        help = "Output intermediate likelihood matrix. (Used by 'polee gibbs-sample')"
+        required = false
+    "--approx-method"
+        help = "Likelihood approximation method. (Don't mess with this)"
+        default = "logit_skew_normal_hsb"
+    "--tree-method"
+        help = "Tree building heurustic for polya tree transform. (Don't mess with this either)"
+        default = "cluster"
+    "--no-bias"
+        help = "Disable bias correction model."
+        action = :store_true
+    "--seed"
+        metavar = "N"
+        help = "RNG seed"
+        default = 123456789
+        arg_type = Int
+    "--verbose"
+        help = "Print some additional diagnostic output."
+        action = :store_true
+    "--dump-bias-training-examples"
+        help = "Write training examples collected for use with bias model training."
+        action = :store_true
+    "--num-threads", "-t" # handled by the wrapper script
+        metavar = "N"
+        help = "Number of threads to use. (Defaults to number of cores.)"
+        required = false
+    "--skip-likelihood-approximation"
+        help = """Don't approximate likelihood. (Useful in conjuction with
+        --likelihood-matrix, if that's all that is needed.)"""
+        action = :store_true
+    "genome_filename"
+        metavar = "sequences.fa"
+        help = "Reference sequences in FASTA format."
+        required = true
+    "reads_filename"
+        metavar = "reads.bam"
+        help = "Aligned reads in BAM format."
+        required = true
+    "annotations_filename"
+        metavar = "annotations.gff3"
+        help = """Transcript annotation filename in GFF3 format, if
+        genome alignments are used"""
+        required = false
+end
+
+@add_arg_table arg_settings["sample"] begin
+    "--output", "-o"
+        default = "post_mean.csv"
+    "--kallisto"
+        help = """Output samples in a format compatible with kallisto,
+        for use with sleuth. """
+        action = :store_true
+    "--exclude-transcripts"
+        metavar = "excluded-transcripts.txt"
+        help = "Optional list of transcripts to exclude."
+        required = false
+    "--num-samples"
+        metavar = "N"
+        help = "Number of samples to generate."
+        default = 1000
+        arg_type = Int
+    "--annotations"
+        metavar = "annotations.gff3"
+        help = """Transcript annotations if genome alignments were used.
+        If not provided, the command will attempt to use the transcript
+        file used during preparation."""
+        required = false
+    "--sequences"
+        metavar = "sequences.fa"
+        help = ""
+        required = false
+    "prepared_sample"
+        help = "Prepared RNA-Seq sample to generate samples from."
+        metavar = "prepared-sample.h5"
+        required = true
+end
+
+@add_arg_table arg_settings["debug-sample"] begin
+    "--output", "-o"
+        metavar = "samples.csv"
+        default = "samples.csv"
+    "likelihood-matrix"
+        metavar = "likelihood-matrix.h5"
+        help = """
+            Likelihood matrix as generated with the 'prep' or 'prep-sample'
+            commands using the '--likelihood-matrix' argument.
+            """
+        required = true
+end
+
+@add_arg_table arg_settings["debug-optimize"] begin
+    "--output", "-o"
+        metavar = "estimates.csv"
+        default = "estimates.csv"
+    "likelihood-matrix"
+        metavar = "likelihood-matrix.h5"
+        help = """
+            Likelihood matrix as generated with the 'prep' or 'prep-sample'
+            commands using the '--likelihood-matrix' argument.
+            """
+        required = true
+end
+
+
 function main()
-    arg_settings = ArgParseSettings()
-    arg_settings.prog = "polee"
-    arg_settings.commands_are_required = true
-
-    @add_arg_table arg_settings begin
-        "prep"
-            help = "Approximate likelihood for every sample in an experiment."
-            action = :command
-        "prep-sample"
-            help = "Approximate likelihood for one sample."
-            action = :command
-        "sample"
-            help = "Sample from approximate likelihood."
-            action = :command
-        "debug-sample"
-            help = "Generate samples from a gibbs sampler for diagnostics/benchmarking."
-            action = :command
-        "debug-optimize"
-            help = "Find ML point estimates using expectation maximization for diagnostics/benchmarking."
-            action = :command
-    end
-
-    @add_arg_table arg_settings["prep"] begin
-        "experiment"
-            metavar = "experiment.yml"
-            help = "Experiment specification file."
-            required = true
-        "--force"
-            help = "Overwrite output files if they already exist."
-            action = :store_true
-        "--num-threads", "-t" # handled by the wrapper script
-            metavar = "N"
-            help = "Number of threads to use. (Defaults to number of cores.)"
-            required = false
-    end
-
-    @add_arg_table arg_settings["prep-sample"] begin
-        "--output", "-o"
-            metavar = "prepared-sample.h5"
-            help = "Output filename."
-            default = "prepared-sample.h5"
-        "--exclude-seqs"
-            metavar = "excluded-seqs.txt"
-            help = "file with list (one per line) of sequence names to exclude."
-            required = false
-        "--exclude-transcripts"
-            metavar = "excluded-transcripts.txt"
-            help = "File with list (one per line) of transcript ids to exclude."
-            required = false
-        "--likelihood-matrix"
-            metavar = "likelihood-matrix.h5"
-            help = "Output intermediate likelihood matrix. (Used by 'polee gibbs-sample')"
-            required = false
-        "--approx-method"
-            help = "Likelihood approximation method. (Don't mess with this)"
-            default = "logit_skew_normal_hsb"
-        "--tree-method"
-            help = "Tree building heurustic for polya tree transform. (Don't mess with this either)"
-            default = "cluster"
-        "--no-bias"
-            help = "Disable bias correction model."
-            action = :store_true
-        "--seed"
-            metavar = "N"
-            help = "RNG seed"
-            default = 123456789
-            arg_type = Int
-        "--verbose"
-            help = "Print some additional diagnostic output."
-            action = :store_true
-        "--dump-bias-training-examples"
-            help = "Write training examples collected for use with bias model training."
-            action = :store_true
-        "--num-threads", "-t" # handled by the wrapper script
-            metavar = "N"
-            help = "Number of threads to use. (Defaults to number of cores.)"
-            required = false
-        "--skip-likelihood-approximation"
-            help = """Don't approximate likelihood. (Useful in conjuction with
-            --likelihood-matrix, if that's all that is needed.)"""
-            action = :store_true
-        "genome_filename"
-            metavar = "sequences.fa"
-            help = "Reference sequences in FASTA format."
-            required = true
-        "reads_filename"
-            metavar = "reads.bam"
-            help = "Aligned reads in BAM format."
-            required = true
-        "annotations_filename"
-            metavar = "annotations.gff3"
-            help = """Transcript annotation filename in GFF3 format, if
-            genome alignments are used"""
-            required = false
-    end
-
-    @add_arg_table arg_settings["sample"] begin
-        "--output", "-o"
-            default = "post_mean.csv"
-        "--kallisto"
-            help = """Output samples in a format compatible with kallisto,
-            for use with sleuth. """
-            action = :store_true
-        "--exclude-transcripts"
-            metavar = "excluded-transcripts.txt"
-            help = "Optional list of transcripts to exclude."
-            required = false
-        "--num-samples"
-            metavar = "N"
-            help = "Number of samples to generate."
-            default = 1000
-            arg_type = Int
-        "--annotations"
-            metavar = "annotations.gff3"
-            help = """Transcript annotations if genome alignments were used.
-            If not provided, the command will attempt to use the transcript
-            file used during preparation."""
-            required = false
-        "--sequences"
-            metavar = "sequences.fa"
-            help = ""
-            required = false
-        "prepared_sample"
-            help = "Prepared RNA-Seq sample to generate samples from."
-            metavar = "prepared-sample.h5"
-            required = true
-    end
-
-    @add_arg_table arg_settings["debug-sample"] begin
-        "--output", "-o"
-            metavar = "samples.csv"
-            default = "samples.csv"
-        "likelihood-matrix"
-            metavar = "likelihood-matrix.h5"
-            help = """
-                Likelihood matrix as generated with the 'prep' or 'prep-sample'
-                commands using the '--likelihood-matrix' argument.
-                """
-            required = true
-    end
-
-    @add_arg_table arg_settings["debug-optimize"] begin
-        "--output", "-o"
-            metavar = "estimates.csv"
-            default = "estimates.csv"
-        "likelihood-matrix"
-            metavar = "likelihood-matrix.h5"
-            help = """
-                Likelihood matrix as generated with the 'prep' or 'prep-sample'
-                commands using the '--likelihood-matrix' argument.
-                """
-            required = true
-    end
-
     parsed_args = parse_args(arg_settings)
 
-    command = parsed_args["%COMMAND%"]
+    command = parsed_args["%COMMAND%"]::String
+    command_args = parsed_args[command]::Dict{String, Any}
     if command == "prep"
-        polee_prep(parsed_args[command])
+        polee_prep(command_args)
     elseif command == "prep-sample"
-        polee_prep_sample(parsed_args[command])
+        polee_prep_sample(command_args)
     elseif command == "sample"
-        polee_sample(parsed_args[command])
+        polee_sample(command_args)
     elseif command == "debug-sample"
-        polee_debug_sample(parsed_args[command])
+        polee_debug_sample(command_args)
     elseif command == "debug-optimize"
-        polee_debug_optimize(parsed_args[command])
+        polee_debug_optimize(command_args)
     else
         # argument parser should catch this
         error("no command specified")
@@ -349,7 +353,7 @@ end
 """
 Handle 'polee prep' command.
 """
-function polee_prep(parsed_args)
+function polee_prep(parsed_args::Dict{String, Any})
     force_overwrite = parsed_args["force"]
     spec = YAML.load_file(parsed_args["experiment"])
 
@@ -458,7 +462,7 @@ end
 """
 Handle 'polee prep-sample' command.
 """
-function polee_prep_sample(parsed_args)
+function polee_prep_sample(parsed_args::Dict{String, Any})
     if parsed_args["verbose"]
         global_logger(ConsoleLogger(stderr, Logging.Debug))
     end
@@ -506,7 +510,7 @@ end
 """
 Handle 'polee sample' command.
 """
-function polee_sample(parsed_args)
+function polee_sample(parsed_args::Dict{String, Any})
     excluded_transcripts = read_line_set(
         parsed_args["exclude-transcripts"])
 
@@ -558,10 +562,6 @@ function polee_sample(parsed_args)
     set_transform!(als, t, mu, sigma, alpha)
     xs = Array{Float32}(undef, n)
 
-    if parsed_args["kallisto"]
-        @warn "Kallisto output not yet implemenetd"
-    end
-
     prog = Progress(num_samples, 0.25, "Sampling from approx. likelihood ", 60)
     for i in 1:num_samples
         next!(prog)
@@ -573,6 +573,10 @@ function polee_sample(parsed_args)
         samples[i, :] = xs
     end
     finish!(prog)
+
+    if parsed_args["kallisto"]
+        @warn "Kallisto output not yet implemenetd"
+    end
 
     # TODO: definitely need to write all the samples so we can do the p-value
     # analysis. Maybe we should just always write in kallisto format.
@@ -589,7 +593,7 @@ end
 """
 Handle 'polee debug-sample' command.
 """
-function polee_debug_sample(parsed_args)
+function polee_debug_sample(parsed_args::Dict{String, Any})
     gibbs_sampler(parsed_args["likelihood-matrix"], parsed_args["output"])
 end
 
@@ -597,11 +601,9 @@ end
 """
 Handle the 'debug-optimize' command.
 """
-function polee_debug_optimize(parsed_args)
+function polee_debug_optimize(parsed_args::Dict{String, Any})
     expectation_maximization(
         parsed_args["likelihood-matrix"], parsed_args["output"])
 end
 
-
 precompile(main, ())
-

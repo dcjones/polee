@@ -178,8 +178,7 @@ end
 Build a Transcripts set assuming each entry in a fasta file is one transcript.
 """
 function read_transcripts_from_fasta(filename, excluded_transcripts)
-    println("Reading transcript sequences")
-    tic()
+    @tic()
     reader = open(FASTA.Reader, transcript_sequence_filename)
     entry = eltype(reader)()
 
@@ -200,7 +199,7 @@ function read_transcripts_from_fasta(filename, excluded_transcripts)
     ts = Transcripts(transcripts, true)
     ts_metadata = TranscriptsMetadata()
 
-    toc()
+    @toc("Reading transcript sequences")
     println("Read ", length(transcripts), " transcripts")
 
     return ts, ts_metadata

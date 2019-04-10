@@ -121,13 +121,18 @@ end
 
 function Reads(filename::String, excluded_seqs::Set{String})
     if filename == "-"
-        reader = BAM.Reader(STDIN)
+        reader = BAM.Reader(stdin)
         prog = Progress(0, 0.25, "Reading BAM file ", 60)
         from_file = false
     else
         reader = open(BAM.Reader, filename)
-        prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
-        from_file = true
+        if isfifo(filename)
+            prog = Progress(0, 0.25, "Reading BAM file ", 60)
+            from_file = false
+        else
+            prog = Progress(filesize(filename), 0.25, "Reading BAM file ", 60)
+            from_file = true
+        end
     end
     return Reads(reader, prog, from_file, excluded_seqs)
 end

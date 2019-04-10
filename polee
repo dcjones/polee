@@ -33,5 +33,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # TODO: how can I determine this path?
+# Here's the plan. Main installation method will be Pkg.add. We add a build
+# script that is responsible for setting polee_dir. Then give the user instructions
+# on how to copy this script somewhere.
+
 polee_dir="/home/dcjones/prj/Polee/"
-julia -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- ${unused_args[@]}
+julia --track-allocation=user -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- ${unused_args[@]}

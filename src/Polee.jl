@@ -111,9 +111,9 @@ include("rnaseq_sample.jl")
 include("kumaraswamy.jl")
 include("logitnormal.jl")
 include("sinh_arcsinh.jl")
-include("likelihood-approximation.jl")
 include("stick_breaking.jl")
 include("ptt.jl")
+include("likelihood-approximation.jl")
 include("estimate.jl")
 include("gibbs.jl")
 include("em.jl")
@@ -125,6 +125,7 @@ include("splicing.jl")
 include("approx-sampler.jl")
 
 include("models.jl")
+
 
 # TODO: need to rethink this wit the move to edward2
 # POLEE_MODELS = Dict{String, Function}()

@@ -179,7 +179,7 @@ Build a Transcripts set assuming each entry in a fasta file is one transcript.
 """
 function read_transcripts_from_fasta(filename, excluded_transcripts)
     @tic()
-    reader = open(FASTA.Reader, transcript_sequence_filename)
+    reader = open(FASTA.Reader, filename)
     entry = eltype(reader)()
 
     transcripts = Transcript[]

@@ -173,8 +173,11 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
             end
         end
 
-        if from_file && (i += 1) % prog_step == 0
+        i += 1
+        if from_file && i % prog_step == 0
             ProgressMeter.update!(prog, position(reader.stream.io))
+        elseif (i+1) % 1000000 == 0
+            println("  ", i, " reads")
         end
 
         if !BAM.ismapped(entry)

@@ -875,6 +875,11 @@ function approximate_likelihood(approx::KumaraswamyHSBApprox,
         adam_update_params!(αs, m_α, v_α, learning_rate, step_num, ss_max_α_step)
         adam_update_params!(βs, m_β, v_β, learning_rate, step_num, ss_max_β_step)
 
+        # TODO: This loop really shouldn't be allocating anything but on julia
+        # 1.1.0 it does, and I can't figure out why, so I have to periodically
+        # run the gc to make sure I don't run out of memory.
+        gc()
+
         next!(prog)
     end
 

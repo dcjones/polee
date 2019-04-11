@@ -471,14 +471,13 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
     approx = select_approx_method(parsed_args["approx-method"], tree_method)
 
     excluded_seqs = read_line_set(parsed_args["exclude-seqs"])
-    excluded_transcripts = read_line_set(parsed_args["exclude-transcritps"])
+    excluded_transcripts = read_line_set(parsed_args["exclude-transcripts"])
 
     Random.seed!(parsed_args["seed"])
 
     if parsed_args["annotations_filename"] === nothing
         @debug "No transcripts file, assuming transcriptome alignments."
         sample = RNASeqSample(
-            parsed_args["annotations_filename"],
             parsed_args["genome_filename"],
             parsed_args["reads_filename"],
             excluded_seqs,
@@ -490,6 +489,7 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
             dump_bias_training_examples=parsed_args["dump-bias-training-examples"])
     else
         sample = RNASeqSample(
+            parsed_args["annotations_filename"],
             parsed_args["genome_filename"],
             parsed_args["reads_filename"],
             excluded_seqs,
@@ -607,3 +607,4 @@ function polee_debug_optimize(parsed_args::Dict{String, Any})
 end
 
 precompile(main, ())
+

@@ -116,9 +116,9 @@ version = "0.5.2"
 
 [[Codecs]]
 deps = ["Test"]
-path = "/home/dcjones/.julia/dev/Codecs"
+git-tree-sha1 = "70885e5e038cba1c4c17a84ad6c40756e10a4fb5"
 uuid = "19ecbf4d-ef7c-5e4b-b54a-0a0ff23c5aed"
-version = "0.5.0+"
+version = "0.5.0"
 
 [[ColorTypes]]
 deps = ["FixedPointNumbers", "Random", "Test"]
@@ -231,10 +231,10 @@ uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 version = "0.11.2"
 
 [[IntervalTrees]]
-deps = ["InteractiveUtils", "Nullables", "Profile", "Random", "Test"]
-path = "/home/dcjones/.julia/dev/IntervalTrees"
+deps = ["InteractiveUtils", "Profile", "Random", "Test"]
+git-tree-sha1 = "6c9fcd87677231ae293f6806fad928c216ab6658"
 uuid = "524e6230-43b7-53ae-be76-1e9e4d08d11b"
-version = "1.0.0+"
+version = "1.0.0"
 
 [[IteratorInterfaceExtensions]]
 deps = ["Test"]
@@ -542,6 +542,6 @@ version = "0.4.1"
 
 [[YAML]]
 deps = ["Codecs", "Compat"]
-path = "/home/dcjones/.julia/dev/YAML"
+git-tree-sha1 = "3bde77cee95cce0c0b9b18813d85e18e8ed4f415"
 uuid = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
-version = "0.3.2+"
+version = "0.3.2"

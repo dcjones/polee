@@ -63,6 +63,9 @@ arg_settings.commands_are_required = true
     "debug-optimize"
         help = "Find ML point estimates using expectation maximization for diagnostics/benchmarking."
         action = :command
+    "path"
+        help = "Print the package path and exit."
+        action = :command
 end
 
 @add_arg_table arg_settings["prep"] begin
@@ -213,6 +216,8 @@ function main()
         polee_debug_sample(command_args)
     elseif command == "debug-optimize"
         polee_debug_optimize(command_args)
+    elseif command == "path"
+        print(joinpath(dirname(pathof(Polee)), ".."))
     else
         # argument parser should catch this
         error("no command specified")

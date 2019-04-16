@@ -144,7 +144,6 @@ end
 
 @add_arg_table arg_settings["sample"] begin
     "--output", "-o"
-        default = "post_mean.csv"
     "--kallisto"
         help = """Output samples in a format compatible with kallisto,
         for use with sleuth. """
@@ -553,6 +552,7 @@ function polee_sample(parsed_args::Dict{String, Any})
     node_parent_idxs = read(input["node_parent_idxs"])
     node_js          = read(input["node_js"])
     efflens          = read(input["effective_lengths"])
+    m                = read(input["m"])
 
     mu    = read(input["mu"])
     sigma = exp.(read(input["omega"]))
@@ -579,17 +579,40 @@ function polee_sample(parsed_args::Dict{String, Any})
     end
     finish!(prog)
 
-    if parsed_args["kallisto"]
-        @warn "Kallisto output not yet implemenetd"
+    post_mean = mean(samples, dims=1)[1,:]
+
+    function prop_to_counts(prop)
+        prop_ = prop .* efflens
+        prop_ ./= sum(prop_)
+        return Vector{Float64}(prop_ .* m)
     end
 
-    # TODO: definitely need to write all the samples so we can do the p-value
-    # analysis. Maybe we should just always write in kallisto format.
-    post_mean = mean(samples, 1)
+    if parsed_args["kallisto"]
+        filename = parsed_args["output"] === nothing ?
+            "polee-sample.h5" : parsed_args["output"]
 
-    open(parsed_args["output"], "w") do output
-        for (j, t) in enumerate(ts)
-            println(output, t.metadata.name, ",", post_mean[j])
+        h5open(filename, "w") do output
+            output["est_counts"] = prop_to_counts(post_mean)
+
+            aux_group = g_create(output, "aux")
+            aux_group["num_bootstrap"] = Int[num_samples]
+            aux_group["eff_lengths"] = Vector{Float64}(efflens)
+            aux_group["ids"] = String[t.metadata.name for t in ts]
+            aux_group["call"] = String[join(ARGS, " ")]
+
+            bootstrap_group = g_create(output, "bootstrap")
+            for i in 1:num_samples
+                bootstrap_group[string("bs", i-1)] = prop_to_counts(samples[i, :])
+            end
+        end
+    else
+        filename = parsed_args["output"] === nothing ?
+            "polee-sample.csv" : parsed_args["output"]
+
+        open(parsed_args["output"], "w") do output
+            for (j, t) in enumerate(ts)
+                println(output, t.metadata.name, ",", post_mean[j])
+            end
         end
     end
 end

@@ -38,4 +38,4 @@ done
 # on how to copy this script somewhere.
 
 polee_dir="/home/dcjones/prj/Polee/"
-julia -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- ${unused_args[@]}
+/home/dcjones/src/julia/julia -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- ${unused_args[@]}

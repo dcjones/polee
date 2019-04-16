@@ -595,10 +595,14 @@ function polee_sample(parsed_args::Dict{String, Any})
             output["est_counts"] = prop_to_counts(post_mean)
 
             aux_group = g_create(output, "aux")
-            aux_group["num_bootstrap"] = Int[num_samples]
-            aux_group["eff_lengths"] = Vector{Float64}(efflens)
-            aux_group["ids"] = String[t.metadata.name for t in ts]
-            aux_group["call"] = String[join(ARGS, " ")]
+            aux_group["num_bootstrap"]    = Int[num_samples]
+            aux_group["eff_lengths"]      = Vector{Float64}(efflens)
+            aux_group["lengths"]          = Int[exonic_length(t) for t in ts]
+            aux_group["ids"]              = String[t.metadata.name for t in ts]
+            aux_group["call"]             = String[join(ARGS, " ")]
+            aux_group["index_version"]    = Int[-1]
+            aux_group["kallisto_version"] = "polee" # TODO: should record polee version
+            aux_group["start_time"]       = string(now())
 
             bootstrap_group = g_create(output, "bootstrap")
             for i in 1:num_samples

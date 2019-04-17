@@ -1,7 +1,4 @@
 
-# TODO: rename this type, and this file to something more meaninful.
-# (Maybe just Likelihood?)
-
 struct Model
     m::Int # number of fragments
     n::Int # number of transcripts

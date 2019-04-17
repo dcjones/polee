@@ -276,6 +276,25 @@ function inverse_transform!(
 end
 
 
-# TODO: should this be as it already is?
-function make_inverse_hsb_params()
+"""
+Given a partial Polya tree serialized as parent pointers (node_parent_idxs)
+and leaf node indexes (node_js), build a more complete tree description
+consising of left and right child pointers.
+"""
+function make_inverse_hsb_params(node_parent_idxs, node_js)
+    num_nodes = length(node_js)
+
+    left_index = fill(Int32(-1), num_nodes)
+    right_index = fill(Int32(-1), num_nodes)
+    for i in 2:num_nodes
+        parent_idx = node_parent_idxs[i]
+        if right_index[parent_idx] == -1
+            right_index[parent_idx] = i - 1
+        else
+            left_index[parent_idx] = i - 1
+        end
+    end
+    leaf_index = Int32[j-1 for j in node_js]
+
+    return (left_index, right_index, leaf_index)
 end

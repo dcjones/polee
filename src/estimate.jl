@@ -1,32 +1,5 @@
 
 
-mutable struct LoadedSamples
-    # effective lengths
-    efflen_values::Array{Float32, 2}
-
-    # reasonable initial values
-    x0_values::Array{Float32, 2}
-
-    # likelihood approximation base distribution parameters
-    la_mu_values::Array{Float32, 2}
-    la_sigma_values::Array{Float32, 2}
-    la_alpha_values::Array{Float32, 2}
-
-    # hsb parameters
-    left_index::Array{Int32, 2}
-    right_index::Array{Int32, 2}
-    leaf_index::Array{Int32, 2}
-
-    # tensorflow placeholder variables and initalizations
-    # variables::Dict{Symbol, PyObject}
-    variables::Dict{String, Any}
-    init_feed_dict::Dict{Any, Any}
-
-    sample_factors::Vector{Vector{String}}
-    sample_names::Vector{String}
-end
-
-
 """
 Load samples from a a YAML specification file.
 

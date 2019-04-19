@@ -183,7 +183,7 @@ function read_transcripts_from_fasta(filename, excluded_transcripts)
     entry = eltype(reader)()
 
     transcripts = Transcript[]
-    while !isnull(tryread!(reader, entry))
+    while tryread!(reader, entry)
         seqname = FASTA.identifier(entry)
         if seqname ∈ excluded_transcripts
             continue

@@ -1,16 +1,21 @@
 
-function gibbs_sampler(input_filename, output_filename)
+function gibbs_sampler(
+        input_filename, output_filename, ts::Transcripts;
+        kallisto::Bool=false, num_samples::Int=1000,
+        num_burnin_samples = 2000, sample_stride::Int=25,
+        convergence_test_stride::Int=125)
+
     nthreads = Threads.nthreads()
 
-    num_samples = 1000 # number of samples to record
     sample_per_chain = div(num_samples, nthreads)
-    num_burnin_samples = 2000 # number of samples to burn in for each chain
-    sample_stride = 25 # record every nth sample
-    convergence_test_stride = 125 # test convergence every nth sample
-    # convergence_test_stride = 40 # test convergence every nth sample
 
     sample = read(input_filename, RNASeqSample)
     m, n = sample.m, sample.n
+
+    if n != length(ts)
+        error("Likelihood matrix has different number of transcripts than annotations.")
+    end
+
     els = sample.effective_lengths
 
     # gibbs sampler needs these probs weighted by effective length
@@ -18,24 +23,24 @@ function gibbs_sampler(input_filename, output_filename)
 
     # X = convert(SparseMatrixCSC{Float32}, sample.X)
     X = sparse(Is, Js, Vs)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
 
     # read assignments
-    zs = Array{Int}(nthreads, m)
+    zs = Array{Int}(undef, (nthreads, m))
 
     # transcript read counts
-    cs = Array{UInt32}(nthreads, n)
+    cs = Array{UInt32}(undef, (nthreads, n))
     # cs = Array{Float64}(nthreads, n)
 
     # transcript mixture
-    ys = Array{Float32}(nthreads, n)
+    ys = Array{Float32}(undef, (nthreads, n))
 
     # intermediate results for form computing convergence statistics
-    chain_means = Vector{Float32}(2 * nthreads)
-    chain_vars = Vector{Float32}(2 * nthreads)
+    chain_means = Vector{Float32}(undef, 2 * nthreads)
+    chain_vars = Vector{Float32}(undef, 2 * nthreads)
 
     # per-transcript convergence stats
-    Rs = Vector{Float32}(n)
+    Rs = Vector{Float32}(undef, n)
 
     # choosing starting positions uniformly at random
     alpha = 1.0
@@ -53,12 +58,12 @@ function gibbs_sampler(input_filename, output_filename)
     for i in 1:m
         wlen = max(wlen, Xt.colptr[i+1] - Xt.colptr[i])
     end
-    ws = Array{Float64}(nthreads, wlen)
+    ws = Array{Float64}(undef, (nthreads, wlen))
     fill!(ws, 0.0f0)
 
-    samples = Array{Float32}(nthreads, sample_per_chain, n)
+    samples = Array{Float32}(undef, (nthreads, sample_per_chain, n))
 
-    rngs = [MersenneTwister(Base.Random.make_seed()) for t in 1:nthreads]
+    rngs = [MersenneTwister(Random.make_seed()) for t in 1:nthreads]
 
     # burn-in
     Threads.@threads for t in 1:nthreads
@@ -101,27 +106,67 @@ function gibbs_sampler(input_filename, output_filename)
     end
     close(diagnostics_output)
 
+    function prop_to_counts(prop)
+        prop_ = prop .* els
+        prop_ ./= sum(prop_)
+        return Vector{Float64}(prop_ .* m)
+    end
+
     # print samples
-    out = open(output_filename, "w")
-    for t in 1:size(samples, 1)
-        for sample_num in 1:size(samples, 2)
-            for i in 1:size(samples, 3)
-                @printf(out, "%e", samples[t, sample_num, i])
-                if i < n
-                    print(out, ",")
+    if kallisto
+        h5open(output_filename, "w") do output
+            post_mean = mean(samples, dims=(1,2))[1,1,:]
+            output["est_counts"] = prop_to_counts(post_mean)
+
+            aux_group = g_create(output, "aux")
+            aux_group["num_bootstrap"]    = Int[size(samples, 1) * size(samples, 2)]
+            aux_group["eff_lengths"]      = Vector{Float64}(els)
+            aux_group["lengths"]          = Int[exonic_length(t) for t in ts]
+            aux_group["ids"]              = String[t.metadata.name for t in ts]
+            aux_group["call"]             = String[join(ARGS, " ")]
+            aux_group["index_version"]    = Int[-1]
+            aux_group["kallisto_version"] = "polee debug-sample"
+            aux_group["start_time"]       = string(now())
+
+            bootstrap_group = g_create(output, "bootstrap")
+            k = 0
+            for i in 1:size(samples, 1)
+                for j in 1:size(samples, 2)
+                    bootstrap_group[string("bs", k)] = prop_to_counts(samples[i, j, :])
+                    k += 1
                 end
             end
-            print(out, "\n")
+        end
+    else
+        open(output_filename, "w") do output
+            for (i, t) in enumerate(ts)
+                print(output, t.metadata.name)
+                if i < n
+                    print(output, ",")
+                end
+            end
+            println(output)
+
+            for t in 1:size(samples, 1)
+                for sample_num in 1:size(samples, 2)
+                    for i in 1:size(samples, 3)
+                        @printf(output, "%e", samples[t, sample_num, i])
+                        if i < n
+                            print(output, ",")
+                        end
+                    end
+                    println(output)
+                end
+            end
         end
     end
-    close(out)
 end
 
 
 function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, ys, zs,
                                samples, stored_sample_num)
     # sample zs
-    zs[t,:] = 0
+    zs[t,:] .= 0
     for i in 1:m
         wsum = 0.0
         for (l, k) in enumerate(X.colptr[i]:X.colptr[i+1]-1)
@@ -144,7 +189,7 @@ function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, ys, zs,
     end
 
     # count reads
-    cs[t, :] = 0
+    cs[t, :] .= 0
     for i in 1:m
         if zs[t, i] != 0
             cs[t, zs[t, i]] += 1

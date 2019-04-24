@@ -175,8 +175,34 @@ end
 
 @add_arg_table arg_settings["debug-sample"] begin
     "--output", "-o"
-        metavar = "samples.csv"
-        default = "samples.csv"
+    "--kallisto"
+        help = """Output samples in a format compatible with kallisto,
+        for use with sleuth. """
+        action = :store_true
+    "--num-samples"
+        metavar = "N"
+        help = "Number of samples to generate and record."
+        default = 1000
+        arg_type = Int
+    "--stride"
+        metavar = "N"
+        help = "Number of samplet to generate and not record for each
+        recorded sample."
+        default = 25
+        arg_type = Int
+    "--burnin"
+        metavar = "N"
+        help = "Number of initialization samples to generate."
+        default = 2000
+        arg_type = Int
+    "--annotations"
+        metavar = "annotations.gff3"
+        help = """Load transcripts from annotations file."""
+        required = false
+    "--sequences"
+        metavar = "sequences.fa"
+        help = "Load transcripts from sequences file."
+        required = false
     "likelihood-matrix"
         metavar = "likelihood-matrix.h5"
         help = """
@@ -601,7 +627,7 @@ function polee_sample(parsed_args::Dict{String, Any})
             aux_group["ids"]              = String[t.metadata.name for t in ts]
             aux_group["call"]             = String[join(ARGS, " ")]
             aux_group["index_version"]    = Int[-1]
-            aux_group["kallisto_version"] = "polee" # TODO: should record polee version
+            aux_group["kallisto_version"] = "polee sample" # TODO: should record polee version
             aux_group["start_time"]       = string(now())
 
             bootstrap_group = g_create(output, "bootstrap")
@@ -626,7 +652,31 @@ end
 Handle 'polee debug-sample' command.
 """
 function polee_debug_sample(parsed_args::Dict{String, Any})
-    gibbs_sampler(parsed_args["likelihood-matrix"], parsed_args["output"])
+
+    if (parsed_args["annotations"] !== nothing && parsed_args["sequences"] !== nothing) ||
+        (parsed_args["annotations"] === nothing && parsed_args["sequences"] === nothing)
+        error("Exactly one of --annotations and --sequences must be given.")
+    end
+
+    if parsed_args["annotations"] !== nothing
+        ts, ts_metadata = Transcripts(parsed_args["annotations"])
+    end
+
+    if parsed_args["sequences"] !== nothing
+        ts, ts_metadata = read_transcripts_from_fasta(
+            parsed_args["sequences"], Set{String}())
+    end
+
+    output_filename =
+        parsed_args["output"] !== nothing ? parsed_args["output"] :
+        parsed_args["kallisto"] ? "gibbs-samples.h5" : "gibbs-samples.csv"
+
+    gibbs_sampler(
+        parsed_args["likelihood-matrix"], output_filename, ts,
+        kallisto=parsed_args["kallisto"],
+        num_samples=parsed_args["num-samples"],
+        num_burnin_samples=parsed_args["burnin"],
+        sample_stride=parsed_args["stride"])
 end
 
 

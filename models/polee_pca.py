@@ -10,9 +10,56 @@ from polee_training import *
 
 
 def estimate_transcript_pca(
-        init_feed_dict, num_samples, n, vars, x0_log,
+        init_feed_dict, num_samples, n, vars, x_init,
         num_pca_components, use_posterior_mean=False):
 
+    log_prior, x_bias, w, z, x_scale_softminus, x = \
+        pca_model(num_samples, n, num_pca_components, x_init)
+
+    log_prior += tf.reduce_sum(x_prior.log_prob(x))
+
+    # likelihood
+    log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
+    log_posterior = log_likelihood + log_prior
+
+    sess = tf.Session()
+
+    # Train
+    if use_posterior_mean:
+        train(sess, -log_prior, init_feed_dict, 1000, 5e-2)
+    else:
+        train(
+            sess, -log_posterior, init_feed_dict, 2000, 5e-2,
+            var_list=tf.trainable_variables() + [x, x_scale_softminus])
+
+    return (sess.run(z), sess.run(w))
+
+
+def estimate_feature_pca(
+        x_likelihood_loc, x_likelihood_scale, num_samples, num_features,
+        num_pca_components, use_posterior_mean):
+
+    log_prior, x_bias, w, z, x_scale_softminus, x = \
+        pca_model(num_samples, num_features, num_pca_components, x_likelihood_loc)
+
+    log_likelihood = tf.reduce_sum(
+        tfd.Normal(x_likelihood_loc, x_likelihood_scale).log_prob(x))
+    log_posterior = log_likelihood + log_prior
+
+    sess = tf.Session()
+
+    # Train
+    if use_posterior_mean:
+        train(sess, -log_prior, {}, 1000, 5e-2)
+    else:
+        train(
+            sess, -log_posterior, {}, 2000, 5e-2,
+            var_list=tf.trainable_variables() + [x, x_scale_softminus])
+
+    return (sess.run(z), sess.run(w))
+
+
+def pca_model(num_samples, n, num_pca_components, x_init):
     log_prior = 0.0
 
     # x_bias
@@ -24,7 +71,7 @@ def estimate_transcript_pca(
         name="x_bias")
 
     x_bias = tf.Variable(
-        np.maximum(np.mean(x0_log, 0), x_bias_loc0),
+        np.maximum(np.mean(x_init, 0), x_bias_loc0),
         dtype=tf.float32,
         name="x_bias")
 
@@ -87,25 +134,11 @@ def estimate_transcript_pca(
         name="x_prior")
 
     x = tf.Variable(
-        x0_log,
+        x_init,
         dtype=tf.float32,
         trainable=False,
         name="x")
 
     log_prior += tf.reduce_sum(x_prior.log_prob(x))
 
-    # likelihood
-    log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
-    log_posterior = log_likelihood + log_prior
-
-    sess = tf.Session()
-
-    # Train
-    if use_posterior_mean:
-        train(sess, -log_prior, init_feed_dict, 1000, 5e-2)
-    else:
-        train(
-            sess, -log_posterior, init_feed_dict, 2000, 5e-2,
-            var_list=tf.trainable_variables() + [x, x_scale_softminus])
-
-    return (sess.run(z), sess.run(w))
+    return log_prior, x_bias, w, z, x_scale_softminus, x

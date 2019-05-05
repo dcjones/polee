@@ -949,7 +949,7 @@ end
 """
 Assign numbers to genes. Return a gene_id -> number dict.
 """
-function assigne_gene_nums(ts, ts_metadata)
+function assign_gene_nums(ts, ts_metadata)
     used_genes = Set{String}()
     for t in ts
         push!(used_genes, ts_metadata.gene_id[t.metadata.name])
@@ -964,108 +964,6 @@ function assigne_gene_nums(ts, ts_metadata)
 
     return gene_nums
 end
-
-
-"""
-Serialize a GFF3 file into sqlite3 database.
-"""
-function write_transcripts(output_filename, transcripts, metadata)
-    db = SQLite.DB(output_filename)
-
-    # Gene Table
-    # ----------
-
-    gene_nums = assigne_gene_nums(transcripts, metadata)
-
-    SQLite.execute!(db, "drop table if exists genes")
-    SQLite.execute!(db,
-        """
-        create table genes
-        (
-            gene_num INT PRIMARY KEY,
-            gene_id TEXT,
-            gene_name TEXT,
-            gene_biotype TEXT,
-            gene_description TEXT
-        )
-        """)
-
-    ins_stmt = SQLite.Stmt(db, "insert into genes values (?1, ?2, ?3, ?4, ?5)")
-    SQLite.execute!(db, "begin transaction")
-    for (gene_id, gene_num) in gene_nums
-        SQLite.bind!(ins_stmt, 1, gene_num)
-        SQLite.bind!(ins_stmt, 2, gene_id)
-        SQLite.bind!(ins_stmt, 3, get(metadata.gene_name, gene_id, ""))
-        SQLite.bind!(ins_stmt, 4, get(metadata.gene_biotype, gene_id, ""))
-        SQLite.bind!(ins_stmt, 5, get(metadata.gene_description, gene_id, ""))
-        SQLite.execute!(ins_stmt)
-    end
-    SQLite.execute!(db, "end transaction")
-
-    # Transcript Table
-    # ----------------
-
-    SQLite.execute!(db, "drop table if exists transcripts")
-    SQLite.execute!(db,
-        """
-        create table transcripts
-        (
-            transcript_num INT PRIMARY KEY,
-            transcript_id TEXT,
-            kind TEXT,
-            seqname TEXT,
-            strand INT,
-            gene_num INT
-        )
-        """)
-    ins_stmt = SQLite.Stmt(db,
-        "insert into transcripts values (?1, ?2, ?3, ?4, ?5, ?6)")
-    SQLite.execute!(db, "begin transaction")
-    for t in transcripts
-        SQLite.bind!(ins_stmt, 1, t.metadata.id)
-        SQLite.bind!(ins_stmt, 2, String(t.metadata.name))
-        SQLite.bind!(ins_stmt, 3, get(metadata.transcript_kind, t.metadata.name, ""))
-        SQLite.bind!(ins_stmt, 4, String(t.seqname))
-        SQLite.bind!(ins_stmt, 5,
-            t.strand == STRAND_POS ? 1 :
-            t.strand == STRAND_NEG ? -1 : 0)
-        SQLite.bind!(ins_stmt, 6, gene_nums[metadata.gene_id[t.metadata.name]])
-        SQLite.execute!(ins_stmt)
-    end
-    SQLite.execute!(db, "end transaction")
-
-
-    # Exon Table
-    # ----------
-
-    SQLite.execute!(db, "drop table if exists exons")
-    SQLite.execute!(db,
-        """
-        create table exons
-        (
-            transcript_num INT,
-            first INT,
-            last INT
-        )
-        """)
-
-    ins_stmt = SQLite.Stmt(db, "insert into exons values (?1, ?2, ?3)")
-    SQLite.execute!(db, "begin transaction")
-    for t in transcripts
-        for exon in t.metadata.exons
-            SQLite.bind!(ins_stmt, 1, t.metadata.id)
-            SQLite.bind!(ins_stmt, 2, exon.first)
-            SQLite.bind!(ins_stmt, 3, exon.last)
-            SQLite.execute!(ins_stmt)
-        end
-    end
-    SQLite.execute!(db, "end transaction")
-
-    return db
-end
-
-
-# TODO: Read from sqlite3
 
 
 """
@@ -1109,7 +1007,7 @@ gives gene expression.
 function gene_feature_matrix(
         ts::Transcripts, ts_metadata::TranscriptsMetadata)
 
-    gene_nums = assigne_gene_nums(ts, ts_metadata)
+    gene_nums = assign_gene_nums(ts, ts_metadata)
 
     I = Int[]
     J = Int[]

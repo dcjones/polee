@@ -59,18 +59,19 @@ simple to do.
 So all we have to do is optimize q's parameters using stochastic gradient descent
 against samples drawn from p.
 """
-function approximate_splicing_likelihood(input::ModelInput, sess)
-    num_samples, n = size(input.loaded_samples.x0_values)
+function approximate_splicing_likelihood(
+        loaded_samples::LoadedSamples, ts, ts_metadata, gene_db, sess)
+    num_samples, n = size(loaded_samples.x0_values)
 
-    (num_features,
-     feature_idxs, feature_transcript_idxs,
-     antifeature_idxs, antifeature_transcript_idxs) = splicing_features(input)
+    (num_features, feature_idxs, feature_transcript_idxs,
+     antifeature_idxs, antifeature_transcript_idxs) =
+        splicing_features(ts, ts_metadata, gene_db)
 
     feature_indices = hcat(feature_idxs .- 1, feature_transcript_idxs .- 1)
     antifeature_indices = hcat(antifeature_idxs .- 1, antifeature_transcript_idxs .- 1)
 
-    qx_feature_loc, qx_feature_scale = polee_py[:approximate_splicing_likelihood](
-        input.loaded_samples.init_feed_dict, input.loaded_samples.variables,
+    qx_feature_loc, qx_feature_scale = polee_py.approximate_splicing_likelihood(
+        loaded_samples.init_feed_dict, loaded_samples.variables,
         num_samples, num_features, n, feature_indices, antifeature_indices, sess)
 
     return (qx_feature_loc, qx_feature_scale)
@@ -88,16 +89,11 @@ Returns:
     antifeature_idxs and antifeature_transcript_idxs: together a mapping between
         features and transcripts which exclude that feature
 """
-function splicing_features(input::ModelInput)
-    return splicing_features(input.ts, input.ts_metadata, input.gene_db)
-end
-
-
-function splicing_features(ts, ts_metadata, gene_db; alt_ends::Bool=true)
+function splicing_features(ts, ts_metadata, gene_db; alt_ends::Bool=false)
     println("")
-    cassette_exons, mutex_exons = get_cassette_exons(ts)
-    alt_donacc_sites, retained_introns = get_alt_donor_acceptor_sites(ts)
-    alt_fp_ends, alt_tp_ends = get_alt_fp_tp_ends(ts, ts_metadata)
+    cassette_exons, mutex_exons = Polee.get_cassette_exons(ts)
+    alt_donacc_sites, retained_introns = Polee.get_alt_donor_acceptor_sites(ts)
+    alt_fp_ends, alt_tp_ends = Polee.get_alt_fp_tp_ends(ts, ts_metadata)
 
     if !alt_ends
         alt_fp_ends = Interval{Tuple{Int, Int, Vector{Int}, Vector{Int}}}[]

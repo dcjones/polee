@@ -50,11 +50,13 @@ end
 function main()
     parsed_args = parse_args(arg_settings)
 
-    if parsed_args["feature"] ∉ ["transcript", "gene", "splicing"]
+    feature = parsed_args["feature"]
+
+    if feature ∉ ["transcript", "gene", "splicing"]
         error(string(parsed_args["feature"], " is not a supported feature."))
     end
 
-    if parsed_args["feature"] ∈ ["gene", "splicing"]
+    if feature ∈ ["gene"]
         error(string(parsed_args["feature"], " feature is not yet implemented."))
     end
 
@@ -62,6 +64,7 @@ function main()
 
     init_python_modules()
     polee_pca_py = pyimport("polee_pca")
+    tf = pyimport("tensorflow")
 
     # so we get the same subset when max-num-samples is used
     Random.seed!(1234)
@@ -74,13 +77,37 @@ function main()
     num_samples, n = size(loaded_samples.x0_values)
     num_pca_components = Int(get(parsed_args, "num-components", 2))
     x0_log = log.(loaded_samples.x0_values)
-    z, w = polee_pca_py.estimate_transcript_pca(
-        loaded_samples.init_feed_dict, num_samples, n,
-        loaded_samples.variables, x0_log, num_pca_components,
-        parsed_args["posterior-mean"])
 
-    if parsed_args["output-w"] !== nothing
-        write_pca_w(parsed_args["output-w"], ts, w)
+    if feature == "transcript"
+        z, w = polee_pca_py.estimate_transcript_pca(
+            loaded_samples.init_feed_dict, num_samples, n,
+            loaded_samples.variables, x0_log, num_pca_components,
+            parsed_args["posterior-mean"])
+
+        if parsed_args["output-w"] !== nothing
+            write_pca_w(parsed_args["output-w"], ts, w)
+        end
+    elseif feature == "splicing"
+        gene_db = write_transcripts("genes.db", ts, ts_metadata)
+        sess = tf.Session()
+        qx_loc, qx_scale = approximate_splicing_likelihood(
+            loaded_samples, ts, ts_metadata, gene_db, sess)
+
+        # free up some memory
+        tf.reset_default_graph()
+        sess.close()
+        # create_tensorflow_variables!(loaded_samples)
+        num_features = size(qx_loc, 2)
+
+        z, w = polee_pca_py.estimate_feature_pca(
+            qx_loc, qx_scale, num_samples, num_features, num_pca_components,
+            parsed_args["posterior-mean"])
+
+        if parsed_args["output-w"] !== nothing
+            write_pca_w(
+                parsed_args["output-w"], "splicing_event",
+                String[string(i) for i in 1:num_features], w)
+        end
     end
 
     if parsed_args["output-z"] !== nothing
@@ -89,24 +116,30 @@ function main()
 end
 
 
-function write_pca_w(output_filename, ts, w)
+function write_pca_w(output_filename, feature_type, feature_names, w)
     n, num_components = size(w)
     open(output_filename, "w") do output
-        print(output, "transcript_id")
+        print(output, feature_type)
         for j in 1:num_components
             print(output, ",component", j)
         end
         println(output)
 
-        for (i, t) in enumerate(ts)
-            @assert i == t.metadata.id
-            print(output, t.metadata.name)
+        for (i, feature_name) in enumerate(feature_names)
+            print(output, feature_name)
             for j in 1:num_components
                 print(output, ",", w[i, j])
             end
             println(output)
         end
     end
+end
+
+
+function write_pca_w(output_filename, ts, w)
+    write_pca_w(
+        output_filename, "transcript_id",
+        String[t.metadata.name for t in ts], w)
 end
 
 

@@ -458,7 +458,7 @@ mutable struct LoadedSamples
     variables::Dict{String, Any}
     init_feed_dict::Dict{Any, Any}
 
-    sample_factors::Vector{Vector{String}}
+    sample_factors::Vector{Dict{String, String}}
     sample_names::Vector{String}
 end
 

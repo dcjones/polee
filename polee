@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# TODO: how can I determine this path?
+# Here's the plan. Main installation method will be Pkg.add. We add a build
+# script that is responsible for setting polee_dir. Then give the user instructions
+# on how to copy this script somewhere.
+polee_dir="/home/dcjones/prj/Polee/"
+
+# TODO: this is a work around until julia 1.2 is out and I can just require that
+julia=/home/dcjones/src/julia/julia
+
 # Polee is a julia program, but options that rely on environment variables. We
 # use this shell script wrapper to extract those options and set the right
 # variables before running the real program.
@@ -32,10 +41,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# TODO: how can I determine this path?
-# Here's the plan. Main installation method will be Pkg.add. We add a build
-# script that is responsible for setting polee_dir. Then give the user instructions
-# on how to copy this script somewhere.
+# Intercept and run models
+if [[ ${unused_args[0]} == "model" ]]; then
+    if [[ ${#unused_args[@]} -gt 1 ]]; then
+        model_file=${polee_dir}/models/${unused_args[1]}.jl
+        if  [[ ! -e $model_file ]]; then
+            echo "Model ${unused_args[1]} does not exist." >&2
+            exit 1
+        fi
 
-polee_dir="/home/dcjones/prj/Polee/"
-/home/dcjones/src/julia/julia --track-allocation -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- ${unused_args[@]}
+        $julia $model_file -- ${unused_args[@]:2}
+    else
+        echo "Model name must be provided to \"polee model\"" >&2
+        exit 1
+    fi
+else
+    # Otherwise run the regular program
+    $julia -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- ${unused_args[@]}
+fi

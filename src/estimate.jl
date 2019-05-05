@@ -8,25 +8,31 @@ Input:
     * ts_metadata: transcript metadata
 """
 function load_samples_from_specification(
-        spec, ts, ts_metadata, max_num_samples, batch_size;
-        check_gff_hash::Bool=true, transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
+        spec, ts, ts_metadata;
+        max_num_samples=nothing, batch_size=nothing, check_gff_hash::Bool=true,
+        transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
 
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
     sample_names = String[]
     filenames = String[]
-    sample_factors = Vector{String}[]
+    sample_factors = Vector{Dict{String, String}}()
     for sample in spec["samples"]
         push!(sample_names, sample["name"])
         push!(filenames,
             get(sample, "file", string(sample["name"], prep_file_suffix)))
-        push!(sample_factors, get(sample, "factors", String[]))
+        factors = Dict{String, String}()
+        for (factor_type, factor) in get(sample, "factors", Dict{String, String}())
+            factors[factor_type] = factor
+        end
+        push!(sample_factors, factors)
     end
 
     num_samples = length(filenames)
     println("Read model specification with ", num_samples, " samples")
 
-    if max_num_samples !== nothing
+    if max_num_samples !== nothing && max_num_samples < num_samples
         max_num_samples = min(max_num_samples, num_samples)
+        println("Choosing random subset of ", max_num_samples, " samples")
         p = shuffle(1:num_samples)[1:max_num_samples]
         filenames = filenames[p]
         sample_names = sample_names[p]
@@ -111,7 +117,7 @@ function load_samples_hdf5(
 
         input_metadata = g_open(input, "metadata")
 
-        check_prepared_sample_version(input_metadata)
+        Polee.check_prepared_sample_version(input_metadata)
 
         if check_gff_hash && base64decode(read(attrs(input_metadata)["gffhash"])) != ts_metadata.gffhash
             true_filename = read(attrs(input_metadata)["gfffilename"])
@@ -144,7 +150,7 @@ function load_samples_hdf5(
         close(input)
 
         left_index, right_index, leaf_index =
-            make_inverse_hsb_params(node_parent_idxs, node_js)
+            Polee.make_inverse_hsb_params(node_parent_idxs, node_js)
 
         left_index_values[i, :]  = left_index
         right_index_values[i, :] = right_index
@@ -155,13 +161,15 @@ function load_samples_hdf5(
         y0 = Array{Float64}(undef, n-1)
         x0 = Array{Float32}(undef, n)
         for j in 1:n-1
-            y0[j] = clamp(logistic(sinh(alpha[j]) + mu[j]), LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
+            y0[j] = clamp(
+                Polee.logistic(sinh(alpha[j]) + mu[j]),
+                Polee.LIKAP_Y_EPS, 1 - Polee.LIKAP_Y_EPS)
         end
-        t = PolyaTreeTransform(node_parent_idxs, node_js)
+        t = Polee.PolyaTreeTransform(node_parent_idxs, node_js)
         if transforms !== nothing
             push!(transforms, t)
         end
-        transform!(t, y0, x0, Val(false))
+        Polee.transform!(t, y0, x0, Val(false))
         x0_values[i, :] = x0 ./ efflen_values[i, :]
         x0_values[i, :] ./= sum(x0_values[i, :])
 
@@ -230,12 +238,12 @@ function create_tensorflow_variables!(ls::LoadedSamples)
     empty!(ls.init_feed_dict)
 
     for (name, val) in zip(var_names, var_values)
-        typ = eltype(val) == Float32 ? tf[:float32] : tf[:int32]
+        typ = eltype(val) == Float32 ? tf.float32 : tf.int32
         # sz = (batch_size, size(val)[2:end]...)
         # sz = (nothing, size(val)[2:end]...)
         sz = size(val)
-        var_init = tf[:placeholder](typ, shape=sz)
-        var = tf[:Variable](var_init, name=name, trainable=false)
+        var_init = tf.placeholder(typ, shape=sz)
+        var = tf.Variable(var_init, name=name, trainable=false)
         ls.variables[name] = var
         ls.init_feed_dict[var_init] = val
     end

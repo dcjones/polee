@@ -66,6 +66,9 @@ arg_settings.commands_are_required = true
     "path"
         help = "Print the package path and exit."
         action = :command
+    "model"
+        help = "Run one models included with polee."
+        action = :command
 end
 
 @add_arg_table arg_settings["prep"] begin

@@ -219,6 +219,10 @@ end
     "--output", "-o"
         metavar = "estimates.csv"
         default = "estimates.csv"
+    "--num-threads", "-t" # handled by the wrapper script
+        metavar = "N"
+        help = "Number of threads to use. (Defaults to number of cores.)"
+        required = false
     "likelihood-matrix"
         metavar = "likelihood-matrix.h5"
         help = """

@@ -8,6 +8,7 @@ using .PoleeModel
 using ArgParse
 using YAML
 using PyCall
+import Random
 
 
 const arg_settings = ArgParseSettings()
@@ -23,6 +24,10 @@ arg_settings.prog = "polee model pca"
         help = "Number of PCA components"
         default = 2
         arg_type = Int
+    "--posterior-mean"
+        help = "Use posterior mean point estimate instead of the full model"
+        action = :store_true
+        default = false
     "--output-z"
         metavar = "filename"
         help = "Output file for PCA projection"
@@ -58,6 +63,9 @@ function main()
     init_python_modules()
     polee_pca_py = pyimport("polee_pca")
 
+    # so we get the same subset when max-num-samples is used
+    Random.seed!(1234)
+
     loaded_samples = load_samples_from_specification(
         YAML.load_file(parsed_args["experiment"]),
         ts, ts_metadata,
@@ -68,7 +76,8 @@ function main()
     x0_log = log.(loaded_samples.x0_values)
     z, w = polee_pca_py.estimate_transcript_pca(
         loaded_samples.init_feed_dict, num_samples, n,
-        loaded_samples.variables, x0_log, num_pca_components)
+        loaded_samples.variables, x0_log, num_pca_components,
+        parsed_args["posterior-mean"])
 
     if parsed_args["output-w"] !== nothing
         write_pca_w(parsed_args["output-w"], ts, w)

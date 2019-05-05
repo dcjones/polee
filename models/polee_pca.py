@@ -11,7 +11,7 @@ from polee_training import *
 
 def estimate_transcript_pca(
         init_feed_dict, num_samples, n, vars, x0_log,
-        num_pca_components):
+        num_pca_components, use_posterior_mean=False):
 
     log_prior = 0.0
 
@@ -98,13 +98,14 @@ def estimate_transcript_pca(
     log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
     log_posterior = log_likelihood + log_prior
 
-    # Pre-train
     sess = tf.Session()
-    train(sess, -log_prior, init_feed_dict, 1000, 5e-2)
 
     # Train
-    train(
-        sess, -log_posterior, init_feed_dict, 1000, 5e-2,
-        var_list=tf.trainable_variables() + [x, x_scale_softminus])
+    if use_posterior_mean:
+        train(sess, -log_prior, init_feed_dict, 1000, 5e-2)
+    else:
+        train(
+            sess, -log_posterior, init_feed_dict, 2000, 5e-2,
+            var_list=tf.trainable_variables() + [x, x_scale_softminus])
 
     return (sess.run(z), sess.run(w))

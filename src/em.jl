@@ -84,7 +84,7 @@ function expectation_maximization(input_filename, output_filename)
     ys .*= 1e6
 
     open(output_filename, "w") do output
-        println(output, "expression")
+        println(output, "tpm")
         for j in 1:n
             println(output, ys[j])
         end

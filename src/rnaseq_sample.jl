@@ -41,7 +41,9 @@ function Base.read(filename::String, ::Type{RNASeqSample})
     X = SparseMatrixCSC(m, n, colptr, rowval, nzval)
     effective_lengths = read(input["effective_lengths"])
 
-    return RNASeqSample(m, n, X, effective_lengths, Transcripts(), TranscriptsMetadata())
+    return RNASeqSample(
+        m, n, X, effective_lengths, Transcripts(), TranscriptsMetadata(),
+        "", UInt8[])
 end
 
 

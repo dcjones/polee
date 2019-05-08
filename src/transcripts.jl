@@ -71,6 +71,8 @@ mutable struct TranscriptsMetadata
     # kind indexed by transcript_id
     transcript_kind::Dict{String, String}
 
+    transcript_biotype::Dict{String, String}
+
     # gene_id indexed by transcript_id
     gene_id::Dict{String, String}
 
@@ -84,6 +86,7 @@ end
 function TranscriptsMetadata()
     return TranscriptsMetadata(
         "", 0, UInt8[], UInt8[],
+        Dict{String, String}(),
         Dict{String, String}(),
         Dict{String, String}(),
         Dict{String, String}(),
@@ -182,6 +185,7 @@ function Transcripts(filename::String, excluded_transcripts::Set{String}=Set{Str
             if isempty(parent_name)
                 parent_name = getfirst_else_empty(entry, "geneID")
             end
+            metadata.transcript_biotype[entry_id] = getfirst_else_empty(entry, "biotype")
             metadata.gene_id[entry_id] = parent_name
             metadata.transcript_kind[entry_id] = typ
         end

@@ -158,11 +158,13 @@ function write_transcripts(output_filename, transcripts, metadata)
             kind TEXT,
             seqname TEXT,
             strand INT,
-            gene_num INT
+            gene_num INT,
+            biotype TEXT,
+            exonic_length INT
         )
         """)
     ins_stmt = SQLite.Stmt(db,
-        "insert into transcripts values (?1, ?2, ?3, ?4, ?5, ?6)")
+        "insert into transcripts values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")
     SQLite.execute!(db, "begin transaction")
     for t in transcripts
         SQLite.bind!(ins_stmt, 1, t.metadata.id)
@@ -173,6 +175,8 @@ function write_transcripts(output_filename, transcripts, metadata)
             t.strand == STRAND_POS ? 1 :
             t.strand == STRAND_NEG ? -1 : 0)
         SQLite.bind!(ins_stmt, 6, gene_nums[metadata.gene_id[t.metadata.name]])
+        SQLite.bind!(ins_stmt, 7, get(metadata.transcript_biotype, t.metadata.name, ""))
+        SQLite.bind!(ins_stmt, 8, Polee.exonic_length(t))
         SQLite.execute!(ins_stmt)
     end
     SQLite.execute!(db, "end transaction")

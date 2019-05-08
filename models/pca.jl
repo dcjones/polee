@@ -77,6 +77,7 @@ function main()
     num_samples, n = size(loaded_samples.x0_values)
     num_pca_components = Int(get(parsed_args, "num-components", 2))
     x0_log = log.(loaded_samples.x0_values)
+    gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
     if feature == "transcript"
         z, w = polee_pca_py.estimate_transcript_pca(
@@ -88,7 +89,6 @@ function main()
             write_pca_w(parsed_args["output-w"], ts, w)
         end
     elseif feature == "splicing"
-        gene_db = write_transcripts("genes.db", ts, ts_metadata)
         sess = tf.Session()
         qx_loc, qx_scale = approximate_splicing_likelihood(
             loaded_samples, ts, ts_metadata, gene_db, sess)

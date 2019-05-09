@@ -46,19 +46,20 @@ def pairwise_l2_sq(y):
 
 
 
-def find_sigmas(x0_log, target_perplexity):
+def find_sigmas(x0_log, target_perplexity, use_vlr=False):
     num_samples = x0_log.shape[0]
     n = x0_log.shape[1]
     sigmas = np.zeros(num_samples)
-    # TODO: This is wrong. Denomenator is supposed to be over all non-equal pairs.
     for i in range(num_samples):
-        # print(i)
         y = x0_log[i, :]
-        delta = np.sqrt(np.sum(np.square(x0_log[i,:] - x0_log), axis=1))
-        # print(delta)
+        if use_vlr:
+            delta = np.var(x0_log[i,:] - x0_log, axis=1)
+        else:
+            delta = np.sqrt(np.sum(np.square(x0_log[i,:] - x0_log), axis=1))
 
         sigma_lower = 1e-2
-        sigma_upper = 10.0
+        # sigma_upper = 10.0
+        sigma_upper = 10.0 * np.sqrt(np.max(delta))
         for _ in range(10):
             sigma = (sigma_lower + sigma_upper) / 2
             delta_sig = np.exp(-delta / (2*sigma**2))
@@ -78,30 +79,40 @@ def find_sigmas(x0_log, target_perplexity):
                     H -= pji * np.log2(pji)
 
             perplexity = 2**H
-            # print(perplexity)
             if perplexity > target_perplexity:
                 sigma_upper = sigma
             else:
                 sigma_lower = sigma
-        # print(delta_sig / delta_sig_sum)
-        # print((i, perplexity))
         sigmas[i] = (sigma_lower + sigma_upper) / 2
-    # print(sigmas)
     # sigmas[:] = 2.0
     # sigmas[:] = 3.0
     return sigmas
 
 
-def tsne_p(x, sigmas):
-    # delta = pairwise_l2_sq(x) # [B, B]
-    delta = pairwise_vlr(x) # [B, B]
+# def tsne_p_denomenators(x0, sigmas):
+#     delta = pairwise_l2_sq(x0)
+#     delta_sig = tf.exp(-delta / (2*tf.square(tf.expand_dims(sigmas, 0)))) # [B, B]
+#     delta_sig = tf.clip_by_value(delta_sig, 1e-12, 1.0)
+#     delta_sig = delta_sig - tf.diag(tf.diag_part(delta_sig))
+#     delta_sig_sum = tf.reduce_sum(delta_sig, axis=0)
+
+#     return delta_sig_sum
+
+
+def tsne_p(x, sigmas, use_vlr=False):
+    if use_vlr:
+        delta = pairwise_vlr(x) # [B, B]
+    else:
+        delta = pairwise_l2_sq(x) # [B, B]
+
     tf.summary.histogram("delta", delta)
+    # delta = tf.Print(delta, [delta], "delta", summarize=25)
 
     delta_sig = tf.exp(-delta / (2*tf.square(tf.expand_dims(sigmas, 0)))) # [B, B]
-    delta_sig = tf.Print(delta_sig,
-        [tf.reduce_min(delta_sig), tf.reduce_max(delta_sig)], "delta_sig")
     delta_sig = tf.clip_by_value(delta_sig, 1e-12, 1.0)
     delta_sig = delta_sig - tf.diag(tf.diag_part(delta_sig))
+
+    # delta_sig = tf.Print(delta_sig, [delta_sig], "delta_sig", summarize=25)
 
     delta_sig_sum = tf.reduce_sum(delta_sig, axis=0)
 
@@ -120,9 +131,11 @@ def tsne_p(x, sigmas):
     return p_ji
 
 
-def tsne_q(z, alpha):
-    # delta = pairwise_l2_sq(z) # [B, B]
-    delta = pairwise_vlr(z) # [B, B]
+def tsne_q(z, alpha, use_vlr=False):
+    if use_vlr:
+        delta = pairwise_vlr(z) # [B, B]
+    else:
+        delta = pairwise_l2_sq(z) # [B, B]
     delta_sig = tf.pow(1 + delta / alpha, -(alpha+1)/2)
 
     delta_sig = delta_sig - tf.diag(tf.diag_part(delta_sig))
@@ -144,20 +157,35 @@ def sample_minibatch(feed_dict, full_data, num_samples, B):
             feed_dict[var] = arr[minibatch_idx]
 
 
+"""
+Replace a random row in the batch.
+"""
+def sample_minibatch_row(feed_dict, full_data, num_samples, B):
+    i = np.random.randint(B)
+    j = np.random.randint(num_samples)
+    for (var, arr) in full_data.items():
+        if len(arr.shape) > 1:
+            feed_dict[var][i,:] = arr[j,:]
+        else:
+            feed_dict[var][i] = arr[j]
+
+
 def estimate_tsne(
         full_data, vars, x0,
-        num_pca_components, B, use_neural_network, sess):
+        num_pca_components, B, use_neural_network, sess,
+        target_perplexity=30.0,
+        # target_perplexity=50.0,
+        alpha=1.0, use_vlr=False):
 
     # assume we don't have to reinitialize anything here
     feed_dict = dict()
 
     num_samples, n = np.shape(x0)
 
-    # TODO: options to pass these parameters in
-    alpha = 1.0
-    target_perplexity = 50.0
+    target_perplexity = min(target_perplexity, float(num_samples)-1)
 
-    tsne_all_sigmas = find_sigmas(x0, target_perplexity)
+    tsne_all_sigmas = find_sigmas(x0, target_perplexity, use_vlr)
+    print(tsne_all_sigmas)
 
     # tsne_all_sigmas = find_sigmas(x_loc_full, target_perplexity)
 
@@ -182,16 +210,11 @@ def estimate_tsne(
         leaf_index=vars["leaf_index"])
     full_data[z0_mu] = np.zeros((num_samples, n-1), dtype=np.float32)
 
-
-    # x = tf.log(exp_x)
+    x = tf.log(exp_x)
 
     # using point estimates
-    x = tf.placeholder(tf.float32, shape=(None, n), name="x")
-
-    full_data[x] = x0
-
-    x = tf.Print(x,
-        [tf.reduce_min(x), tf.reduce_max(x)], "x")
+    # x = tf.placeholder(tf.float32, shape=(None, n), name="x")
+    # full_data[x] = x0
 
     # x = tf.log(
     #     rnaseq_approx_likelihood_sampler_from_vars(None, n, vars))
@@ -211,18 +234,19 @@ def estimate_tsne(
         lyr2 = tf.layers.dense(
             lyr1, 500,
             activation=activation,
-            bias_initializer=tf.zeros_initializer())
-            # kernel_initializer=tf.random_normal_initializer(0.0, 0.01))
+            # bias_initializer=tf.zeros_initializer())
+            kernel_initializer=tf.random_normal_initializer(0.0, 0.01))
 
-        lyr3 = tf.layers.dense(
-            lyr1, 2000,
-            activation=activation,
-            bias_initializer=tf.zeros_initializer())
-            # kernel_initializer=tf.random_normal_initializer(0.0, 0.01))
+        # lyr3 = tf.layers.dense(
+        #     lyr1, 2000,
+        #     activation=activation,
+        #     bias_initializer=tf.zeros_initializer())
+        #     # kernel_initializer=tf.random_normal_initializer(0.0, 0.01))
 
         z = tf.layers.dense(
-            lyr3,
+            lyr2,
             num_pca_components,
+            kernel_initializer=tf.random_normal_initializer(0.0, 0.01),
             activation=tf.identity)
     else:
         z = tf.layers.dense(
@@ -232,8 +256,12 @@ def estimate_tsne(
             bias_initializer=tf.zeros_initializer(),
             kernel_initializer=tf.random_normal_initializer(0.0, 0.0001))
 
-    z = tf.Print(z,
-        [tf.reduce_min(z), tf.reduce_max(z)], "z")
+        # directly placing z (doesn't work with minibatch sampling)
+        # z = tf.Variable(
+        #     tf.random_normal([num_samples, num_pca_components]),
+        #     trainable=True,
+        #     name="z")
+
     tf.summary.histogram("z", z)
 
     # for numerical stability
@@ -242,15 +270,12 @@ def estimate_tsne(
     print(x)
     print(tsne_sigmas)
 
-    p = tsne_p(x, tsne_sigmas) # [B, B]
+    p = tsne_p(x, tsne_sigmas, use_vlr) # [B, B]
     p += eps
-    p = tf.Print(p, [tf.reduce_min(p), tf.reduce_max(p)], "p")
-    # p = tf.Print(p, [p], "p", summarize=16)
+    # p = tf.Print(p, [p], "p", summarize=25)
 
-    q = tsne_q(z, alpha) # [B, B]
+    q = tsne_q(z, alpha, use_vlr) # [B, B]
     q += eps
-    # q = tf.Print(q, [q], "q", summarize=16)
-    q = tf.Print(q, [tf.reduce_min(q), tf.reduce_max(q)], "q")
 
     tf.summary.histogram("p", p)
     tf.summary.histogram("q", q)
@@ -265,9 +290,12 @@ def estimate_tsne(
 
     tf.summary.scalar("loss", loss)
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=1e-8)
+    optimizer = tf.train.AdamOptimizer(
+        learning_rate=1e-6, beta1=0.9, beta2=0.99)
     train = optimizer.minimize(loss)
-    sample_minibatch(feed_dict, full_data, num_samples, B)
+
+    # sample_minibatch(feed_dict, full_data, num_samples, B)
+    feed_dict = full_data
 
     init = tf.global_variables_initializer()
     sess.run(init, feed_dict=feed_dict)
@@ -283,17 +311,18 @@ def estimate_tsne(
     train_writer = tf.summary.FileWriter("log/" + "run-" + str(np.random.randint(1, 1000000)), sess.graph)
     k = 0
     for iter in range(n_iter):
+        # sample_minibatch(feed_dict, full_data, num_samples, B)
         for subiter in range(n_iter_per_batch):
-            sample_minibatch(feed_dict, full_data, num_samples, B)
+            # sample_minibatch_row(feed_dict, full_data, num_samples, B)
             _, loss_value = sess.run([train, loss], feed_dict=feed_dict)
-            prog.update(iter, loss=loss_value)
+            prog.update(k+1, loss=loss_value)
             train_writer.add_summary(
                 sess.run(merged_summary, feed_dict=feed_dict), k)
             k += 1
 
     # sample z and average
     z_estimate = np.zeros((num_samples, num_pca_components))
-    n_est_iterations = 100
+    n_est_iterations = 10
     for iter in range(n_est_iterations):
         z_estimate += sess.run(z, feed_dict=full_data) / n_est_iterations
 

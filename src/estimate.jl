@@ -22,7 +22,7 @@ function load_samples_from_specification(
             get(sample, "file", string(sample["name"], prep_file_suffix)))
         factors = Dict{String, String}()
         for (factor_type, factor) in get(sample, "factors", Dict{String, String}())
-            factors[factor_type] = factor
+            factors[factor_type] = string(factor)
         end
         push!(sample_factors, factors)
     end
@@ -37,6 +37,7 @@ function load_samples_from_specification(
         filenames = filenames[p]
         sample_names = sample_names[p]
         sample_factors = sample_factors[p]
+        num_samples = max_num_samples
     end
 
     batch_size = batch_size === nothing ?
@@ -207,13 +208,13 @@ function load_samples_hdf5(
         Dict{Any, Any}(),
         Vector{String}[], String[])
 
-    create_tensorflow_variables!(ls)
+    create_tensorflow_variables!(ls, batch_size)
 
     return ls
 end
 
 
-function create_tensorflow_variables!(ls::LoadedSamples)
+function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing)
     var_names = [
         "efflen",
         "la_mu",
@@ -239,13 +240,26 @@ function create_tensorflow_variables!(ls::LoadedSamples)
 
     for (name, val) in zip(var_names, var_values)
         typ = eltype(val) == Float32 ? tf.float32 : tf.int32
-        # sz = (batch_size, size(val)[2:end]...)
+        if batch_size !== nothing
+            # sz = (batch_size, size(val)[2:end]...)
+            sz = (nothing, size(val)[2:end]...)
+        else
+            sz = size(val)
+        end
+
         # sz = (nothing, size(val)[2:end]...)
-        sz = size(val)
-        var_init = tf.placeholder(typ, shape=sz)
-        var = tf.Variable(var_init, name=name, trainable=false)
-        ls.variables[name] = var
+        var_init = tf.placeholder(typ, shape=sz, name=string(name, "-placeholder"))
         ls.init_feed_dict[var_init] = val
+
+        # if we are batching, no point in initializing variables
+        # the variables only exsit so we can initialize once without
+        # having to feed the same data repeatedly.
+        if batch_size !== nothing
+            ls.variables[name] = var_init
+        else
+            var = tf.Variable(var_init, name=name, trainable=false)
+            ls.variables[name] = var
+        end
     end
 end
 

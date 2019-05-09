@@ -74,6 +74,13 @@ function approximate_splicing_likelihood(
         loaded_samples.init_feed_dict, loaded_samples.variables,
         num_samples, num_features, n, feature_indices, antifeature_indices, sess)
 
+    open("splicing-approx.csv", "w") do output
+        println(output, "i,j,loc,scale")
+        for i in 1:size(qx_feature_loc, 1), j in 1:size(qx_feature_loc, 2)
+            println(output, i, ",", j, ",", qx_feature_loc[i, j], ",", qx_feature_scale[i, j])
+        end
+    end
+
     return (qx_feature_loc, qx_feature_scale)
 end
 

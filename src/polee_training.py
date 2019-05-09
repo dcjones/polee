@@ -47,8 +47,8 @@ def train(sess, objective, init_feed_dict, n_iter, learning_rate, var_list=None)
     init = tf.global_variables_initializer()
     prog = Progbar(50, n_iter)
 
-    # tf.summary.scalar("loss", objective)
-    # merged_summary = tf.summary.merge_all()
+    tf.summary.scalar("loss", objective)
+    merged_summary = tf.summary.merge_all()
 
     # with tf.Session() as sess:
     # train_writer = tf.summary.FileWriter("log/" + "run-" + str(np.random.randint(1, 1000000)), sess.graph)

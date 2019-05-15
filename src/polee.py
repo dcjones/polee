@@ -15,8 +15,6 @@ from polee_splicing import *
 from polee_dropout import *
 from polee_transcript_mixture import *
 from polee_transcript_vae_mixture import *
-from polee_tsne import *
-from polee_linear_regression import *
 
 
 

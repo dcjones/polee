@@ -7,7 +7,7 @@ mutable struct ApproxLikelihoodSampler
     mu::Vector{Float32}
     sigma::Vector{Float32}
     alpha::Vector{Float32}
-    t::HSBTransform
+    t::PolyaTreeTransform
 
     function ApproxLikelihoodSampler()
         return new(
@@ -18,7 +18,7 @@ end
 
 function set_transform!(
         als::ApproxLikelihoodSampler,
-        t::HSBTransform,
+        t::PolyaTreeTransform,
         mu::Vector{Float32},
         sigma::Vector{Float32},
         alpha::Vector{Float32})
@@ -40,7 +40,7 @@ function Random.rand!(als::ApproxLikelihoodSampler, xs::AbstractArray)
     end
     sinh_asinh_transform!(als.alpha, als.zs, als.zs, Val{true})
     logit_normal_transform!(als.mu, als.sigma, als.zs, als.ys, Val{true})
-    hsb_transform!(als.t, als.ys, xs, Val{true})
+    transform!(als.t, als.ys, xs, Val(false))
 end
 
 
@@ -49,7 +49,7 @@ Compute element-wise quantiles of the approximated likelihood.
 """
 function Statistics.quantile(
         loaded_samples::LoadedSamples,
-        transforms::Vector{HSBTransform}, qs=(0.01, 0.99), N=100)
+        transforms::Vector{PolyaTreeTransform}, qs=(0.01, 0.99), N=100)
 
     num_samples, n = size(loaded_samples.x0_values)
     als = ApproxLikelihoodSampler()
@@ -82,4 +82,37 @@ function Statistics.quantile(
     return quantiles
 end
 
+
+function posterior_mean(loaded_samples::LoadedSamples, N=100)
+    num_samples, n = size(loaded_samples.x0_values)
+    als = ApproxLikelihoodSampler()
+
+    n = size(loaded_samples.x0_values, 2)
+    pm = similar(loaded_samples.x0_values)
+    fill!(pm, 0.0f0)
+    xs = Array{Float32}(undef, n)
+
+    for i in 1:num_samples
+        input = h5open(loaded_samples.sample_filenames[i])
+        node_parent_idxs = read(input["node_parent_idxs"])
+        node_js          = read(input["node_js"])
+        t = PolyaTreeTransform(node_parent_idxs, node_js)
+        close(input)
+
+        set_transform!(
+            als, t,
+            loaded_samples.la_mu_values[i,:],
+            loaded_samples.la_sigma_values[i,:],
+            loaded_samples.la_alpha_values[i,:])
+
+        for k in 1:N
+            rand!(als, xs)
+            clamp!(xs, 1f-15, 0.9999999f0)
+            pm[i,:] .+= xs;
+        end
+    end
+    pm ./= N;
+
+    return pm
+end
 

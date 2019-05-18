@@ -591,7 +591,7 @@ function polee_sample(parsed_args::Dict{String, Any})
     sigma = exp.(read(input["omega"]))
     alpha = read(input["alpha"])
 
-    t = HSBTransform(node_parent_idxs, node_js)
+    t = PolyaTreeTransform(node_parent_idxs, node_js)
 
     num_samples = parsed_args["num-samples"]
     samples = Array{Float32}(undef, (num_samples, n))

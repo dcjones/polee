@@ -462,5 +462,6 @@ mutable struct LoadedSamples
 
     sample_factors::Vector{Dict{String, String}}
     sample_names::Vector{String}
+    sample_filenames::Vector{String}
 end
 

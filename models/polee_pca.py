@@ -18,8 +18,8 @@ def estimate_transcript_pca(
 
     # likelihood
     log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
-    # tf.summary.scalar("log_prior", log_prior)
-    # tf.summary.scalar("log_likelihood", log_likelihood)
+    tf.summary.scalar("log_prior", log_prior)
+    tf.summary.scalar("log_likelihood", log_likelihood)
     log_posterior = log_likelihood + log_prior
 
     sess = tf.Session()
@@ -29,7 +29,7 @@ def estimate_transcript_pca(
         train(sess, -log_prior, init_feed_dict, 1000, 5e-2)
     else:
         train(
-            sess, -log_posterior, init_feed_dict, 500, 5e-2,
+            sess, -log_posterior, init_feed_dict, 1000, 5e-2,
             var_list=tf.trainable_variables() + [x, x_scale_softminus])
 
     return (sess.run(z), sess.run(w))
@@ -53,7 +53,7 @@ def estimate_feature_pca(
         train(sess, -log_prior, {}, 1000, 5e-2)
     else:
         train(
-            sess, -log_posterior, {}, 2000, 5e-2,
+            sess, -log_posterior, {}, 1000, 5e-2,
             var_list=tf.trainable_variables() + [x, x_scale_softminus])
 
     return (sess.run(z), sess.run(w))
@@ -77,10 +77,25 @@ def pca_model(num_samples, n, num_pca_components, x_init, x_bias_loc0):
 
     log_prior += tf.reduce_sum(x_bias_prior.log_prob(x_bias))
 
+    τ = tf.nn.softplus(tf.Variable(0.0, name="tau"))
+    τ_prior = tfd.HalfCauchy(0.0, 1.0)
+    log_prior += τ_prior.log_prob(τ)
+    tf.summary.scalar("tau", τ)
+
+    # λ = tf.nn.softplus(tf.Variable(np.full(n, -3.0, dtype=np.float32), name="lambda"))
+    λ = tf.nn.softplus(tf.Variable(
+        np.full((n, num_pca_components), -3.0, dtype=np.float32), name="lambda"))
+
+    λ_prior = tfd.HalfCauchy(0.0, τ)
+    log_prior += tf.reduce_sum(λ_prior.log_prob(λ))
+    tf.summary.histogram("lambda", λ)
+
     # w
     w_prior = tfd.Normal(
         loc=tf.constant(0.0, dtype=tf.float32),
-        scale=tf.constant(1.0, dtype=tf.float32),
+        # scale=tf.constant(1.0, dtype=tf.float32),
+        # scale=tf.expand_dims(λ, -1),
+        scale=λ,
         name="w_prior")
 
     # w_prior = tfd.StudentT(
@@ -151,7 +166,7 @@ def pca_model(num_samples, n, num_pca_components, x_init, x_bias_loc0):
     x_prior = tfd.StudentT(
         loc=x_loc,
         scale=x_scale,
-        df=10.0,
+        df=1.0,
         name="x_prior")
 
     x = tf.Variable(

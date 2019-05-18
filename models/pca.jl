@@ -8,6 +8,7 @@ using .PoleeModel
 using ArgParse
 using YAML
 using PyCall
+using Statistics
 import Random
 
 
@@ -76,7 +77,16 @@ function main()
 
     num_samples, n = size(loaded_samples.x0_values)
     num_pca_components = Int(get(parsed_args, "num-components", 2))
+
+
     x0_log = log.(loaded_samples.x0_values)
+
+    # try finding the actual posterior mean
+    # (x0 is approximately the mean)
+    if parsed_args["posterior-mean"]
+        x0_log = log.(Polee.posterior_mean(loaded_samples))
+    end
+
     gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
     if feature == "transcript"
@@ -98,6 +108,27 @@ function main()
         sess.close()
         # create_tensorflow_variables!(loaded_samples)
         num_features = size(qx_loc, 2)
+
+        # open("splicing-estimates-for-pca.csv", "w") do output
+        #     for (j, sample_name) in enumerate(loaded_samples.sample_names)
+        #         if j > 1
+        #             print(output, ",")
+        #         end
+        #         print(output, sample_name)
+        #     end
+        #     println(output)
+
+        #     for i in 1:num_features
+        #         for j in 1:num_samples
+        #             if j > 1
+        #                 print(output, ",")
+        #             end
+        #             print(output, qx_loc[j, i])
+        #         end
+        #         println(output)
+        #     end
+        # end
+        # exit()
 
         z, w = polee_pca_py.estimate_feature_pca(
             qx_loc, qx_scale, num_samples, num_features, num_pca_components,

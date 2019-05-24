@@ -28,7 +28,6 @@ arg_settings.prog = "polee model pca"
     "--posterior-mean"
         help = "Use posterior mean point estimate instead of the full model"
         action = :store_true
-        default = false
     "--output-z"
         metavar = "filename"
         help = "Output file for PCA projection"
@@ -37,6 +36,12 @@ arg_settings.prog = "polee model pca"
         metavar = "filename"
         help = "Output file for PCA transcript weights"
         default = nothing
+    "--neural-network"
+        help = """
+        Use a neural network in place of the linear transformation.
+        (i.e. Probabalistic decoder instead of PCA)
+        """
+        action = :store_true
     "--max-num-samples"
         metavar = "N"
         help = "Only run the model on a randomly selected subset of N samples"
@@ -78,7 +83,6 @@ function main()
     num_samples, n = size(loaded_samples.x0_values)
     num_pca_components = Int(get(parsed_args, "num-components", 2))
 
-
     x0_log = log.(loaded_samples.x0_values)
 
     # try finding the actual posterior mean
@@ -93,7 +97,8 @@ function main()
         z, w = polee_pca_py.estimate_transcript_pca(
             loaded_samples.init_feed_dict, num_samples, n,
             loaded_samples.variables, x0_log, num_pca_components,
-            parsed_args["posterior-mean"])
+            parsed_args["posterior-mean"],
+            parsed_args["neural-network"])
 
         if parsed_args["output-w"] !== nothing
             write_pca_w(parsed_args["output-w"], ts, w)
@@ -132,7 +137,8 @@ function main()
 
         z, w = polee_pca_py.estimate_feature_pca(
             qx_loc, qx_scale, num_samples, num_features, num_pca_components,
-            parsed_args["posterior-mean"])
+            parsed_args["posterior-mean"],
+            parsed_args["neural-network"])
 
         if parsed_args["output-w"] !== nothing
             write_pca_w(

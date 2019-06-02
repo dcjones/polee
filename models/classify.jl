@@ -63,10 +63,12 @@ function main()
 
     z_true, factor_names =
         build_factor_matrix(loaded_samples, parsed_args["factor"])
+    K = length(factor_names)
+
+    @show z_true
 
     x0 = log.(loaded_samples.x0_values)
 
-    sess = tf.Session()
     polee_classify_py = pyimport("polee_classify")
 
     num_train_samples = round(Int, num_samples*parsed_args["training-prop"])
@@ -81,27 +83,63 @@ function main()
 
     create_tensorflow_variables!(loaded_samples, num_train_samples)
 
-    feed_dict_subset = subset_feed_dict(loaded_samples.init_feed_dict, train_idx)
+    train_feed_dict_subset = subset_feed_dict(
+        loaded_samples.init_feed_dict, train_idx)
 
-    # TODO: need to subset everything that we feed in here
     classify_model = polee_classify_py.train_classifier(
         sess,
-        feed_dict_subset,
+        train_feed_dict_subset,
         num_train_samples,
         n,
         loaded_samples.variables,
         x0[train_idx,:],
         z_true[train_idx,:])
 
-    # TODO: now run a separate test function. Need to reset the graph/sess in
-    # between.
+    tf.reset_default_graph()
+    sess.close()
+    sess = tf.Session()
+    tf.keras.backend.set_session(sess)
 
-    # sess = tf.Session()
     # num_test_samples = num_samples - num_train_samples
+
     # create_tensorflow_variables!(loaded_samples, num_test_samples)
 
-    # TODO: function to make confusion matrix. 
+    # test_feed_dict_subset = subset_feed_dict(
+    #     loaded_samples.init_feed_dict, test_idx)
 
+    # z_predict = polee_classify_py.run_classifier(
+    #     sess,
+    #     classify_model,
+    #     test_feed_dict_subset,
+    #     num_test_samples,
+    #     n,
+    #     loaded_samples.variables,
+    #     x0[test_idx,:],
+    #     K)
+
+    # M = confusion_matrx(z_predict, z_true[test_idx,:])
+
+
+    # Testing on training data just to debug
+
+    create_tensorflow_variables!(loaded_samples, num_train_samples)
+
+    train_feed_dict_subset = subset_feed_dict(
+        loaded_samples.init_feed_dict, train_idx)
+
+    z_predict = polee_classify_py.run_classifier(
+        sess,
+        classify_model,
+        train_feed_dict_subset,
+        num_train_samples,
+        n,
+        loaded_samples.variables,
+        x0[train_idx,:],
+        K)
+
+    M = confusion_matrx(z_predict, z_true[train_idx,:])
+
+    println(M)
 end
 
 
@@ -151,7 +189,19 @@ end
 
 
 function confusion_matrx(z_predict, z_true)
-    # TODO:
+    @assert size(z_predict) == size(z_true)
+
+    num_samples, num_classes = size(z_true)
+    M = zeros(Int, (num_classes, num_classes))
+
+    @show z_true
+    @show z_predict
+
+    for (i, j) in zip(argmax(z_true, dims=2), argmax(z_predict, dims=2))
+        M[i[2], j[2]] += 1
+    end
+
+    return M
 end
 
 

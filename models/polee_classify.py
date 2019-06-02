@@ -40,37 +40,41 @@ def make_train_test_sets(
 
 
 def classification_model(
-        vars, n, K, num_samples, temperature_init=5.0, p_logits_init=None):
+        vars, n, K, num_samples, training=True,
+        temperature_init=5.0, p_logits_init=None):
 
     if p_logits_init is None:
         p_logits_init = tf.zeros(K)
 
     log_prior = 0.0
 
-    p_logits = tf.Variable(p_logits_init, name="p_logits")
+    # TODO: figure out how to fit this if we can't use gumbel-softmax during
+    # training.
+    p_logits = tf.Variable(p_logits_init, name="p_logits", trainable=False)
     p = tf.nn.softmax(p_logits)
 
-    p_prior = tfd.Dirichlet(tf.ones(K))
-    log_prior += tf.reduce_sum(p_prior.log_prob(p))
+    # p_prior = tfd.Dirichlet(tf.ones(K))
+    # log_prior += tf.reduce_sum(p_prior.log_prob(p))
 
-    # TODO: this doesn't work for training because Gumbel-Softmax is not actually
-    # defined over one-hot encodings, but I think it's still the right approach
-    # when testing to optimize z using this prior.
-    # temperature = tf.Variable(temperature_init, name="temperature")
-    # z_prior = tfd.RelaxedOneHotCategorical(
-    #     temperature,
-    #     probs=p,
-    #     name="z_prior")
+    if training:
+        z_ph = tf.placeholder(tf.float32, shape=(num_samples, K))
+        z = tf.Variable(z_ph, name="z", trainable=False)
+    else:
+        z_ph = None
+        z = tf.nn.softmax(tf.Variable(tf.zeros((num_samples, K)), name="z"), axis=1)
+        # z = tf.Variable(tf.fill((num_samples, K), 1/K), name="z")
 
-    # one-hot (pseudo-)categorical classification
-    z_ph = tf.placeholder(tf.float32, shape=(num_samples, K))
-    z = tf.Variable(z_ph, name="z", trainable=False)
+        temperature = tf.Variable(temperature_init, name="temperature")
+        z_prior = tfd.RelaxedOneHotCategorical(
+            temperature,
+            probs=p,
+            name="z_prior")
+        # log_prior += tf.reduce_sum(z_prior.log_prob(z))
 
-    # log_prior += tf.reduce_sum(z_prior.log_prob(z))
-
-    lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu, use_bias=True)
     lyr1_output = lyr1(z)
-    lyrn_output = tf.keras.layers.Dense(n)(lyr1_output)
+    lyrn = tf.keras.layers.Dense(n)
+    lyrn_output = lyrn(lyr1_output)
     x_loc = lyrn_output
 
     x_scale = tf.nn.softplus(tf.Variable(tf.fill([n], -3.0), name="x_scale"))
@@ -94,7 +98,7 @@ def classification_model(
 
     log_posterior = log_likelihood + log_prior
 
-    return log_posterior, z_ph, x_ph, lyr1
+    return log_posterior, z, z_ph, x_ph, lyr1, lyrn
 
 
 # K is number of components, D is dimensionality of the latent space
@@ -103,11 +107,8 @@ def train_classifier(
 
     K = z_true.shape[1] # number of categories
 
-    # TRAINING
-    # --------
-
-    log_posterior, z_ph, x_ph, lyr1 = \
-        classification_model(vars, n, K, num_samples)
+    log_posterior, z, z_ph, x_ph, lyr1, lyrn = \
+        classification_model(vars, n, K, num_samples, training=True)
 
     init_feed_dict[z_ph] = z_true
     init_feed_dict[x_ph] = x_init
@@ -133,40 +134,43 @@ def train_classifier(
     print()
 
     lyr1_weights = lyr1.get_weights()
+    lyrn_weights = lyrn.get_weights()
+    print(lyr1_weights)
+    print(lyrn_weights)
 
     return {
         "lyr1_weights": lyr1_weights,
+        "lyrn_weights": lyrn_weights
     }
 
 
-    # sys.exit()
+def run_classifier(
+        sess, classify_model, init_feed_dict, num_samples, n, vars, x_init, K):
 
-    # # TESTING
-    # # -------
+    log_posterior, z, z_ph, x_ph, lyr1, lyrn = \
+        classification_model(vars, n, K, num_samples, training=False)
 
-    # # get model params
+    init_feed_dict[x_ph] = x_init
 
-    # sess = tf.Session()
+    tf.summary.scalar("log_posterior", log_posterior)
 
-    # log_posterior, z_ph, x_ph, p_logits, temperature, lyr1 = \
-    #     classification_model(vars, n, K, num_test_samples,
-    #     temperature_init, p_logits_init)
+    learning_rate = 2e-2
+    n_iter = 500
 
-    # test_feed_dict[z_ph] = tf.fill([num_test_samples, K], 1/K)
-    # test_feed_dict[x_ph] = x_init[test_idx,:]
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+    train = optimizer.minimize(-log_posterior, var_list=tf.trainable_variables())
 
-    # test_trainable_vars = [z, x]
-    # train = optimizer.minimize(-log_posterior, var_list=test_trainable_vars)
+    prog = Progbar(50, n_iter)
 
-    # prog = Progbar(50, n_iter)
-    # sess.run(tf.global_variables_initializer(), feed_dict=test_feed_dict)
+    sess.run(tf.global_variables_initializer(), feed_dict=init_feed_dict)
 
-    # lyr1.set_weights(lyr1_weights)
+    lyr1.set_weights(classify_model["lyr1_weights"])
+    lyrn.set_weights(classify_model["lyrn_weights"])
 
-    # for iter in range(n_iter):
-    #     _, obj_value = sess.run([train, -log_posterior], feed_dict=test_feed_dict)
-    #     prog.update(iter, loss=obj_value)
-    # print()
+    for iter in range(n_iter):
+        _, obj_value = sess.run([train, -log_posterior])
+        prog.update(iter, loss=obj_value)
+    print()
 
-    # # need to also know indexes, unless we just want to evaluate accuracy here.
-    # return sess.run([z], feed_dict=test_feed_dict), z_true[test_idx,:]
+    return sess.run(z)
+

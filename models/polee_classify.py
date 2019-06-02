@@ -8,169 +8,116 @@ from polee_training import *
 import sys
 
 
-# split data into training and test sets
-def make_train_test_sets(
-        full_data, x_init, z_true,
-        num_samples, num_train_samples):
-    idxs = np.array([i for i in range(num_samples)])
-    np.random.shuffle(idxs)
 
-    train_idx = idxs[0:num_train_samples]
-    test_idx = idxs[num_train_samples:]
+def classification_model(x, vars, n, K, num_samples, dropout_rate):
 
-    train_feed_dict = {}
-    test_feed_dict = {}
+    # lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    # lyr1_output = lyr1(x)
 
-    for (var, arr) in full_data.items():
-        if len(arr.shape) > 1:
-            train_feed_dict[var] = arr[train_idx,:]
-            test_feed_dict[var] = arr[test_idx,:]
-        else:
-            train_feed_dict[var] = arr[train_idx]
-            test_feed_dict[var] = arr[test_idx]
+    # drp1 = tf.keras.layers.Dropout(rate=dropout_rate)
+    # drp1_output = drp1(lyr1_output)
 
-    # train_feed_dict[z_ph] = z_true[train_idx,:]
-    # test_feed_dict[z_ph] = tf.fill([num_samples-num_train_samples, K], 1/K)
+    # lyr2 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    # lyr2_output = lyr2(drp1_output)
 
-    # train_feed_dict[x_ph] = x_init[train_idx,:]
-    # test_feed_dict[x_ph] = x_init[test_idx,:]
+    # drp2 = tf.keras.layers.Dropout(rate=dropout_rate)
+    # drp2_output = drp2(lyr2_output)
 
-    return (train_feed_dict, test_feed_dict, train_idx, test_idx)
+    # lyrn = tf.keras.layers.Dense(K)
+    # z_predict_logits = lyrn(drp2_output)
 
 
+    lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    lyr1_output = lyr1(x)
 
-def classification_model(
-        vars, n, K, num_samples, training=True,
-        temperature_init=5.0, p_logits_init=None):
+    lyr2 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    lyr2_output = lyr2(lyr1_output)
 
-    if p_logits_init is None:
-        p_logits_init = tf.zeros(K)
+    lyr3 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    lyr3_output = lyr3(lyr2_output)
 
-    log_prior = 0.0
+    lyrn = tf.keras.layers.Dense(K)
+    # z_predict_logits = lyrn(lyr3_output)
+    z_predict_logits = lyrn(x)
 
-    # TODO: figure out how to fit this if we can't use gumbel-softmax during
-    # training.
-    p_logits = tf.Variable(p_logits_init, name="p_logits", trainable=False)
-    p = tf.nn.softmax(p_logits)
-
-    # p_prior = tfd.Dirichlet(tf.ones(K))
-    # log_prior += tf.reduce_sum(p_prior.log_prob(p))
-
-    if training:
-        z_ph = tf.placeholder(tf.float32, shape=(num_samples, K))
-        z = tf.Variable(z_ph, name="z", trainable=False)
-    else:
-        z_ph = None
-        z = tf.nn.softmax(tf.Variable(tf.zeros((num_samples, K)), name="z"), axis=1)
-        # z = tf.Variable(tf.fill((num_samples, K), 1/K), name="z")
-
-        temperature = tf.Variable(temperature_init, name="temperature")
-        z_prior = tfd.RelaxedOneHotCategorical(
-            temperature,
-            probs=p,
-            name="z_prior")
-        # log_prior += tf.reduce_sum(z_prior.log_prob(z))
-
-    lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu, use_bias=True)
-    lyr1_output = lyr1(z)
-    lyrn = tf.keras.layers.Dense(n)
-    lyrn_output = lyrn(lyr1_output)
-    x_loc = lyrn_output
-
-    x_scale = tf.nn.softplus(tf.Variable(tf.fill([n], -3.0), name="x_scale"))
-    x_scale_prior = tfd.HalfCauchy(
-        loc=0.0,
-        scale=0.1,
-        name="x_scale_prior")
-    log_prior += tf.reduce_sum(x_scale_prior.log_prob(x_scale))
-
-    x_prior = tfd.StudentT(
-        loc=x_loc,
-        scale=x_scale,
-        df=1.0,
-        name="x_prior")
-
-    x_ph = tf.placeholder(tf.float32, shape=(num_samples, n))
-    x = tf.Variable(x_ph, name="x")
-    log_prior += tf.reduce_sum(x_prior.log_prob(x))
-
-    log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
-
-    log_posterior = log_likelihood + log_prior
-
-    return log_posterior, z, z_ph, x_ph, lyr1, lyrn
+    return z_predict_logits, lyr1, lyr2, lyr3, lyrn
 
 
 # K is number of components, D is dimensionality of the latent space
 def train_classifier(
-        sess, init_feed_dict, num_samples, n, vars, x_init, z_true):
+        sess, init_feed_dict, num_samples, n, vars, x_init, z_true,
+        use_posterior_mean):
 
     K = z_true.shape[1] # number of categories
 
-    log_posterior, z, z_ph, x_ph, lyr1, lyrn = \
-        classification_model(vars, n, K, num_samples, training=True)
+    if use_posterior_mean:
+        x = tf.constant(x_init, name="x")
+    else:
+        # x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
 
-    init_feed_dict[z_ph] = z_true
-    init_feed_dict[x_ph] = x_init
+        # Seems to do much worse on log scale
+        x = tf.log(rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars))
 
-    tf.summary.scalar("log_posterior", log_posterior)
+    z_predict_logits, lyr1, lyr2, lyr3, lyrn = classification_model(x, vars, n, K, num_samples, 0.5)
 
-    learning_rate = 2e-2
-    n_iter = 500
+    # z_predict_logits = tf.Print(
+    #     z_predict_logits, [tf.reduce_min(z_predict_logits), tf.reduce_max(z_predict_logits)], "z_predict_logits span")
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
-    train = optimizer.minimize(-log_posterior, var_list=tf.trainable_variables())
+    loss = tf.losses.softmax_cross_entropy(z_true, logits=z_predict_logits)
 
-    prog = Progbar(50, n_iter)
-    merged_summary = tf.summary.merge_all()
+    train(sess, loss, init_feed_dict, 2000, 1e-3)
 
-    sess.run(tf.global_variables_initializer(), feed_dict=init_feed_dict)
-
-    train_writer = tf.summary.FileWriter("log/" + "run-" + str(np.random.randint(1, 1000000)), sess.graph)
-    for iter in range(n_iter):
-        _, obj_value = sess.run([train, -log_posterior])
-        prog.update(iter, loss=obj_value)
-        train_writer.add_summary(sess.run(merged_summary), iter)
-    print()
-
-    lyr1_weights = lyr1.get_weights()
-    lyrn_weights = lyrn.get_weights()
-    print(lyr1_weights)
-    print(lyrn_weights)
+    lyr1_weights = sess.run(lyr1.weights)
+    lyr2_weights = sess.run(lyr2.weights)
+    lyr3_weights = sess.run(lyr3.weights)
+    lyrn_weights = sess.run(lyrn.weights)
 
     return {
-        "lyr1_weights": lyr1_weights,
-        "lyrn_weights": lyrn_weights
+        "lyr1": lyr1_weights,
+        "lyr2": lyr2_weights,
+        "lyr3": lyr3_weights,
+        "lyrn": lyrn_weights
     }
 
 
 def run_classifier(
-        sess, classify_model, init_feed_dict, num_samples, n, vars, x_init, K):
+        sess, classify_model, init_feed_dict, num_samples, n, vars, x_init, K,
+        use_posterior_mean):
 
-    log_posterior, z, z_ph, x_ph, lyr1, lyrn = \
-        classification_model(vars, n, K, num_samples, training=False)
+    if use_posterior_mean:
+        x = tf.constant(x_init, name="x")
+    else:
+        # x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
 
-    init_feed_dict[x_ph] = x_init
+        x = tf.log(rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars))
 
-    tf.summary.scalar("log_posterior", log_posterior)
+    z_predict_logits, lyr1, lyr2, lyr3, lyrn = classification_model(x, vars, n, K, num_samples, 0.0)
 
-    learning_rate = 2e-2
-    n_iter = 500
+    # z_predict_logits = tf.Print(
+    #     z_predict_logits, [tf.reduce_min(z_predict_logits), tf.reduce_max(z_predict_logits)], "z_predict_logits span")
 
-    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
-    train = optimizer.minimize(-log_posterior, var_list=tf.trainable_variables())
+    # Idea here is to run this a bunch of times and average the results
+    init = tf.global_variables_initializer()
+    sess.run(init, feed_dict=init_feed_dict)
 
+    # lyr1.set_weights(classify_model["lyr1"])
+    # lyrn.set_weights(classify_model["lyrn"])
+    sess.run(tf.assign(lyr1.weights[0], classify_model["lyr1"][0]))
+    sess.run(tf.assign(lyr1.weights[1], classify_model["lyr1"][1]))
+    sess.run(tf.assign(lyr2.weights[0], classify_model["lyr2"][0]))
+    sess.run(tf.assign(lyr2.weights[1], classify_model["lyr2"][1]))
+    sess.run(tf.assign(lyr3.weights[0], classify_model["lyr3"][0]))
+    sess.run(tf.assign(lyr3.weights[1], classify_model["lyr3"][1]))
+    sess.run(tf.assign(lyrn.weights[0], classify_model["lyrn"][0]))
+    sess.run(tf.assign(lyrn.weights[1], classify_model["lyrn"][1]))
+
+    n_iter = 50
     prog = Progbar(50, n_iter)
-
-    sess.run(tf.global_variables_initializer(), feed_dict=init_feed_dict)
-
-    lyr1.set_weights(classify_model["lyr1_weights"])
-    lyrn.set_weights(classify_model["lyrn_weights"])
-
+    z_predict_logits_mean = np.zeros((num_samples, K), np.float32)
     for iter in range(n_iter):
-        _, obj_value = sess.run([train, -log_posterior])
-        prog.update(iter, loss=obj_value)
-    print()
+        z_predict_logits_mean += sess.run(z_predict_logits)
+        prog.update(iter, loss=0.0)
+    z_predict_logits_mean /= n_iter
 
-    return sess.run(z)
+    return sess.run(tf.nn.softmax(z_predict_logits_mean, axis=1))
 

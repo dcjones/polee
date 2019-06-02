@@ -30,6 +30,9 @@ arg_settings.prog = "polee model cluster"
         help = "Only run the model on a randomly selected subset of N samples"
         default = nothing
         arg_type = Int
+    "--posterior-mean"
+        help = "Use posterior mean point estimate instead of the full model"
+        action = :store_true
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification"
@@ -63,11 +66,12 @@ function main()
 
     z_true, factor_names =
         build_factor_matrix(loaded_samples, parsed_args["factor"])
+    @show factor_names
     K = length(factor_names)
 
-    @show z_true
-
+    # x0 = loaded_samples.x0_values
     x0 = log.(loaded_samples.x0_values)
+    # x0 = log.(Polee.posterior_mean(loaded_samples))
 
     polee_classify_py = pyimport("polee_classify")
 
@@ -93,53 +97,64 @@ function main()
         n,
         loaded_samples.variables,
         x0[train_idx,:],
-        z_true[train_idx,:])
+        z_true[train_idx,:],
+        parsed_args["posterior-mean"])
 
     tf.reset_default_graph()
     sess.close()
     sess = tf.Session()
     tf.keras.backend.set_session(sess)
 
-    # num_test_samples = num_samples - num_train_samples
 
-    # create_tensorflow_variables!(loaded_samples, num_test_samples)
+    num_test_samples = num_samples - num_train_samples
 
-    # test_feed_dict_subset = subset_feed_dict(
-    #     loaded_samples.init_feed_dict, test_idx)
+    create_tensorflow_variables!(loaded_samples, num_test_samples)
 
-    # z_predict = polee_classify_py.run_classifier(
-    #     sess,
-    #     classify_model,
-    #     test_feed_dict_subset,
-    #     num_test_samples,
-    #     n,
-    #     loaded_samples.variables,
-    #     x0[test_idx,:],
-    #     K)
-
-    # M = confusion_matrx(z_predict, z_true[test_idx,:])
-
-
-    # Testing on training data just to debug
-
-    create_tensorflow_variables!(loaded_samples, num_train_samples)
-
-    train_feed_dict_subset = subset_feed_dict(
-        loaded_samples.init_feed_dict, train_idx)
+    test_feed_dict_subset = subset_feed_dict(
+        loaded_samples.init_feed_dict, test_idx)
 
     z_predict = polee_classify_py.run_classifier(
         sess,
         classify_model,
-        train_feed_dict_subset,
-        num_train_samples,
+        test_feed_dict_subset,
+        num_test_samples,
         n,
         loaded_samples.variables,
-        x0[train_idx,:],
-        K)
+        x0[test_idx,:],
+        K,
+        # true)
+        parsed_args["posterior-mean"])
 
-    M = confusion_matrx(z_predict, z_true[train_idx,:])
+    M = confusion_matrx(z_predict, z_true[test_idx,:])
+
+
+    # Testing on training data just to debug
+
+    # create_tensorflow_variables!(loaded_samples, num_train_samples)
+
+    # train_feed_dict_subset = subset_feed_dict(
+    #     loaded_samples.init_feed_dict, train_idx)
+
+    # z_predict = polee_classify_py.run_classifier(
+    #     sess,
+    #     classify_model,
+    #     train_feed_dict_subset,
+    #     num_train_samples,
+    #     n,
+    #     loaded_samples.variables,
+    #     x0[train_idx,:],
+    #     K)
+
+    # M = confusion_matrx(z_predict, z_true[train_idx,:])
 
     println(M)
+
+    true_count = 0
+    for i in 1:size(M, 1)
+        true_count += M[i, i]
+    end
+    true_rate = true_count / sum(M)
+    @show true_rate
 end
 
 
@@ -194,8 +209,8 @@ function confusion_matrx(z_predict, z_true)
     num_samples, num_classes = size(z_true)
     M = zeros(Int, (num_classes, num_classes))
 
-    @show z_true
-    @show z_predict
+    # @show z_true
+    # @show z_predict
 
     for (i, j) in zip(argmax(z_true, dims=2), argmax(z_predict, dims=2))
         M[i[2], j[2]] += 1

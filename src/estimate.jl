@@ -9,8 +9,10 @@ Input:
 """
 function load_samples_from_specification(
         spec, ts, ts_metadata;
-        max_num_samples=nothing, batch_size=nothing, check_gff_hash::Bool=true,
-        transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
+        max_num_samples=nothing, batch_size=nothing,
+        check_gff_hash::Bool=true,
+        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
+        using_tensorflow::Bool=true)
 
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
     sample_names = String[]
@@ -46,7 +48,8 @@ function load_samples_from_specification(
     loaded_samples = load_samples(
         filenames, ts, ts_metadata, batch_size,
         check_gff_hash=check_gff_hash,
-        transforms=transforms)
+        transforms=transforms,
+        using_tensorflow=using_tensorflow)
     println("Sample data loaded")
 
     loaded_samples.sample_factors = sample_factors
@@ -75,16 +78,21 @@ Input:
 """
 function load_samples(
         filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
-        check_gff_hash::Bool=true, transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
+        check_gff_hash::Bool=true,
+        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
+        using_tensorflow::Bool=true)
     return load_samples_hdf5(
         filenames, ts, ts_metadata, batch_size,
-        check_gff_hash=check_gff_hash, transforms=transforms)
+        check_gff_hash=check_gff_hash, transforms=transforms,
+        using_tensorflow=using_tensorflow)
 end
 
 
 function load_samples_hdf5(
         filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
-        check_gff_hash::Bool=true, transforms::Union{Nothing, Vector{HSBTransform}}=nothing)
+        check_gff_hash::Bool=true,
+        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
+        using_tensorflow::Bool=true)
     num_samples = length(filenames)
     n = length(ts)
 
@@ -206,9 +214,13 @@ function load_samples_hdf5(
         leaf_index_values,
         Dict{String, Any}(),
         Dict{Any, Any}(),
-        Vector{String}[], String[])
+        Vector{String}[],
+        String[],
+        filenames)
 
-    create_tensorflow_variables!(ls, batch_size)
+    if using_tensorflow
+        create_tensorflow_variables!(ls, batch_size)
+    end
 
     return ls
 end
@@ -241,8 +253,8 @@ function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing)
     for (name, val) in zip(var_names, var_values)
         typ = eltype(val) == Float32 ? tf.float32 : tf.int32
         if batch_size !== nothing
-            # sz = (batch_size, size(val)[2:end]...)
-            sz = (nothing, size(val)[2:end]...)
+            sz = (batch_size, size(val)[2:end]...)
+            # sz = (nothing, size(val)[2:end]...)
         else
             sz = size(val)
         end
@@ -254,12 +266,12 @@ function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing)
         # if we are batching, no point in initializing variables
         # the variables only exsit so we can initialize once without
         # having to feed the same data repeatedly.
-        if batch_size !== nothing
-            ls.variables[name] = var_init
-        else
+        # if batch_size !== nothing
+        #     ls.variables[name] = var_init
+        # else
             var = tf.Variable(var_init, name=name, trainable=false)
             ls.variables[name] = var
-        end
+        # end
     end
 end
 

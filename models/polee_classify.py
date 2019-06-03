@@ -11,36 +11,40 @@ import sys
 
 def classification_model(x, vars, n, K, num_samples, dropout_rate):
 
-    # lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
-    # lyr1_output = lyr1(x)
-
-    # drp1 = tf.keras.layers.Dropout(rate=dropout_rate)
-    # drp1_output = drp1(lyr1_output)
-
-    # lyr2 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
-    # lyr2_output = lyr2(drp1_output)
-
-    # drp2 = tf.keras.layers.Dropout(rate=dropout_rate)
-    # drp2_output = drp2(lyr2_output)
-
-    # lyrn = tf.keras.layers.Dense(K)
-    # z_predict_logits = lyrn(drp2_output)
-
-
     lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
     lyr1_output = lyr1(x)
 
-    lyr2 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
-    lyr2_output = lyr2(lyr1_output)
+    drp1 = tf.keras.layers.Dropout(rate=dropout_rate)
+    drp1_output = drp1(lyr1_output)
 
-    lyr3 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
-    lyr3_output = lyr3(lyr2_output)
+    lyr2 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    lyr2_output = lyr2(drp1_output)
+
+    drp2 = tf.keras.layers.Dropout(rate=dropout_rate)
+    drp2_output = drp2(lyr2_output)
 
     lyrn = tf.keras.layers.Dense(K)
-    # z_predict_logits = lyrn(lyr3_output)
-    z_predict_logits = lyrn(x)
+    z_predict_logits = lyrn(drp2_output)
 
-    return z_predict_logits, lyr1, lyr2, lyr3, lyrn
+    return z_predict_logits, lyr1, lyr2, lyrn
+
+    # regularizer = tf.keras.regularizers.l2(0.01)
+
+    # lyr1 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    # lyr1_output = lyr1(x)
+
+    # lyr2 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    # lyr2_output = lyr2(lyr1_output)
+
+    # lyr3 = tf.keras.layers.Dense(128, activation=tf.nn.leaky_relu)
+    # lyr3_output = lyr3(lyr2_output)
+
+    # lyrn = tf.keras.layers.Dense(K)
+    # z_predict_logits = lyrn(lyr3_output)
+
+    # z_predict_logits = lyrn(x)
+
+    # return z_predict_logits, lyr1, lyr2, lyr3, lyrn
 
 
 # K is number of components, D is dimensionality of the latent space
@@ -58,24 +62,26 @@ def train_classifier(
         # Seems to do much worse on log scale
         x = tf.log(rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars))
 
-    z_predict_logits, lyr1, lyr2, lyr3, lyrn = classification_model(x, vars, n, K, num_samples, 0.5)
+    # z_predict_logits, lyr1, lyr2, lyr3, lyrn = classification_model(x, vars, n, K, num_samples, 0.5)
+    z_predict_logits, lyr1, lyr2, lyrn = classification_model(x, vars, n, K, num_samples, 0.5)
 
     # z_predict_logits = tf.Print(
     #     z_predict_logits, [tf.reduce_min(z_predict_logits), tf.reduce_max(z_predict_logits)], "z_predict_logits span")
 
     loss = tf.losses.softmax_cross_entropy(z_true, logits=z_predict_logits)
 
-    train(sess, loss, init_feed_dict, 2000, 1e-3)
+    # train(sess, loss, init_feed_dict, 2000, 1e-3)
+    train(sess, loss, init_feed_dict, 3000, 1e-3)
 
     lyr1_weights = sess.run(lyr1.weights)
     lyr2_weights = sess.run(lyr2.weights)
-    lyr3_weights = sess.run(lyr3.weights)
+    # lyr3_weights = sess.run(lyr3.weights)
     lyrn_weights = sess.run(lyrn.weights)
 
     return {
         "lyr1": lyr1_weights,
         "lyr2": lyr2_weights,
-        "lyr3": lyr3_weights,
+        # "lyr3": lyr3_weights,
         "lyrn": lyrn_weights
     }
 
@@ -91,7 +97,8 @@ def run_classifier(
 
         x = tf.log(rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars))
 
-    z_predict_logits, lyr1, lyr2, lyr3, lyrn = classification_model(x, vars, n, K, num_samples, 0.0)
+    # z_predict_logits, lyr1, lyr2, lyr3, lyrn = classification_model(x, vars, n, K, num_samples, 0.0)
+    z_predict_logits, lyr1, lyr2, lyrn = classification_model(x, vars, n, K, num_samples, 0.0)
 
     # z_predict_logits = tf.Print(
     #     z_predict_logits, [tf.reduce_min(z_predict_logits), tf.reduce_max(z_predict_logits)], "z_predict_logits span")
@@ -106,8 +113,8 @@ def run_classifier(
     sess.run(tf.assign(lyr1.weights[1], classify_model["lyr1"][1]))
     sess.run(tf.assign(lyr2.weights[0], classify_model["lyr2"][0]))
     sess.run(tf.assign(lyr2.weights[1], classify_model["lyr2"][1]))
-    sess.run(tf.assign(lyr3.weights[0], classify_model["lyr3"][0]))
-    sess.run(tf.assign(lyr3.weights[1], classify_model["lyr3"][1]))
+    # sess.run(tf.assign(lyr3.weights[0], classify_model["lyr3"][0]))
+    # sess.run(tf.assign(lyr3.weights[1], classify_model["lyr3"][1]))
     sess.run(tf.assign(lyrn.weights[0], classify_model["lyrn"][0]))
     sess.run(tf.assign(lyrn.weights[1], classify_model["lyrn"][1]))
 

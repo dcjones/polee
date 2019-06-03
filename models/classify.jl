@@ -70,7 +70,9 @@ function main()
     K = length(factor_names)
 
     # x0 = loaded_samples.x0_values
+
     x0 = log.(loaded_samples.x0_values)
+
     # x0 = log.(Polee.posterior_mean(loaded_samples))
 
     polee_classify_py = pyimport("polee_classify")

@@ -69,11 +69,11 @@ function main()
     @show factor_names
     K = length(factor_names)
 
-    # x0 = loaded_samples.x0_values
-
-    x0 = log.(loaded_samples.x0_values)
-
-    # x0 = log.(Polee.posterior_mean(loaded_samples))
+    if parsed_args["posterior-mean"]
+        x0 = log.(Polee.posterior_mean(loaded_samples))
+    else
+        x0 = log.(loaded_samples.x0_values)
+    end
 
     polee_classify_py = pyimport("polee_classify")
 

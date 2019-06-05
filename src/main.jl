@@ -223,6 +223,14 @@ end
         metavar = "N"
         help = "Number of threads to use. (Defaults to number of cores.)"
         required = false
+    "--annotations"
+        metavar = "annotations.gff3"
+        help = """Load transcripts from annotations file."""
+        required = false
+    "--sequences"
+        metavar = "sequences.fa"
+        help = "Load transcripts from sequences file."
+        required = false
     "likelihood-matrix"
         metavar = "likelihood-matrix.h5"
         help = """
@@ -647,8 +655,9 @@ function polee_sample(parsed_args::Dict{String, Any})
             "polee-sample.csv" : parsed_args["output"]
 
         open(parsed_args["output"], "w") do output
+            println(output, "transcript_id,tpm")
             for (j, t) in enumerate(ts)
-                println(output, t.metadata.name, ",", post_mean[j])
+                println(output, t.metadata.name, ",", 1e6*post_mean[j])
             end
         end
     end
@@ -691,8 +700,30 @@ end
 Handle the 'debug-optimize' command.
 """
 function polee_debug_optimize(parsed_args::Dict{String, Any})
-    expectation_maximization(
-        parsed_args["likelihood-matrix"], parsed_args["output"])
+    if (parsed_args["annotations"] !== nothing && parsed_args["sequences"] !== nothing) ||
+        (parsed_args["annotations"] === nothing && parsed_args["sequences"] === nothing)
+        error("Exactly one of --annotations and --sequences must be given.")
+    end
+
+    if parsed_args["annotations"] !== nothing
+        ts, ts_metadata = Transcripts(parsed_args["annotations"])
+    end
+
+    if parsed_args["sequences"] !== nothing
+        ts, ts_metadata = read_transcripts_from_fasta(
+            parsed_args["sequences"], Set{String}())
+    end
+
+    transcript_names = String[t.metadata.name for t in ts]
+
+    tpms = expectation_maximization(parsed_args["likelihood-matrix"])
+
+    open(parsed_args["output"], "w") do output
+        println(output, "transcript_id,tpm")
+        for j in 1:length(tpms)
+            println(output, transcript_names[j], ",", tpms[j])
+        end
+    end
 end
 
 precompile(main, ())

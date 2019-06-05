@@ -1,6 +1,6 @@
 
 
-function expectation_maximization(input_filename, output_filename)
+function expectation_maximization(input_filename)
     sample = read(input_filename, RNASeqSample)
 
     m, n = sample.m, sample.n
@@ -83,10 +83,5 @@ function expectation_maximization(input_filename, output_filename)
     ys ./= sum(ys)
     ys .*= 1e6
 
-    open(output_filename, "w") do output
-        println(output, "tpm")
-        for j in 1:n
-            println(output, ys[j])
-        end
-    end
+    return ys
 end

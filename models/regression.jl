@@ -22,10 +22,16 @@ arg_settings.prog = "polee model pca"
         action = :store_arg
         default = "transcript"
         help = "One of transcript, gene, splicing"
-    "--posterior-mean"
-        help = "Use posterior mean point estimate instead of the full model"
-        action = :store_true
-        default = false
+    "--point-estimates"
+        help = """
+            Use point estimates read from a file specified in the experiment
+            instead of approximated likelihood."""
+        default = nothing
+        arg_type = String
+    "--pseudocount"
+        metavar = "C"
+        help = "If specified with --point-estimates, add C tpm to each value."
+        arg_type = Float64
     "--output"
         metavar = "filename"
         help = "Output file for regression coefficients"
@@ -59,7 +65,6 @@ arg_settings.prog = "polee model pca"
 end
 
 
-
 function main()
     parsed_args = parse_args(arg_settings)
 
@@ -84,9 +89,23 @@ function main()
 
     spec = YAML.load_file(parsed_args["experiment"])
 
-    loaded_samples = load_samples_from_specification(
-        spec, ts, ts_metadata,
-        max_num_samples=parsed_args["max-num-samples"])
+    if parsed_args["point-estimates"] !== nothing
+        loaded_samples = load_point_estimates_from_specification(
+            spec, ts, ts_metadata, parsed_args["point-estimates"],
+            max_num_samples=parsed_args["max-num-samples"])
+
+        if parsed_args["pseudocount"] !== nothing
+            loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
+        end
+    else
+        loaded_samples = load_samples_from_specification(
+            spec, ts, ts_metadata,
+            max_num_samples=parsed_args["max-num-samples"])
+
+        if parsed_args["pseudocount"] !== nothing
+            error("--pseudocount argument only valid with --point-estimates")
+        end
+    end
 
     num_samples, n = size(loaded_samples.x0_values)
     x0_log = log.(loaded_samples.x0_values)
@@ -103,7 +122,7 @@ function main()
     qw_loc, qw_scale, qx_scale =
         polee_regression_py.estimate_transcript_linear_regression(
             loaded_samples.init_feed_dict, loaded_samples.variables,
-            x0_log, factor_matrix)
+            x0_log, factor_matrix, parsed_args["point-estimates"])
 
     write_regression_effects(
         parsed_args["output"],
@@ -112,13 +131,6 @@ function main()
         qw_loc, qw_scale,
         parsed_args["lower-credible"],
         parsed_args["upper-credible"])
-
-    # TODO:
-    #  - Write results.
-    #  - Option to use posterior mean point estimates
-    #  - Splicing regression
-    #  - Gene regression
-
 end
 
 

@@ -6,6 +6,7 @@ module PoleeModel
 export
     init_python_modules,
     load_samples_from_specification,
+    load_point_estimates_from_specification,
     load_transcripts_from_args,
     approximate_splicing_likelihood,
     write_transcripts,

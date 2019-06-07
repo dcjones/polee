@@ -78,7 +78,8 @@ def linear_regression_variational_model(
         qw_loc_var, qw_scale_var,
         qx_bias_loc_var, qx_bias_scale_var,
         qx_scale_loc_var, qx_scale_scale_var,
-        qx_loc_var, qx_scale_var):
+        qx_loc_var, qx_scale_var,
+        use_point_estimates):
 
     qtau = ed.LogNormal(
         loc=qtau_loc_var,
@@ -105,10 +106,13 @@ def linear_regression_variational_model(
         scale=qx_scale_scale_var,
         name="qx_scale")
 
-    qx = ed.Normal(
-        loc=qx_loc_var,
-        scale=qx_scale_var,
-        name="qx")
+    if use_point_estimates:
+        qx = ed.Deterministic(loc=qx_loc_var, name="qx")
+    else:
+        qx = ed.Normal(
+            loc=qx_loc_var,
+            scale=qx_scale_var,
+            name="qx")
 
     return qtau, qw_scale, qw, qx_bias, qx_scale, qx
 
@@ -119,7 +123,7 @@ Set up a linear regression model for variational inference, returning
 """
 def linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu, x_bias_sigma):
+        x_bias_mu, x_bias_sigma, use_point_estimates):
     num_samples = int(F.shape[0])
     num_factors = int(F.shape[1])
     num_features = int(x_init.shape[1])
@@ -162,7 +166,8 @@ def linear_regression_inference(
 
     qx_loc_var = tf.Variable(
         x_init,
-        name="qx_loc_var")
+        name="qx_loc_var",
+        trainable=not use_point_estimates)
     qx_scale_var = tf.nn.softplus(tf.Variable(
         tf.zeros([num_samples, num_features]) ,
         name="qx_scale_var"))
@@ -174,7 +179,8 @@ def linear_regression_inference(
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
             qx_scale_loc_var, qx_scale_scale_var,
-            qx_loc_var, qx_scale_var)
+            qx_loc_var, qx_scale_var,
+            use_point_estimates)
 
     log_prior = log_joint(
         tau=qtau,
@@ -191,7 +197,8 @@ def linear_regression_inference(
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
             qx_scale_loc_var, qx_scale_scale_var,
-            qx_loc_var, qx_scale_var))
+            qx_loc_var, qx_scale_var,
+            use_point_estimates))
 
     entropy = variational_log_joint(
         qtau=qtau,
@@ -222,7 +229,8 @@ def linear_regression_inference(
 Run variational inference on transcript expression linear regression.
 """
 def estimate_transcript_linear_regression(
-        init_feed_dict, vars, x_init, F_arr, sess=None):
+        init_feed_dict, vars, x_init, F_arr,
+        use_point_estimates, sess=None):
 
     F = tf.constant(F_arr, dtype=tf.float32)
     num_features = x_init.shape[1]
@@ -230,10 +238,14 @@ def estimate_transcript_linear_regression(
     x_bias_mu0 = np.log(1/num_features)
     x_bias_sigma0 = 8.0
 
-    make_likelihood = lambda qx: rnaseq_approx_likelihood_from_vars(vars, qx)
+    if use_point_estimates:
+        make_likelihood = lambda qx: 0.0
+    else:
+        make_likelihood = lambda qx: rnaseq_approx_likelihood_from_vars(vars, qx)
+
     return linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu0, x_bias_sigma0)
+        x_bias_mu0, x_bias_sigma0, use_point_estimates)
 
 
 """

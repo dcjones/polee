@@ -14,7 +14,7 @@ using StatsFuns
 using Random
 
 const arg_settings = ArgParseSettings()
-arg_settings.prog = "polee model cluster"
+arg_settings.prog = "polee model classify"
 @add_arg_table arg_settings begin
     # "--max-num-components"
     #     metavar = "N"

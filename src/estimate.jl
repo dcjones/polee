@@ -1,27 +1,39 @@
 
 
-"""
-Load samples from a a YAML specification file.
 
-Input:
-    * experiment_spec_filename: filename of YAML experiment specification
-    * ts_metadata: transcript metadata
+
 """
-function load_samples_from_specification(
-        spec, ts, ts_metadata;
-        max_num_samples=nothing, batch_size=nothing,
-        check_gff_hash::Bool=true,
-        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
-        using_tensorflow::Bool=true)
+Read file names and factor annotations from a specification.
+"""
+function read_specification(
+        spec; point_estimates_key=nothing, max_num_samples=nothing)
 
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
+
     sample_names = String[]
     filenames = String[]
     sample_factors = Vector{Dict{String, String}}()
     for sample in spec["samples"]
-        push!(sample_names, sample["name"])
-        push!(filenames,
-            get(sample, "file", string(sample["name"], prep_file_suffix)))
+        sample_name = sample["name"]
+        push!(sample_names, sample_name)
+
+        if point_estimates_key === nothing
+            push!(filenames,
+                get(sample, "file", string(sample["name"], prep_file_suffix)))
+        else
+            if !haskey(sample, "point-estimates")
+                error("Sample $(sample_name) has no point estimate files psecified.")
+            end
+
+            if !haskey(sample["point-estimates"], point_estimates_key)
+                error("""
+                    Sample $(sample_name) has no point estimates specified
+                    with key $(point_estimates_key)
+                    """)
+            end
+
+            push!(filenames, sample["point-estimates"][point_estimates_key])
+        end
         factors = Dict{String, String}()
         for (factor_type, factor) in get(sample, "factors", Dict{String, String}())
             factors[factor_type] = string(factor)
@@ -41,6 +53,54 @@ function load_samples_from_specification(
         sample_factors = sample_factors[p]
         num_samples = max_num_samples
     end
+
+    return filenames, sample_names, sample_factors
+end
+
+
+"""
+Read point estimates from csv files (rather than approximated likelihood
+in hdf5 files)
+
+"""
+function load_point_estimates_from_specification(
+        spec, ts, ts_metadata, point_estimates_key;
+        max_num_samples=nothing)
+
+    filenames, sample_names, sample_factors =
+        read_specification(
+            spec,
+            point_estimates_key=point_estimates_key,
+            max_num_samples=max_num_samples)
+
+    loaded_samples = load_point_estimates(
+        filenames, ts, ts_metadata)
+
+    loaded_samples.sample_factors = sample_factors
+    loaded_samples.sample_names = sample_names
+
+    return loaded_samples
+end
+
+
+"""
+Load samples from a a YAML specification file.
+
+Input:
+    * experiment_spec_filename: filename of YAML experiment specification
+    * ts_metadata: transcript metadata
+"""
+function load_samples_from_specification(
+        spec, ts, ts_metadata;
+        max_num_samples=nothing, batch_size=nothing,
+        check_gff_hash::Bool=true,
+        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
+        using_tensorflow::Bool=true)
+
+    filenames, sample_names, sample_factors =
+        read_specification(spec, max_num_samples=max_num_samples)
+
+    num_samples = length(filenames)
 
     batch_size = batch_size === nothing ?
         num_samples : min(batch_size, num_samples)
@@ -66,6 +126,55 @@ function read_transcripts_filename_from_prepared(filename)
     close(input_metadata)
     close(input)
     return transcripts_filename
+end
+
+
+"""
+Load sample point estimates from CSV files.
+"""
+function load_point_estimates(filenames, ts, ts_metadata)
+    num_samples = length(filenames)
+    n = length(ts)
+
+    x0_values = zeros(Float32, (num_samples, n))
+
+    transcript_idx = Dict{String, Int}()
+    for (j, t) in enumerate(ts)
+        transcript_idx[t.metadata.name] = j
+    end
+
+    prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
+    for (i, filename) in enumerate(filenames)
+        open(filename) do input
+            header = split(readline(input), ',')
+            @assert header[1] == "transcript_id"
+            @assert header[2] == "tpm"
+
+            for line in eachline(input)
+                row = split(line, ',')
+                j = transcript_idx[row[1]]
+                x0_values[i, j] = parse(Float32, row[2])/1f6
+            end
+        end
+
+        next!(prog)
+    end
+    println("Sample data loaded")
+
+    return LoadedSamples(
+        Array{Float32}(undef, (0,0)),
+        x0_values,
+        Array{Float32}(undef, (0,0)),
+        Array{Float32}(undef, (0,0)),
+        Array{Float32}(undef, (0,0)),
+        Array{Int32}(undef, (0,0)),
+        Array{Int32}(undef, (0,0)),
+        Array{Int32}(undef, (0,0)),
+        Dict{String, Any}(),
+        Dict{Any, Any}(),
+        Vector{String}[],
+        String[],
+        filenames)
 end
 
 

@@ -13,7 +13,7 @@ def estimate_transcript_pca(
         init_feed_dict, num_samples, n, vars, x_init,
         num_pca_components,
         use_posterior_mean=False,
-        use_neural_network=False)
+        use_neural_network=False):
 
     log_prior, x_bias, w, z, x_scale_softminus, x = \
         pca_model(

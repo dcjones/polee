@@ -24,6 +24,7 @@ using Base64: base64encode, base64decode
 using ProgressMeter
 using Random: shuffle
 using GenomicFeatures
+using Statistics
 
 const polee_py = PyNULL()
 const tf = PyNULL()

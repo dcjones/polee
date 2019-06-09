@@ -208,6 +208,8 @@ function write_regression_effects(
     @assert size(qw_loc) == size(qw_scale)
     num_features, num_factors = size(qw_loc)
 
+    ln2 = log(2f0)
+
     open(output_filename, "w") do output
         println(output, "factor,transcript_id,effect,lower_credible,upper_credible")
         for i in 1:num_features, j in 1:num_factors
@@ -217,7 +219,8 @@ function write_regression_effects(
 
             @printf(
                 output, "%s,%s,%f,%f,%f\n",
-                factor_names[j], feature_names[i], qw_loc[i,j], lc, uc)
+                factor_names[j], feature_names[i],
+                qw_loc[i,j]/ln2, lc/ln2, uc/ln2)
         end
     end
 end

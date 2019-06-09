@@ -23,16 +23,31 @@ arg_settings.prog = "polee model classify"
     #     arg_type = Int
     "--training-prop"
         help = "Proportion of samples to use for training."
-        default = 0.25
+        default = 0.75
         arg_type = Float64
     "--max-num-samples"
         metavar = "N"
         help = "Only run the model on a randomly selected subset of N samples"
         default = nothing
         arg_type = Int
-    "--posterior-mean"
-        help = "Use posterior mean point estimate instead of the full model"
-        action = :store_true
+    "--point-estimates"
+        help = """
+            Use point estimates read from a file specified in the experiment
+            instead of approximated likelihood."""
+        default = nothing
+        arg_type = String
+    "--pseudocount"
+        metavar = "C"
+        help = "If specified with --point-estimates, add C tpm to each value."
+        arg_type = Float64
+    "--seed"
+        help = "RNG seed used to partition data into test and training sets"
+        default = 12345
+        arg_type = Int
+    "--output"
+        metavar = "filename"
+        help = "Output file for confusion matrix"
+        default = "confusion-matrix.csv"
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification"
@@ -56,11 +71,27 @@ function main()
     # so we get the same subset when max-num-samples is used
     Random.seed!(1234)
 
-    loaded_samples = load_samples_from_specification(
-        YAML.load_file(parsed_args["experiment"]),
-        ts, ts_metadata,
-        max_num_samples=parsed_args["max-num-samples"],
-        using_tensorflow=false)
+    spec = YAML.load_file(parsed_args["experiment"])
+
+    if parsed_args["point-estimates"] !== nothing
+        loaded_samples = load_point_estimates_from_specification(
+            spec, ts, ts_metadata, parsed_args["point-estimates"],
+            max_num_samples=parsed_args["max-num-samples"],
+            using_tensorflow=false)
+
+        if parsed_args["pseudocount"] !== nothing
+            loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
+        end
+    else
+        loaded_samples = load_samples_from_specification(
+            spec, ts, ts_metadata,
+            max_num_samples=parsed_args["max-num-samples"],
+            using_tensorflow=false)
+
+        if parsed_args["pseudocount"] !== nothing
+            error("--pseudocount argument only valid with --point-estimates")
+        end
+    end
 
     num_samples, n = size(loaded_samples.x0_values)
 
@@ -69,15 +100,12 @@ function main()
     @show factor_names
     K = length(factor_names)
 
-    if parsed_args["posterior-mean"]
-        x0 = log.(Polee.posterior_mean(loaded_samples))
-    else
-        x0 = log.(loaded_samples.x0_values)
-    end
+    x0 = log.(loaded_samples.x0_values)
 
     polee_classify_py = pyimport("polee_classify")
 
     num_train_samples = round(Int, num_samples*parsed_args["training-prop"])
+    Random.seed!(parsed_args["seed"])
     idx = shuffle(1:num_samples)
     train_idx = idx[1:num_train_samples]
     test_idx = idx[num_train_samples+1:end]
@@ -100,7 +128,7 @@ function main()
         loaded_samples.variables,
         x0[train_idx,:],
         z_true[train_idx,:],
-        parsed_args["posterior-mean"])
+        parsed_args["point-estimates"])
 
     tf.reset_default_graph()
     sess.close()
@@ -124,10 +152,11 @@ function main()
         loaded_samples.variables,
         x0[test_idx,:],
         K,
-        # true)
-        parsed_args["posterior-mean"])
+        parsed_args["point-estimates"])
 
     M = confusion_matrx(z_predict, z_true[test_idx,:])
+
+    write_confusion_matrix(parsed_args["output"], factor_names, M)
 
 
     # Testing on training data just to debug
@@ -157,6 +186,20 @@ function main()
     end
     true_rate = true_count / sum(M)
     @show true_rate
+end
+
+
+function write_confusion_matrix(filename, factor_names, M)
+    open(filename, "w") do output
+        println(output, "true_factor,predicted_factor,count")
+        for i in 1:size(M, 1), j in 1:size(M, 2)
+            println(
+                output,
+                factor_names[i], ",",
+                factor_names[j], ",",
+                M[i,j])
+        end
+    end
 end
 
 

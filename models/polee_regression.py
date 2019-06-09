@@ -49,11 +49,6 @@ def linear_regression_model(
     x_loc = tf.identity(
         tf.matmul(F, w, transpose_b=True) + x_bias,
         name="x_loc")
-    print("x_loc")
-    print(F)
-    print(w)
-    print(x_bias)
-    print(x_loc)
 
     x_scale = ed.HalfCauchy(
         loc=tf.fill([num_features], 0.0),

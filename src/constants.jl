@@ -26,7 +26,7 @@ const FALLBACK_FRAGLEN_MEAN = 150
 const FALLBACK_FRAGLEN_SD  = 50
 
 # Disallow fragments longer than this
-const MAX_FRAG_LEN = 1500
+const MAX_FRAG_LEN = 2000
 
 # Don't use emperical distribution if fewer than this many paired-end reads
 const MIN_FRAG_LEN_COUNT = 1000

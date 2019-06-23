@@ -95,6 +95,12 @@ function parallel_intersection_loop_inner(treepairs, rs, fm, effective_lengths, 
         for (t, alnpr) in intersect(ts_tree, rs_tree, intersect_contains)
             fragpr = condfragprob(fm, t, rs, alnpr,
                                   effective_lengths[Int(t.metadata.id)])
+
+            i_ = alnpr.metadata.mate1_idx > 0 ?
+                    rs.alignments[alnpr.metadata.mate1_idx].id :
+                    rs.alignments[alnpr.metadata.mate2_idx].id
+            i = aln_idx_map[Int(i_)]
+
             if isfinite(fragpr) && fragpr > MIN_FRAG_PROB
                 i_ = alnpr.metadata.mate1_idx > 0 ?
                         rs.alignments[alnpr.metadata.mate1_idx].id :
@@ -162,7 +168,8 @@ function RNASeqSample(transcripts_filename::String,
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
                       no_bias::Bool=false,
-                      dump_bias_training_examples::Bool=false)
+                      dump_bias_training_examples::Bool=false,
+                      clip_read_name_mate::Bool=false)
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     @tic()
     read_transcript_sequences!(ts, genome_filename)
@@ -172,7 +179,8 @@ function RNASeqSample(transcripts_filename::String,
         ts, ts_metadata, reads_filename, excluded_seqs,
         excluded_transcripts, genome_filename,
         sequences_file_hash, output, no_bias=no_bias,
-        dump_bias_training_examples=dump_bias_training_examples)
+        dump_bias_training_examples=dump_bias_training_examples,
+        clip_read_name_mate=clip_read_name_mate)
 end
 
 
@@ -218,7 +226,8 @@ function RNASeqSample(transcript_sequence_filename::String,
                       excluded_transcripts::Set{String},
                       output=Nullable{String}();
                       no_bias::Bool=false,
-                      dump_bias_training_examples::Bool=false)
+                      dump_bias_training_examples::Bool=false,
+                      clip_read_name_mate::Bool=false)
 
     ts, ts_metadata = read_transcripts_from_fasta(
         transcript_sequence_filename, excluded_transcripts)
@@ -228,7 +237,8 @@ function RNASeqSample(transcript_sequence_filename::String,
         ts, ts_metadata, reads_filename, excluded_seqs,
         excluded_transcripts, transcript_sequence_filename,
         sequences_file_hash, output, no_bias=no_bias,
-        dump_bias_training_examples=dump_bias_training_examples)
+        dump_bias_training_examples=dump_bias_training_examples,
+        clip_read_name_mate=clip_read_name_mate)
 end
 
 
@@ -246,10 +256,12 @@ function RNASeqSample(ts::Transcripts,
                       output=Nullable{String}();
                       no_bias::Bool=false,
                       num_training_reads::Int=200000,
-                      dump_bias_training_examples::Bool=false)
+                      dump_bias_training_examples::Bool=false,
+                      clip_read_name_mate::Bool=false)
 
     @tic()
-    rs = Reads(reads_filename, excluded_seqs)
+    rs = Reads(
+        reads_filename, excluded_seqs, clip_read_name_mate=clip_read_name_mate)
     @toc("Reading BAM file")
 
     # train fragment model by selecting a random subset of reads, assigning
@@ -397,6 +409,19 @@ function RNASeqSample(fm::FragModel,
     J = J[p]
     V = V[p]
     GC.gc()
+
+    # println("unaccounted for reads")
+    # open("unaccounted.txt", "w") do output
+    #     I_sorted = sort(I)
+    #     for k in 2:length(I)
+    #         if I[k] > I[k-1] + 1
+    #             for i in I[k-1]+1:I[k]-1
+    #                 println(output, i)
+    #             end
+    #         end
+    #     end
+    # end
+    # exit()
 
     aln_idx_rev_map = compact_indexes!(I, aln_idx_rev_map)
     if !isnull(aln_idx_rev_map_ref)

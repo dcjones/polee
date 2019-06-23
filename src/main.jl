@@ -116,6 +116,12 @@ end
         help = "RNG seed"
         default = 123456789
         arg_type = Int
+    "--clip-read-name-mate"
+        help = """
+            Remove the training '/1' or '/2' from read names that contain them.
+            Without this option, pseudoalignments from kallisto will be treated as single-end.
+            """
+        action = :store_true
     "--verbose"
         help = "Print some additional diagnostic output."
         action = :store_true
@@ -170,6 +176,16 @@ end
         metavar = "sequences.fa"
         help = ""
         required = false
+    "--trim-prefix"
+            metavar = "prefix"
+            help = """Trim the given prefix from transcripts identifiers when
+            writing output."""
+            default = nothing
+    "--sample-counts"
+            help = """Sample read counts in addition to sampling expression.
+            (Default behavior is to sample expression, and compute expected
+            read counts if needed."""
+            action = :store_true
     "prepared_sample"
         help = "Prepared RNA-Seq sample to generate samples from."
         metavar = "prepared-sample.h5"
@@ -531,7 +547,8 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
                 Nullable{String}() :
                 Nullable(parsed_args["likelihood-matrix"]),
             no_bias=parsed_args["no-bias"],
-            dump_bias_training_examples=parsed_args["dump-bias-training-examples"])
+            dump_bias_training_examples=parsed_args["dump-bias-training-examples"],
+            clip_read_name_mate=parsed_args["clip-read-name-mate"])
     else
         sample = RNASeqSample(
             parsed_args["annotations_filename"],
@@ -543,7 +560,8 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
                 Nullable{String}() :
                 Nullable(parsed_args["likelihood-matrix"]),
             no_bias=parsed_args["no-bias"],
-            dump_bias_training_examples=parsed_args["dump-bias-training-examples"])
+            dump_bias_training_examples=parsed_args["dump-bias-training-examples"],
+            clip_read_name_mate=parsed_args["clip-read-name-mate"])
     end
 
     if !parsed_args["skip-likelihood-approximation"]
@@ -588,6 +606,13 @@ function polee_sample(parsed_args::Dict{String, Any})
             transcripts_filename, excluded_transcripts)
     end
 
+    if parsed_args["trim-prefix"] !== nothing
+        for t in ts
+            t.metadata.name = replace(
+                t.metadata.name, parsed_args["trim-prefix"] => "")
+        end
+    end
+
     n = length(ts)
 
     node_parent_idxs = read(input["node_parent_idxs"])
@@ -622,10 +647,30 @@ function polee_sample(parsed_args::Dict{String, Any})
 
     post_mean = mean(samples, dims=1)[1,:]
 
-    function prop_to_counts(prop)
+    function expected_counts(prop)
         prop_ = prop .* efflens
         prop_ ./= sum(prop_)
         return Vector{Float64}(prop_ .* m)
+
+        # TODO: just testing
+        # return Vector{Float64}(prop .* 1e6)
+    end
+
+    function sample_counts(prop_cumsum, num_reads)
+        counts = zeros(Float64, n)
+        r = rand()
+        for _ in 1:num_reads
+            r = rand()
+            i = min(n, searchsortedfirst(prop_cumsum, r))
+            counts[i] += 1
+        end
+        return counts
+    end
+
+    if parsed_args["sample-counts"]
+        prop_to_counts = prop -> sample_counts(cumsum((prop.*efflens) ./= sum(prop.*efflens)), m)
+    else
+        prop_to_counts = expected_counts
     end
 
     if parsed_args["kallisto"]

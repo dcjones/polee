@@ -59,14 +59,10 @@ const AlignmentPair = Interval{AlignmentPairMetadata}
 
 
 function group_alignments_isless(a::Alignment, b::Alignment)
-    if a.refidx < b.refidx
-        return true
-    elseif a.refidx == b.refidx
-        if a.id < b.id
-            return true
-        elseif a.id == b.id
-            a_flag = a.flag & SAM.FLAG_READ2
-            b_flag = b.flag & SAM.FLAG_READ2
+    if a.refidx == b.refidx
+        if a.id == b.id
+            a_flag = a.flag & (SAM.FLAG_READ1 | SAM.FLAG_READ2)
+            b_flag = b.flag & (SAM.FLAG_READ1 | SAM.FLAG_READ2)
 
             if a_flag == b_flag
                 return a.leftpos < b.leftpos
@@ -74,10 +70,11 @@ function group_alignments_isless(a::Alignment, b::Alignment)
                 return a_flag < b_flag
             end
         else
-            return false
+            return a.id < b.id
         end
+    else
+        return a.refidx < b.refidx
     end
-    return false
 end
 
 
@@ -119,7 +116,9 @@ function cigar_from_ptr(data::Ptr{UInt32}, i)
 end
 
 
-function Reads(filename::String, excluded_seqs::Set{String})
+function Reads(
+        filename::String, excluded_seqs::Set{String};
+        clip_read_name_mate::Bool=false)
     if filename == "-"
         reader = BAM.Reader(stdin)
         prog = Progress(0, 0.25, "Reading BAM file ", 60)
@@ -134,21 +133,27 @@ function Reads(filename::String, excluded_seqs::Set{String})
             from_file = true
         end
     end
-    return Reads(reader, prog, from_file, excluded_seqs)
+    return Reads(
+        reader, prog, from_file, excluded_seqs,
+        clip_read_name_mate=clip_read_name_mate)
 end
 
 
-function Reads(input::IO, excluded_seqs::Set{String})
+function Reads(
+        input::IO, excluded_seqs::Set{String};
+        clip_read_name_mate::Bool=false)
     reader = BAM.Reader(input)
     prog = Progress(0, 0.25, "Reading BAM file ", 60)
     from_file = false
-    return Reads(reader, prog, from_file, excluded_seqs)
+    return Reads(
+        reader, prog, from_file, excluded_seqs,
+        clip_read_name_mate=clip_read_name_mate)
 end
 
 
 
 function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
-               excluded_seqs::Set{String})
+               excluded_seqs::Set{String}; clip_read_name_mate::Bool=false)
     prog_step = 1000
     entry = eltype(reader)()
     readnames = Dict{UInt64, UInt32}()
@@ -180,11 +185,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
             println("  ", i+1, " alignments")
         end
 
-        if !BAM.ismapped(entry)
-            continue
-        end
-
-        if entry.refid + 1 in excluded_refidxs
+        if !BAM.ismapped(entry) || entry.refid < 0 || entry.refid + 1 ∈ excluded_refidxs
             continue
         end
 
@@ -217,7 +218,12 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
             end
         end
 
-        id = get!(readnames, hash(BioAlignments.seqname(entry)), length(readnames) + 1)
+        seqname = BioAlignments.seqname(entry)
+        if clip_read_name_mate
+            seqname = replace(seqname, r"/\d$" => "")
+        end
+
+        id = get!(readnames, hash(seqname), length(readnames) + 1)
         lp = _leftposition(entry)
         rp = _rightposition(entry)
         flg = BAM.flag(entry) & USED_BAM_FLAGS
@@ -268,13 +274,14 @@ end
 
 function make_interval_collection(alignments, seqnames, blocks, trees, cigardata)
     Threads.@threads for blockidx in 1:length(blocks)
+    # for blockidx in 1:length(blocks)
         block = blocks[blockidx]
         seqname = seqnames[alignments[block.start].refidx]
         alnprs = AlignmentPair[]
 
         i, j = block.start, block.start
         while i <= block.stop
-            j1 = i
+            j1 = i - 1
             while j1 + 1 <= block.stop &&
                   alignments[i].id == alignments[j1+1].id &&
                   (alignments[j1+1].flag & SAM.FLAG_READ2) == 0
@@ -318,12 +325,16 @@ function make_interval_collection(alignments, seqnames, blocks, trees, cigardata
                     alnpr = AlignmentPair(
                         seqname, minpos, maxpos, strand,
                         AlignmentPairMetadata(k1, k2))
+                    m1_pair_flags = alignments[k1].flag & (SAM.FLAG_READ1 | SAM.FLAG_READ2)
+                    m2_pair_flags = alignments[k2].flag & (SAM.FLAG_READ1 | SAM.FLAG_READ2)
+                    @assert m1_pair_flags != m2_pair_flags
+                    @assert alignments[k1].id == alignments[k2].id
                     push!(alnprs, alnpr)
                 end
             end
 
             # handle single-end reads
-            if isempty(j1+1:j2)
+            if isempty(i:j1) || isempty(j1+1:j2)
                 for k in i:j1
                     m = alignments[k]
                     if m.flag & SAM.FLAG_READ1 != 0

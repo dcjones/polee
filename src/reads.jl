@@ -335,11 +335,8 @@ function make_interval_collection(alignments, seqnames, blocks, trees, cigardata
 
             # handle single-end reads
             if isempty(i:j1) || isempty(j1+1:j2)
-                for k in i:j1
+                for k in i:j2
                     m = alignments[k]
-                    if m.flag & SAM.FLAG_READ1 != 0
-                        continue
-                    end
 
                     minpos = m.leftpos
                     maxpos = m.rightpos

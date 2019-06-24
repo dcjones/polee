@@ -412,7 +412,6 @@ function RNASeqSample(fm::FragModel,
 
     # println("unaccounted for reads")
     # open("unaccounted.txt", "w") do output
-    #     I_sorted = sort(I)
     #     for k in 2:length(I)
     #         if I[k] > I[k-1] + 1
     #             for i in I[k-1]+1:I[k]-1
@@ -420,8 +419,10 @@ function RNASeqSample(fm::FragModel,
     #             end
     #         end
     #     end
+    #     for i in I[end]+1:rs.num_reads
+    #         println(output, i)
+    #     end
     # end
-    # exit()
 
     aln_idx_rev_map = compact_indexes!(I, aln_idx_rev_map)
     if !isnull(aln_idx_rev_map_ref)

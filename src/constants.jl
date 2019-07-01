@@ -25,6 +25,8 @@ const USED_BAM_FLAGS =
 const FALLBACK_FRAGLEN_MEAN = 150
 const FALLBACK_FRAGLEN_SD  = 50
 
+const FRAGLEN_PMF_PSEUDOCOUNT = 1.0
+
 # Disallow fragments longer than this
 const MAX_FRAG_LEN = 2000
 
@@ -45,13 +47,14 @@ const LIKAP_Y_EPS = 1e-10
 
 # Constants used for optimization with ADAM
 const ADAM_INITIAL_LEARNING_RATE = 1.0
-const ADAM_LEARNING_RATE_DECAY = 2e-2
+const ADAM_LEARNING_RATE_DECAY = 1e-2
 const ADAM_EPS = 1e-8
 const ADAM_RV = 0.9
 const ADAM_RM = 0.7
 
 
-const LIKAP_NUM_STEPS = 400
+# const LIKAP_NUM_STEPS = 400
+const LIKAP_NUM_STEPS = 800
 const LIKAP_NUM_MC_SAMPLES = 5
 
 

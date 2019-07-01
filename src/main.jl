@@ -122,6 +122,22 @@ end
             Without this option, pseudoalignments from kallisto will be treated as single-end.
             """
         action = :store_true
+    "--gene-noninformative"
+        help = """
+            Default behavior is to estimate the transcript expression distribution under
+            transcript-level noninormative prior. This option instead uses a gene-level
+            noninformative prior (which is not the same thing).
+            """
+        action = :store_true
+    "--alt-frag-model"
+        help = """
+            Use a somewhat different fragment model. This alternative model has
+            a different set of assumptions, that reads from very short transcripts
+            are more common. The end result, on average, is to decrease
+            estimated expression of very short transcripts with observed
+            reads.
+            """
+        action = :store_true
     "--verbose"
         help = "Print some additional diagnostic output."
         action = :store_true
@@ -548,7 +564,8 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
                 Nullable(parsed_args["likelihood-matrix"]),
             no_bias=parsed_args["no-bias"],
             dump_bias_training_examples=parsed_args["dump-bias-training-examples"],
-            clip_read_name_mate=parsed_args["clip-read-name-mate"])
+            clip_read_name_mate=parsed_args["clip-read-name-mate"],
+            alt_frag_model=parsed_args["alt-frag-model"])
     else
         sample = RNASeqSample(
             parsed_args["annotations_filename"],
@@ -561,11 +578,14 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
                 Nullable(parsed_args["likelihood-matrix"]),
             no_bias=parsed_args["no-bias"],
             dump_bias_training_examples=parsed_args["dump-bias-training-examples"],
-            clip_read_name_mate=parsed_args["clip-read-name-mate"])
+            clip_read_name_mate=parsed_args["clip-read-name-mate"],
+            alt_frag_model=parsed_args["alt-frag-model"])
     end
 
     if !parsed_args["skip-likelihood-approximation"]
-        approximate_likelihood(approx, sample, parsed_args["output"])
+        approximate_likelihood(
+            approx, sample, parsed_args["output"],
+            gene_noninformative=parsed_args["gene-noninformative"])
     end
 end
 
@@ -651,9 +671,6 @@ function polee_sample(parsed_args::Dict{String, Any})
         prop_ = prop .* efflens
         prop_ ./= sum(prop_)
         return Vector{Float64}(prop_ .* m)
-
-        # TODO: just testing
-        # return Vector{Float64}(prop .* 1e6)
     end
 
     function sample_counts(prop_cumsum, num_reads)

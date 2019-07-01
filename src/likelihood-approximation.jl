@@ -76,9 +76,11 @@ end
 
 
 function approximate_likelihood(approximation::LikelihoodApproximation,
-                                sample::RNASeqSample, output_filename::String)
+                                sample::RNASeqSample, output_filename::String;
+                                gene_noninformative::Bool=false)
     @tic()
-    params = approximate_likelihood(approximation, sample)
+    params = approximate_likelihood(
+        approximation, sample, gene_noninformative=gene_noninformative)
     @toc("Approximating likelihood")
 
     # TODO: delete this
@@ -588,7 +590,8 @@ end
 
 function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
                                 sample::RNASeqSample,
-                                ::Type{Val{GRADONLY}}=Val{true}) where {GRADONLY}
+                                ::Type{Val{GRADONLY}}=Val{true};
+                                gene_noninformative::Bool=false) where {GRADONLY}
     X = sample.X
     efflens = sample.effective_lengths
 
@@ -624,6 +627,9 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(undef, n)
 
+    # effective length transformed xs
+    xls = Array{Float32}(undef, n)
+
     inverse_transform!(t, fill(1.0f0/n, n), ys)
     mu    = fill(0.0f0, n-1)
     map!(logit, mu, ys)
@@ -641,11 +647,32 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
     alpha_grad = Array{Float32}(undef, n-1)
     y_grad = Array{Float32}(undef, n-1)
     x_grad = Array{Float64}(undef, n)
+    xl_grad = Array{Float64}(undef, n)
     z_grad = Array{Float32}(undef, n)
 
     elbo = 0.0
     elbo0 = 0.0
     max_elbo = -Inf # smallest elbo seen so far
+
+    # Map gene_id to vectors of transcript indexes
+    gene_transcripts = Dict{String, Vector{Int}}()
+    if gene_noninformative
+        for (i, t) in enumerate(sample.ts)
+            tid = t.metadata.name
+            if haskey(sample.transcript_metadata.gene_id, tid)
+                gid = sample.transcript_metadata.gene_id[tid]
+                if !haskey(gene_transcripts, gid)
+                    gene_transcripts[gid] = Int[]
+                end
+                push!(gene_transcripts[gid], i)
+            end
+        end
+
+        if isempty(gene_transcripts)
+            @warn "'--gene-noninformative' used, but no gene information available"
+            gene_noninformative = false
+        end
+    end
 
     prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
@@ -682,7 +709,14 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
                                 X, Xt, xs, x_grad, Val{GRADONLY}) # 0.047 seconds
-            lp += effective_length_jacobian_adjustment!(efflens, xs, x_grad)
+
+
+            lp += effective_length_jacobian_adjustment!(efflens, xs, xls, x_grad)
+
+            if gene_noninformative
+                lp += gene_noninformative_prior!(
+                    efflens, xls, xl_grad, xs, x_grad, gene_transcripts)
+            end
 
             elbo = lp + skew_ladj + ln_ladj + hsb_ladj
 

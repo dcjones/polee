@@ -93,7 +93,6 @@ function posterior_mean(loaded_samples::LoadedSamples, N=100)
     xs = Array{Float32}(undef, n)
 
     for i in 1:num_samples
-        @show i
         input = h5open(loaded_samples.sample_filenames[i])
         node_parent_idxs = read(input["node_parent_idxs"])
         node_js          = read(input["node_js"])

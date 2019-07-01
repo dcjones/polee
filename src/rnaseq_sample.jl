@@ -169,7 +169,8 @@ function RNASeqSample(transcripts_filename::String,
                       output=Nullable{String}();
                       no_bias::Bool=false,
                       dump_bias_training_examples::Bool=false,
-                      clip_read_name_mate::Bool=false)
+                      clip_read_name_mate::Bool=false,
+                      alt_frag_model::Bool=false)
     ts, ts_metadata = Transcripts(transcripts_filename, excluded_transcripts)
     @tic()
     read_transcript_sequences!(ts, genome_filename)
@@ -180,7 +181,8 @@ function RNASeqSample(transcripts_filename::String,
         excluded_transcripts, genome_filename,
         sequences_file_hash, output, no_bias=no_bias,
         dump_bias_training_examples=dump_bias_training_examples,
-        clip_read_name_mate=clip_read_name_mate)
+        clip_read_name_mate=clip_read_name_mate,
+        alt_frag_model=alt_frag_model)
 end
 
 
@@ -227,7 +229,8 @@ function RNASeqSample(transcript_sequence_filename::String,
                       output=Nullable{String}();
                       no_bias::Bool=false,
                       dump_bias_training_examples::Bool=false,
-                      clip_read_name_mate::Bool=false)
+                      clip_read_name_mate::Bool=false,
+                      alt_frag_model::Bool=false)
 
     ts, ts_metadata = read_transcripts_from_fasta(
         transcript_sequence_filename, excluded_transcripts)
@@ -238,7 +241,8 @@ function RNASeqSample(transcript_sequence_filename::String,
         excluded_transcripts, transcript_sequence_filename,
         sequences_file_hash, output, no_bias=no_bias,
         dump_bias_training_examples=dump_bias_training_examples,
-        clip_read_name_mate=clip_read_name_mate)
+        clip_read_name_mate=clip_read_name_mate,
+        alt_frag_model=alt_frag_model)
 end
 
 
@@ -257,7 +261,8 @@ function RNASeqSample(ts::Transcripts,
                       no_bias::Bool=false,
                       num_training_reads::Int=200000,
                       dump_bias_training_examples::Bool=false,
-                      clip_read_name_mate::Bool=false)
+                      clip_read_name_mate::Bool=false,
+                      alt_frag_model::Bool=false)
 
     @tic()
     rs = Reads(
@@ -267,7 +272,7 @@ function RNASeqSample(ts::Transcripts,
     # train fragment model by selecting a random subset of reads, assigning
     # them to transcripts, then extracting sequence context.
     rs_train      = subsample_reads(rs, num_training_reads)
-    simplistic_fm = SimplisticFragModel(rs_train, ts)
+    simplistic_fm = SimplisticFragModel(rs_train, ts, alt_frag_model)
 
     if !no_bias
         aln_idx_rev_map_ref = Ref{Vector{UInt32}}()
@@ -310,7 +315,8 @@ function RNASeqSample(ts::Transcripts,
         end
 
         fm = BiasedFragModel(
-            rs_train, ts, read_assignments, dump_bias_training_examples)
+            rs_train, ts, read_assignments, alt_frag_model,
+            dump_bias_training_examples)
     else
         fm = simplistic_fm
     end

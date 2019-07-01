@@ -28,10 +28,11 @@ struct SimplisticFragModel <: FragModel
     fraglen_cdf::Vector{Float32}
     fraglen_median::Int
     strand_specificity::Float32
+    alt_frag_model::Bool
 end
 
 
-function SimplisticFragModel(rs::Reads, ts::Transcripts)
+function SimplisticFragModel(rs::Reads, ts::Transcripts, alt_frag_model::Bool=false)
     examples = rs.alignment_pairs
 
     # alignment pair fragment lengths
@@ -81,7 +82,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
         end
         fraglen_pmf ./= sum(fraglen_pmf)
     else
-        fill!(fraglen_pmf, 1.0f0)
+        fill!(fraglen_pmf, FRAGLEN_PMF_PSEUDOCOUNT)
         for fl in values(alnpr_fraglen)
             if fl <= MAX_FRAG_LEN
                 fraglen_pmf[fl] += 1
@@ -97,7 +98,7 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts)
     fraglen_median = searchsorted(fraglen_cdf, 0.5).start
 
     return SimplisticFragModel(
-        fraglen_pmf, fraglen_cdf, fraglen_median, strand_specificity)
+        fraglen_pmf, fraglen_cdf, fraglen_median, strand_specificity, alt_frag_model)
 end
 
 function compute_transcript_bias!(fm::SimplisticFragModel, ts::Transcripts)
@@ -128,8 +129,13 @@ function condfragprob(fm::SimplisticFragModel, t::Transcript, rs::Reads,
         fm.strand_specificity : 1.0 - fm.strand_specificity
 
     fraglenpr = fragment_length_prob(fm, fraglen)
-
     fragpr = fragstrandpr * fraglenpr / effective_length
+
+    if fm.alt_frag_model
+        tlen = exonic_length(t)
+        denom = tlen <= MAX_FRAG_LEN ? fm.fraglen_cdf[tlen] : 1.0
+        fragpr /= denom
+    end
 
     return fragpr
 end
@@ -138,12 +144,20 @@ end
 function effective_length(fm::SimplisticFragModel, t::Transcript)
     tlen = exonic_length(t)
     el = 0.0f0
-    for l in 1:min(tlen, MAX_FRAG_LEN)
-        el += fm.fraglen_pmf[l] * (tlen - l + 1)
+
+    denom = tlen <= MAX_FRAG_LEN ? fm.fraglen_cdf[tlen] : 1.0
+
+    if fm.alt_frag_model
+        for l in 1:min(tlen, MAX_FRAG_LEN)
+            el += fm.fraglen_pmf[l] / denom * (tlen - l + 1)
+        end
+    else
+        for l in 1:min(tlen, MAX_FRAG_LEN)
+            el += fm.fraglen_pmf[l] * (tlen - l + 1)
+        end
     end
     return Float32(max(el, MIN_EFFECTIVE_LENGTH))
 end
-
 
 
 mutable struct BiasedFragModel <: FragModel
@@ -153,12 +167,14 @@ mutable struct BiasedFragModel <: FragModel
     high_prob_fraglens::Vector{Int}
     strand_specificity::Float32
     bias_model::BiasModel
+    alt_frag_model::Bool
 end
 
 
 
 function BiasedFragModel(
     rs::Reads, ts::Transcripts, read_assignments::Dict{Int, Int},
+    alt_frag_model::Bool,
     dump_bias_training_examples::Bool;
     use_pos_bias::Bool=false)
 
@@ -311,7 +327,8 @@ function BiasedFragModel(
         fraglen_pmf, fraglen_cdf, fraglen_median,
         high_prob_fraglens,
         strand_specificity,
-        bias_model)
+        bias_model,
+        alt_frag_model)
 end
 
 

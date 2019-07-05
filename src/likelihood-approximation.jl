@@ -224,6 +224,9 @@ function approximate_likelihood(::OptimizeHSBApprox, sample::RNASeqSample,
     # ys transformed by hierarchical stick breaking
     xs = Array{Float32}(undef, n)
 
+    # effective length transformed xs
+    xls = Array{Float32}(undef, n)
+
     z_grad = Array{Float64}(undef, n-1)
     y_grad = Array{Float64}(undef, n-1)
     x_grad = Array{Float64}(undef, n)
@@ -261,7 +264,7 @@ function approximate_likelihood(::OptimizeHSBApprox, sample::RNASeqSample,
 
         log_likelihood(model.frag_probs, model.log_frag_probs,
                        X, Xt, xs, x_grad, Val{GRADONLY})
-        effective_length_jacobian_adjustment!(efflens, xs, x_grad)
+        effective_length_jacobian_adjustment!(efflens, xs, xls, x_grad)
 
         hsb_transform_gradients_no_ladj!(t, ys, y_grad, x_grad)
 

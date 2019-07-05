@@ -582,6 +582,15 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
             alt_frag_model=parsed_args["alt-frag-model"])
     end
 
+    # using gene noninformative prior makes the distribution harder to fit,
+    # so give it more time to do so.
+    if parsed_args["gene-noninformative"]
+        global ADAM_LEARNING_RATE_DECAY
+        ADAM_LEARNING_RATE_DECAY = 1e-2
+        global LIKAP_NUM_STEPS
+        LIKAP_NUM_STEPS = 800
+    end
+
     if !parsed_args["skip-likelihood-approximation"]
         approximate_likelihood(
             approx, sample, parsed_args["output"],

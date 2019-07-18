@@ -38,13 +38,22 @@ class Progbar:
 #         name=name)
 
 
-def train(sess, objective, init_feed_dict, n_iter, learning_rate, var_list=None):
+def train(
+        sess, objective, init_feed_dict, n_iter, init_learning_rate,
+        var_list=None, initialized_vars=None, decay_rate=1.0):
     if var_list is None:
         var_list = tf.trainable_variables()
 
+    global_step = tf.Variable(0, trainable=False)
+    learning_rate = tf.train.exponential_decay(
+        init_learning_rate, global_step, 10, decay_rate)
+
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
-    train = optimizer.minimize(objective, var_list=var_list)
-    init = tf.global_variables_initializer()
+    train = optimizer.minimize(objective, var_list=var_list, global_step=global_step)
+    if initialized_vars is None:
+        init = tf.global_variables_initializer()
+    else:
+        init = tf.initialize_variables(set(tf.global_variables()) - initialized_vars)
     prog = Progbar(50, n_iter)
 
     tf.summary.scalar("loss", objective)

@@ -53,24 +53,24 @@ def linear_regression_model(
         tf.matmul(F, w, transpose_b=True) + x_bias,
         name="x_loc")
 
-    x_log_scale_scale = ed.HalfCauchy(
-        loc=0.0, scale=1.0, name="x_log_scale_scale")
+    x_scale_scale = ed.HalfCauchy(
+        loc=0.0, scale=1.0, name="x_scale_scale")
 
-    x_log_scale_c = ed.Normal(
-        loc=tf.zeros([scale_polynomial_degree]), scale=100.0, name="x_log_scale_c")
+    x_scale_c = ed.Normal(
+        loc=tf.zeros([scale_polynomial_degree]), scale=100.0, name="x_scale_c")
 
     x_loc_mean = tf.reduce_mean(x_loc, axis=0)
 
-    x_log_scale_loc = \
-        x_log_scale_c[0] + \
-        x_log_scale_c[1] * x_loc_mean + \
-        x_log_scale_c[2] * x_loc_mean**2
+    x_scale_loc = \
+        x_scale_c[0] + \
+        x_scale_c[1] * x_loc_mean + \
+        x_scale_c[2] * x_loc_mean**2
 
     x_scale = ed.TransformedDistribution(
         distribution=tfd.StudentT(
             df=1.0,
-            loc=x_log_scale_loc,
-            scale=x_log_scale_scale),
+            loc=x_scale_loc,
+            scale=x_scale_scale),
         bijector=tfp.bijectors.Exp(),
         name="x_scale")
 
@@ -79,7 +79,7 @@ def linear_regression_model(
         scale=x_scale,
         name="x")
 
-    return tau, w_scale, w, x_bias, x_log_scale_c, x_scale, x_log_scale_scale, x
+    return tau, w_scale, w, x_bias, x_scale_c, x_scale, x_scale_scale, x
 
 
 """
@@ -90,9 +90,9 @@ def linear_regression_variational_model(
         qw_scale_loc_var, qw_scale_scale_var,
         qw_loc_var, qw_scale_var,
         qx_bias_loc_var, qx_bias_scale_var,
-        qx_log_scale_c_loc_var, qx_log_scale_c_scale_var,
-        qx_log_scale_loc_var, qx_log_scale_scale_var,
-        qx_log_scale_scale_loc_var, qx_log_scale_scale_scale_var,
+        qx_scale_c_loc_var, qx_scale_c_scale_var,
+        qx_scale_loc_var, qx_scale_scale_var,
+        qx_scale_scale_loc_var, qx_scale_scale_scale_var,
         qx_loc_var, qx_scale_var,
         use_point_estimates):
 
@@ -116,20 +116,20 @@ def linear_regression_variational_model(
         scale=qx_bias_scale_var,
         name="qx_bias")
 
-    qx_log_scale_c = ed.Normal(
-        loc=qx_log_scale_c_loc_var,
-        scale=qx_log_scale_c_scale_var,
-        name="qx_log_scale_c")
+    qx_scale_c = ed.Normal(
+        loc=qx_scale_c_loc_var,
+        scale=qx_scale_c_scale_var,
+        name="qx_scale_c")
 
     qx_scale = ed.LogNormal(
-        loc=qx_log_scale_loc_var,
-        scale=qx_log_scale_scale_var,
+        loc=qx_scale_loc_var,
+        scale=qx_scale_scale_var,
         name="qx_scale")
 
-    qx_log_scale_scale = ed.LogNormal(
-        loc=qx_log_scale_scale_loc_var,
-        scale=qx_log_scale_scale_scale_var,
-        name="qx_log_scale_scale")
+    qx_scale_scale = ed.LogNormal(
+        loc=qx_scale_scale_loc_var,
+        scale=qx_scale_scale_scale_var,
+        name="qx_scale_scale")
 
     if use_point_estimates:
         qx = ed.Deterministic(loc=qx_loc_var, name="qx")
@@ -139,8 +139,7 @@ def linear_regression_variational_model(
             scale=qx_scale_var,
             name="qx")
 
-    return qtau, qw_scale, qw, qx_bias, qx_log_scale_c, qx_scale, \
-        qx_log_scale_scale, qx
+    return qtau, qw_scale, qw, qx_bias, qx_scale_c, qx_scale, qx_scale_scale, qx
 
 
 
@@ -148,87 +147,87 @@ def linear_regression_variational_model(
 Set up a linear regression model for variational inference, returning
 """
 def linear_regression_inference(
-        init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu, x_bias_sigma, use_point_estimates, sess):
+        init_feed_dict, F, param_inits, make_likelihood,
+        x_bias_mu0, x_bias_sigma0, use_point_estimates, sess):
+
+    qtau_init, qw_scale_init, qw_init, qx_bias_init, \
+     qx_scale_scale_init, qx_scale_c_init, qx_scale_init, qx_init = param_inits
+
     num_samples = int(F.shape[0])
     num_factors = int(F.shape[1])
-    num_features = int(x_init.shape[1])
+    num_features = int(qx_init.shape[1])
 
     log_joint = ed.make_log_joint_fn(
         lambda: linear_regression_model
-            (num_factors, num_features, F, x_bias_mu, x_bias_sigma))
+            (num_factors, num_features, F, x_bias_mu0, x_bias_sigma0))
 
     qtau_loc_var = tf.Variable(0.0, name="qtau_loc_var")
     qtau_scale_var = tf.nn.softplus(tf.Variable(0.0, name="qtau_scale_var"))
 
     qw_scale_loc_var = tf.check_numerics(tf.Variable(
-        # tf.zeros([num_features, num_factors]),
-        tf.fill([num_features, num_factors], -4.0),
+        qw_scale_init,
         name="qx_scale_loc_var"), "qw_scale_loc_var fucked")
     qw_scale_scale_var = tf.check_numerics(tf.nn.softplus(tf.Variable(
-        # tf.zeros([num_features, num_factors]),
         tf.fill([num_features, num_factors], -2.0),
         name="qx_scale_scale_var")), "qw_scale_scale_var fucked")
 
     qw_loc_var = tf.check_numerics(tf.Variable(
-        tf.fill([num_features, num_factors], 0.0),
-        # tf.zeros([num_features, num_factors]),
+        qw_init,
         name="qx_loc_var"), "qw_loc_var fucked")
     qw_scale_var_ = tf.Variable(
-        # tf.zeros([num_features, num_factors]),
         tf.fill([num_features, num_factors], -2.0),
         name="qx_scale_var")
     qw_scale_var = tf.check_numerics(tf.nn.softplus(qw_scale_var_), "qw_scale_var fucked")
 
     qx_bias_loc_var = tf.Variable(
-        tf.reduce_mean(x_init, axis=0),
+        qx_bias_init,
         name="qx_bias_loc_var")
     qx_bias_scale_var = tf.nn.softplus(tf.Variable(
-        tf.zeros([num_features]),
+        tf.fill([num_features], -2.0),
         name="qx_bias_scale_var"))
 
     qxtau_loc_var = tf.Variable(0.0, name="qxtau_loc_var")
     qxtau_scale_var = tf.nn.softplus(tf.Variable(-2.0, name="qxtau_scale_var"))
 
-    qx_log_scale_c_loc_var = tf.Variable(
-        tf.zeros([scale_polynomial_degree]),
-        name="qx_log_scale_c_loc_var")
-    qx_log_scale_c_scale_var = tf.nn.softplus(tf.Variable(
+    qx_scale_c_loc_var = tf.Variable(
+        qx_scale_c_init,
+        name="qx_scale_c_loc_var")
+    qx_scale_c_scale_var = tf.nn.softplus(tf.Variable(
         tf.fill([scale_polynomial_degree], -2.0),
-        name="qx_log_scale_c_scale_var"))
+        name="qx_scale_c_scale_var"))
 
-    qx_log_scale_loc_var = tf.Variable(
-        tf.fill([num_features], 0.0),
-        name="qx_log_scale_loc_var")
-    qx_log_scale_scale_var = tf.nn.softplus(tf.Variable(
-        tf.zeros([num_features]),
-        name="qx_log_scale_scale_var"))
+    qx_scale_loc_var = tf.Variable(
+        qx_scale_init,
+        name="qx_scale_loc_var")
+    qx_scale_scale_var = tf.nn.softplus(tf.Variable(
+        tf.fill([num_features], -2.0),
+        name="qx_scale_scale_var"))
 
-    qx_log_scale_scale_loc_var = tf.Variable(
+    qx_scale_scale_loc_var = tf.Variable(
+        qx_scale_scale_init,
+        name="qx_scale_scale_loc_var")
+    qx_scale_scale_scale_var = tf.nn.softplus(tf.Variable(
         -2.0,
-        name="qx_log_scale_scale_loc_var")
-    qx_log_scale_scale_scale_var = tf.nn.softplus(tf.Variable(
-        -3.0,
-        name="qx_log_scale_scale_scale_var"))
+        name="qx_scale_scale_scale_var"))
 
     qx_loc_var = tf.Variable(
-        x_init,
+        qx_init,
         name="qx_loc_var",
         trainable=not use_point_estimates)
     qx_scale_var = tf.nn.softplus(tf.Variable(
         tf.fill([num_samples, num_features], -2.0),
         name="qx_scale_var"))
 
-    qtau, qw_scale, qw, qx_bias, qx_log_scale_c, qx_scale, \
-        qx_log_scale_scale, qx = \
+    qtau, qw_scale, qw, qx_bias, qx_scale_c, qx_scale, \
+        qx_scale_scale, qx = \
         linear_regression_variational_model(
             qtau_loc_var, qtau_scale_var,
             qw_scale_loc_var, qw_scale_scale_var,
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
-            qx_log_scale_c_loc_var, qx_log_scale_c_scale_var,
-            qx_log_scale_loc_var, qx_log_scale_scale_var,
-            qx_log_scale_scale_loc_var, qx_log_scale_scale_scale_var,
+            qx_scale_c_loc_var, qx_scale_c_scale_var,
+            qx_scale_loc_var, qx_scale_scale_var,
+            qx_scale_scale_loc_var, qx_scale_scale_scale_var,
             qx_loc_var, qx_scale_var,
             use_point_estimates)
 
@@ -237,9 +236,9 @@ def linear_regression_inference(
         w_scale=qw_scale,
         w=qw,
         x_bias=qx_bias,
-        x_log_scale_c=qx_log_scale_c,
+        x_scale_c=qx_scale_c,
         x_scale=qx_scale,
-        x_log_scale_scale=qx_log_scale_scale,
+        x_scale_scale=qx_scale_scale,
         x=qx)
 
     variational_log_joint = ed.make_log_joint_fn(
@@ -248,9 +247,9 @@ def linear_regression_inference(
             qw_scale_loc_var, qw_scale_scale_var,
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
-            qx_log_scale_c_loc_var, qx_log_scale_c_scale_var,
-            qx_log_scale_loc_var, qx_log_scale_scale_var,
-            qx_log_scale_scale_loc_var, qx_log_scale_scale_scale_var,
+            qx_scale_c_loc_var, qx_scale_c_scale_var,
+            qx_scale_loc_var, qx_scale_scale_var,
+            qx_scale_scale_loc_var, qx_scale_scale_scale_var,
             qx_loc_var, qx_scale_var,
             use_point_estimates))
 
@@ -260,8 +259,8 @@ def linear_regression_inference(
         qw=qw,
         qx_bias=qx_bias,
         qx_scale=qx_scale,
-        qx_log_scale_c=qx_log_scale_c,
-        qx_log_scale_scale=qx_log_scale_scale,
+        qx_scale_c=qx_scale_c,
+        qx_scale_scale=qx_scale_scale,
         qx=qx)
 
     log_likelihood = make_likelihood(qx)
@@ -312,9 +311,9 @@ def linear_regression_inference(
     # elbo = tf.Print(elbo, [qx_log_scale_scale], "qx_log_scale_scale")
     # elbo = tf.Print(elbo, [qx_log_scale_scale.distribution.log_prob(qx_log_scale_scale)], "qx_log_scale_scale entropy")
 
-    tf.summary.scalar("c0", qx_log_scale_c[0])
-    tf.summary.scalar("c1", qx_log_scale_c[1])
-    tf.summary.scalar("c2", qx_log_scale_c[2])
+    tf.summary.scalar("c0", qx_scale_c[0])
+    tf.summary.scalar("c1", qx_scale_c[1])
+    tf.summary.scalar("c2", qx_scale_c[2])
 
     if sess is None:
         sess = tf.Session()
@@ -332,7 +331,7 @@ def linear_regression_inference(
 
 def linear_regression_map_inference(
         init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu, x_bias_sigma, use_point_estimates, sess):
+        x_bias_mu0, x_bias_sigma0, use_point_estimates, sess):
 
     num_samples = int(F.shape[0])
     num_factors = int(F.shape[1])
@@ -340,19 +339,13 @@ def linear_regression_map_inference(
 
     log_joint = ed.make_log_joint_fn(
         lambda: linear_regression_model
-            (num_factors, num_features, F, x_bias_mu, x_bias_sigma))
+            (num_factors, num_features, F, x_bias_mu0, x_bias_sigma0))
 
     qtau = tf.nn.softplus(tf.Variable(0.0, name="qtau"))
-    w_scale = tf.nn.softplus(tf.Variable(0.0, name="w_scale"))
 
     qw_scale = tf.nn.softplus(tf.Variable(
         tf.zeros([num_features, num_factors]),
         name="qx_scale"))
-
-    qw_scale_scale_var = tf.nn.softplus(tf.Variable(
-        tf.zeros([num_features, num_factors]),
-        # tf.fill([num_features, num_factors], -1.0),
-        name="qx_scale_scale_var"))
 
     qw = tf.Variable(
         tf.zeros([num_features, num_factors]),
@@ -362,18 +355,10 @@ def linear_regression_map_inference(
         tf.reduce_mean(x_init, axis=0),
         name="qx_bias")
 
-    # qx_log_scale_c = tf.Variable(tf.zeros([scale_polynomial_degree]), name="qx_log_scale_c")
-    qx_log_scale_c = tf.Variable([10.0, -1.0], name="qx_log_scale_c")
-    qx_log_scale = tf.Variable(tf.zeros([num_features]), name="qx_log_scale")
+    qx_scale_scale = tf.nn.softplus(tf.Variable(0.0, name="qx_scale_scale"))
+    qx_scale_c = tf.Variable(tf.zeros([scale_polynomial_degree]), name="qx_scale_c")
+    qx_scale = tf.nn.softplus(tf.Variable(tf.zeros([num_features]), name="qx_scale"))
 
-    # qxtau_loc_var = tf.Variable(0.0, name="qxtau_loc_var")
-    # qxtau_scale_var = tf.nn.softplus(tf.Variable(0.0, name="qxtau_scale_var"))
-
-    # qx_scale = tf.nn.softplus(tf.Variable(
-    #     tf.zeros([num_features]),
-    #     name="qx_scale"))
-
-    # qxtau = tf.nn.softplus(tf.Variable(-1.0, name="qxtau"))
 
     qx = tf.Variable(
         x_init,
@@ -385,42 +370,21 @@ def linear_regression_map_inference(
         w_scale=qw_scale,
         w=qw,
         x_bias=qx_bias,
-        # xtau=qxtau,
-        # x_scale=qx_scale,
-        x_log_scale_c=qx_log_scale_c,
-        x_log_scale=qx_log_scale,
+        x_scale_c=qx_scale_c,
+        x_scale=qx_scale,
+        x_scale_scale=qx_scale_scale,
         x=qx)
 
     log_likelihood = make_likelihood(qx)
 
     log_posterior = log_prior + log_likelihood
 
-    # idx = 50369
-    # idx = 42283
-
-    # qx_scale = tf.exp(qx_log_scale)
-
-    # log_posterior = tf.Print(log_posterior, [qx[:,idx-1]], "x", summarize=6)
-    # log_posterior = tf.Print(log_posterior, [tf.log(tf.nn.softmax(qx))[:,idx-1]], "x normalized", summarize=6)
-    # log_posterior = tf.Print(log_posterior, [qx_scale[idx-1]], "x scale", summarize=6)
-    # log_posterior = tf.Print(log_posterior, [qw[idx-1,:]], "w", summarize=6)
-    # log_posterior = tf.Print(log_posterior, [qw_scale[idx-1]], "w scale", summarize=6)
-    # log_posterior = tf.Print(log_posterior, [qtau], "tau", summarize=6)
-    # log_posterior = tf.Print(log_posterior, [qxtau], "xtau", summarize=6)
-    # log_posterior = tf.Print(log_posterior, [qx_log_scale_c], "qx_log_scale_c", summarize=6)
-
     if sess is None:
         sess = tf.Session()
 
-    train(sess, -log_posterior, init_feed_dict, 16000, 1e-3)
-    # train(sess, -log_posterior, init_feed_dict, 16000, 1e-2, decay_rate=0.995)
+    train(sess, -log_posterior, init_feed_dict, 10000, 1e-3)
 
-    return (
-        sess.run(qw),
-        sess.run(qw_scale),
-        sess.run(qx_bias),
-        # sess.run(qx_scale))
-        sess.run(tf.exp(qx_log_scale)))
+    return sess.run([qtau, qw_scale, qw, qx_bias, qx_scale_scale, qx_scale_c, qx_scale, qx])
 
 
 """
@@ -497,26 +461,20 @@ def estimate_feature_linear_regression(
 
     x_init = tf.log(tf.nn.softmax(feature_loc, axis=1))
 
-    # TODO: trying different initialization
-    # feature_loc_exp = np.exp(feature_loc)
-    # x_init = np.log(feature_loc_exp / np.sum(feature_loc_exp))
-    # x_init = np.repeat(np.mean(x_init, axis=0, keepdims=True), repeats=x_init.shape[0], axis=0)
-
     x_bias_mu0 = np.log(1/num_features)
     x_bias_sigma0 = 16.0
 
     if sess is None:
         sess = tf.Session()
 
-    # w_init = find_w_init(F, x_init, sess)
+    param_inits = \
+        linear_regression_map_inference(
+            init_feed_dict, F, x_init, make_likelihood,
+            x_bias_mu0, x_bias_sigma0, use_point_estimates, sess)
 
     return linear_regression_inference(
-        init_feed_dict, F, x_init, make_likelihood,
+        init_feed_dict, F, param_inits, make_likelihood,
         x_bias_mu0, x_bias_sigma0, use_point_estimates, sess)
-
-    # return linear_regression_map_inference(
-    #     init_feed_dict, F, x_init, make_likelihood,
-    #     x_bias_mu0, x_bias_sigma0, use_point_estimates, sess)
 
 
 """

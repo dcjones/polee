@@ -13,7 +13,7 @@ from polee_approx_likelihood import *
 from polee_training import *
 
 
-scale_polynomial_degree = 4
+scale_polynomial_degree = 3
 
 
 """
@@ -30,24 +30,15 @@ def linear_regression_model(
     # -
 
     # horseshoe prior
-    # tau_scale = 
-
     tau = ed.HalfCauchy(loc=0.0, scale=10.0, name="tau")
 
     w_scale = ed.HalfCauchy(
         loc=tf.zeros([num_features, num_factors]),
-        # scale=tau, name="w_scale")
         scale=0.1, name="w_scale")
-
-    # w_scale = ed.HalfNormal(
-    #     scale=tf.fill([num_features, num_factors], 1.0), name="w_scale")
 
     w = ed.Normal(
         loc=0.0,
-        # scale=tf.maximum(0.1, w_scale * tau),
         scale=w_scale * tau,
-        # scale=w_scale,
-        # scale=tf.ones([num_features, num_factors]) * tau,
         name="w")
 
     # x
@@ -62,20 +53,6 @@ def linear_regression_model(
         tf.matmul(F, w, transpose_b=True) + x_bias,
         name="x_loc")
 
-    # xtau = ed.HalfCauchy(loc=0.0, scale=1.0, name="tau")
-
-    # TODO: We need a more sophisticated model of biological variance.
-    # Other methods work by fitting some nonlinear function to the mean/variance
-    # relationship, then shrinking towards the predicted variance. We need to
-    # figure out how to do something similar in a bayesian context.
-
-    # xtau = ed.HalfCauchy(loc=0.0, scale=4.0, name="tau")
-    # x_scale = ed.HalfCauchy(
-    #     loc=tf.fill([num_features], 0.0),
-    #     scale=1.0,
-    #     # scale=xtau,
-    #     name="x_scale")
-
     x_log_scale_scale = ed.HalfCauchy(
         loc=0.0, scale=1.0, name="x_log_scale_scale")
 
@@ -84,46 +61,25 @@ def linear_regression_model(
 
     x_loc_mean = tf.reduce_mean(x_loc, axis=0)
 
-    x_log_scale = ed.StudentT(
-        df=1.0,
-        loc=x_log_scale_c[0] + \
-            x_log_scale_c[1] * x_loc_mean + \
-            x_log_scale_c[2] * x_loc_mean**2,
-            # x_log_scale_c[3] * x_loc_mean**3,
-        scale=x_log_scale_scale,
-        name="x_log_scale")
+    x_log_scale_loc = \
+        x_log_scale_c[0] + \
+        x_log_scale_c[1] * x_loc_mean + \
+        x_log_scale_c[2] * x_loc_mean**2
 
-    # x_log_scale = ed.HalfCauchy(
-    #     # df=1.0,
-    #     # loc=tf.math.polyval(x_log_scale_c, x_bias),
-    #     # loc=x_log_scale_c[0] + x_log_scale_c[1] * x_bias - 3.0,
-    #     # loc=x_log_scale_c[0] + x_log_scale_c[1] * tf.reduce_mean(x_loc, axis=0) - 3.0,
-    #     # loc=x_log_scale_c[0] + x_log_scale_c[1] * tf.reduce_mean(x_loc, axis=0),
-    #     loc=0.0,
-    #     scale=tf.exp(x_log_scale_c[0] + x_log_scale_c[1] * tf.reduce_mean(x_loc, axis=0)),
-    #     name="x_log_scale")
+    x_scale = ed.TransformedDistribution(
+        distribution=tfd.StudentT(
+            df=1.0,
+            loc=x_log_scale_loc,
+            scale=x_log_scale_scale),
+        bijector=tfp.bijectors.Exp(),
+        name="x_scale")
 
-    # x_scale = ed.InverseGamma(
-    #     concentration=tf.fill([num_features], 0.01),
-    #     rate=tf.fill([num_features], 0.01), name="x_scale")
-
-    # x = ed.StudentT(
-    #     df=10.0,
     x = ed.Normal(
         loc=x_loc,
-        # scale=0.50,
-        # scale=tf.maximum([0.1], tf.exp(x_log_scale)),
-        # scale=1.0,
-        # scale=xtau,
-        # scale=xtau*x_scale,
-        # scale=tf.ones([num_features]) * xtau,
-        scale=tf.exp(x_log_scale),
-        # scale=x_log_scale,
-        # scale=x_scale,
+        scale=x_scale,
         name="x")
 
-    return tau, w_scale, w, x_bias, x_log_scale_c, x_log_scale, x_log_scale_scale, x
-    # return tau, w_scale, w, x_bias, xtau, x_scale, x
+    return tau, w_scale, w, x_bias, x_log_scale_c, x_scale, x_log_scale_scale, x
 
 
 """
@@ -134,8 +90,6 @@ def linear_regression_variational_model(
         qw_scale_loc_var, qw_scale_scale_var,
         qw_loc_var, qw_scale_var,
         qx_bias_loc_var, qx_bias_scale_var,
-        # qxtau_loc_var, qxtau_scale_var,
-        # qx_scale_loc_var, qx_scale_scale_var,
         qx_log_scale_c_loc_var, qx_log_scale_c_scale_var,
         qx_log_scale_loc_var, qx_log_scale_scale_var,
         qx_log_scale_scale_loc_var, qx_log_scale_scale_scale_var,
@@ -151,12 +105,6 @@ def linear_regression_variational_model(
         loc=qw_scale_loc_var,
         scale=qw_scale_scale_var,
         name="qw_scale")
-    # qw_scale = tf.clip_by_value(qw_scale, 0.001, 10.0)
-
-    # qw_scale = ed.InverseGamma(
-    #     concentration=tf.nn.softplus(qw_scale_loc_var),
-    #     rate=qw_scale_scale_var,
-    #     name="qw_scale")
 
     qw = ed.Normal(
         loc=qw_loc_var,
@@ -168,45 +116,20 @@ def linear_regression_variational_model(
         scale=qx_bias_scale_var,
         name="qx_bias")
 
-    # qxtau = ed.LogNormal(
-    #     loc=qxtau_loc_var,
-    #     scale=qxtau_scale_var,
-    #     name="qxtau")
-
-    # qx_scale = ed.LogNormal(
-    #     loc=qx_scale_loc_var,
-    #     scale=qx_scale_scale_var,
-    #     name="qx_scale")
-
     qx_log_scale_c = ed.Normal(
         loc=qx_log_scale_c_loc_var,
         scale=qx_log_scale_c_scale_var,
         name="qx_log_scale_c")
 
-    qx_log_scale = ed.Normal(
+    qx_scale = ed.LogNormal(
         loc=qx_log_scale_loc_var,
         scale=qx_log_scale_scale_var,
-        name="qx_log_scale")
+        name="qx_scale")
 
     qx_log_scale_scale = ed.LogNormal(
         loc=qx_log_scale_scale_loc_var,
         scale=qx_log_scale_scale_scale_var,
         name="qx_log_scale_scale")
-
-    # qx_log_scale = ed.LogNormal(
-    #     loc=qx_log_scale_loc_var,
-    #     scale=qx_log_scale_scale_var,
-    #     name="qx_log_scale")
-
-    # qx_log_scale = ed.InverseGamma(
-    #     concentration=tf.nn.softplus(qx_log_scale_loc_var),
-    #     rate=qx_log_scale_scale_var,
-    #     name="qx_log_scale")
-
-    # qx_scale = ed.InverseGamma(
-    #     concentration=tf.nn.softplus(qx_scale_loc_var),
-    #     rate=qx_scale_scale_var,
-    #     name="qx_scale")
 
     if use_point_estimates:
         qx = ed.Deterministic(loc=qx_loc_var, name="qx")
@@ -216,8 +139,8 @@ def linear_regression_variational_model(
             scale=qx_scale_var,
             name="qx")
 
-    return qtau, qw_scale, qw, qx_bias, qx_log_scale_c, qx_log_scale, qx_log_scale_scale, qx
-    # return qtau, qw_scale, qw, qx_bias, qxtau, qx_scale, qx
+    return qtau, qw_scale, qw, qx_bias, qx_log_scale_c, qx_scale, \
+        qx_log_scale_scale, qx
 
 
 
@@ -267,32 +190,22 @@ def linear_regression_inference(
     qxtau_loc_var = tf.Variable(0.0, name="qxtau_loc_var")
     qxtau_scale_var = tf.nn.softplus(tf.Variable(-2.0, name="qxtau_scale_var"))
 
-    # qx_scale_loc_var = tf.Variable(
-    #     # tf.zeros([num_features]),
-    #     tf.fill([num_features], -1.0),
-    #     name="qx_scale_loc_var")
-
-    # qx_scale_scale_var = tf.nn.softplus(tf.Variable(
-    #     tf.zeros([num_features]),
-    #     # tf.fill([num_features], -2.0),
-    #     name="qx_scale_scale_var"))
-
     qx_log_scale_c_loc_var = tf.Variable(
         tf.zeros([scale_polynomial_degree]),
         name="qx_log_scale_c_loc_var")
     qx_log_scale_c_scale_var = tf.nn.softplus(tf.Variable(
-        tf.zeros([scale_polynomial_degree]),
+        tf.fill([scale_polynomial_degree], -2.0),
         name="qx_log_scale_c_scale_var"))
 
     qx_log_scale_loc_var = tf.Variable(
-        tf.zeros([num_features]),
+        tf.fill([num_features], 0.0),
         name="qx_log_scale_loc_var")
     qx_log_scale_scale_var = tf.nn.softplus(tf.Variable(
         tf.zeros([num_features]),
         name="qx_log_scale_scale_var"))
 
     qx_log_scale_scale_loc_var = tf.Variable(
-        -1.0,
+        -2.0,
         name="qx_log_scale_scale_loc_var")
     qx_log_scale_scale_scale_var = tf.nn.softplus(tf.Variable(
         -3.0,
@@ -303,18 +216,16 @@ def linear_regression_inference(
         name="qx_loc_var",
         trainable=not use_point_estimates)
     qx_scale_var = tf.nn.softplus(tf.Variable(
-        tf.zeros([num_samples, num_features]) ,
+        tf.fill([num_samples, num_features], -2.0),
         name="qx_scale_var"))
 
-    # qtau, qw_scale, qw, qx_bias, qxtau, qx_scale, qx = \
-    qtau, qw_scale, qw, qx_bias, qx_log_scale_c, qx_log_scale, qx_log_scale_scale, qx = \
+    qtau, qw_scale, qw, qx_bias, qx_log_scale_c, qx_scale, \
+        qx_log_scale_scale, qx = \
         linear_regression_variational_model(
             qtau_loc_var, qtau_scale_var,
             qw_scale_loc_var, qw_scale_scale_var,
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
-            # qxtau_loc_var, qxtau_scale_var,
-            # qx_scale_loc_var, qx_scale_scale_var,
             qx_log_scale_c_loc_var, qx_log_scale_c_scale_var,
             qx_log_scale_loc_var, qx_log_scale_scale_var,
             qx_log_scale_scale_loc_var, qx_log_scale_scale_scale_var,
@@ -326,10 +237,8 @@ def linear_regression_inference(
         w_scale=qw_scale,
         w=qw,
         x_bias=qx_bias,
-        # xtau=qxtau,
-        # x_scale=qx_scale,
         x_log_scale_c=qx_log_scale_c,
-        x_log_scale=qx_log_scale,
+        x_scale=qx_scale,
         x_log_scale_scale=qx_log_scale_scale,
         x=qx)
 
@@ -339,8 +248,6 @@ def linear_regression_inference(
             qw_scale_loc_var, qw_scale_scale_var,
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
-            # qxtau_loc_var, qxtau_scale_var,
-            # qx_scale_loc_var, qx_scale_scale_var,
             qx_log_scale_c_loc_var, qx_log_scale_c_scale_var,
             qx_log_scale_loc_var, qx_log_scale_scale_var,
             qx_log_scale_scale_loc_var, qx_log_scale_scale_scale_var,
@@ -352,9 +259,7 @@ def linear_regression_inference(
         qw_scale=qw_scale,
         qw=qw,
         qx_bias=qx_bias,
-        # qxtau=qxtau,
-        # qx_scale=qx_scale,
-        qx_log_scale=qx_log_scale,
+        qx_scale=qx_scale,
         qx_log_scale_c=qx_log_scale_c,
         qx_log_scale_scale=qx_log_scale_scale,
         qx=qx)
@@ -363,31 +268,13 @@ def linear_regression_inference(
 
     elbo = log_prior + log_likelihood - entropy
 
-    # elbo = tf.Print(elbo, [log_prior, log_likelihood, entropy], "loss parts", summarize=3)
-
-    # idx = 45047
-    # elbo = tf.Print(elbo, [qw_loc_var[idx-1], qw_scale_var[idx-1]], "w loc scale of interest")
-    # elbo = tf.Print(elbo, [qx_loc_var[:,idx-1]], "x loc of interest", summarize=6)
-    # elbo = tf.Print(elbo, [tf.reduce_sum(tf.exp(qx_loc_var), axis=1)], "x scale", summarize=6)
-
-    # qs = tfp.stats.percentile(tf.exp(qx_loc_var), 95.0, axis=1)
-    # elbo = tf.Print(elbo, [qs / tf.reduce_mean(qs)], "x scale", summarize=6)
-    # elbo = tf.Print(elbo, [qx_log_scale_c_loc_var], "qx_log_scale_c_loc_var", summarize=6)
-
-    # idx = 41408
-    # idx = 56843
-    # idx = 57930
-    # idx = 58706
-    # idx = 58283
-    # idx = 57973
-    # idx = 58715
-    # idx = 50369
-    idx = 657
+    idx = 53091
 
     # elbo = tf.Print(elbo, [qx[:,idx-1]], "x", summarize=6)
-    # elbo = tf.Print(elbo, [tf.exp(qx_log_scale[idx-1])], "x scale", summarize=6)
+    # elbo = tf.Print(elbo, [qx_scale[idx-1]], "x scale", summarize=6)
     # elbo = tf.Print(elbo, [qw[idx-1,:]], "w", summarize=6)
     # elbo = tf.Print(elbo, [qw_scale[idx-1]], "w scale", summarize=6)
+
     # elbo = tf.Print(elbo, [qtau], "tau", summarize=6)
 
     # elbo = tf.Print(elbo, [qw_scale], "w scale", summarize=10)
@@ -400,13 +287,6 @@ def linear_regression_inference(
     # elbo = tf.Print(elbo, [tfp.stats.percentile(qx_loc_var - qx_bias_loc_var, 50.0, axis=1)], "x scale", summarize=6)
     # elbo = tf.Print(elbo, [tf.reduce_mean(qx_loc_var - qx_bias_loc_var, axis=1)], "x scale", summarize=6)
 
-    # TODO: trying to figure out why we get NaNs in entropy
-    # tf.summary.scalar("qtau entropy", tf.reduce_sum(qtau.distribution.log_prob(qtau)))
-    # tf.summary.scalar("qw_scale entropy", tf.reduce_sum(qw_scale.distribution.log_prob(qw_scale)))
-    # tf.summary.scalar("qw entropy", tf.reduce_sum(qw.distribution.log_prob(qw)))
-    # tf.summary.scalar("qx_bias entropy", tf.reduce_sum(qx_bias.distribution.log_prob(qx_bias)))
-    # tf.summary.scalar("qxtau entropy", tf.reduce_sum(qxtau.distribution.log_prob(qxtau)))
-
 
     # tf.summary.scalar("log likelihood", log_likelihood)
     # tf.summary.scalar("log prior", log_prior)
@@ -417,9 +297,7 @@ def linear_regression_inference(
     # tf.summary.scalar("qw idx", qw[idx-1,0])
     # tf.summary.scalar("qw_scale idx", qw_scale[idx-1,0])
 
-    tf.summary.histogram("qx_bias", qx_bias)
     tf.summary.histogram("qw", qw)
-    tf.summary.histogram("qx", qx)
     # tf.summary.histogram("qw_scale", qw_scale)
     # tf.summary.histogram("qx_scale", tf.exp(qx_log_scale))
 
@@ -434,36 +312,21 @@ def linear_regression_inference(
     # elbo = tf.Print(elbo, [qx_log_scale_scale], "qx_log_scale_scale")
     # elbo = tf.Print(elbo, [qx_log_scale_scale.distribution.log_prob(qx_log_scale_scale)], "qx_log_scale_scale entropy")
 
-    # elbo = tf.Print(elbo, [qx_log_scale_c], "qx_log_scale_c", summarize=6)
     tf.summary.scalar("c0", qx_log_scale_c[0])
     tf.summary.scalar("c1", qx_log_scale_c[1])
+    tf.summary.scalar("c2", qx_log_scale_c[2])
 
     if sess is None:
         sess = tf.Session()
 
-    tf.set_random_seed(1)
-
-    # train(sess, -elbo, init_feed_dict, 16000, 1e-1, decay_rate=0.98)
-
-    # train(sess, -elbo, init_feed_dict, 16000, 1e-1, decay_rate=0.99)
-    train(sess, -elbo, init_feed_dict, 32000, 1e-3, decay_rate=1.0)
-
-    # train(sess, -elbo, init_feed_dict, 16000, 5e-4)
-    # all_vars = set(tf.global_variables())
-    # train(sess, -elbo, init_feed_dict, 10000, 1e-2,
-    #     var_list=tf.trainable_variables() + [qw_loc_var, qw_scale_var_],
-    #     initialized_vars=all_vars)
-    # train(sess, -elbo, init_feed_dict, 8000, 1e-2)
-    # all_vars = set(tf.global_variables())
-    # train(sess, -elbo, init_feed_dict, 8000, 1e-3, initialized_vars=all_vars)
+    train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0)
 
     return (
         sess.run(qx_loc_var),
         sess.run(qw_loc_var),
         sess.run(qw.distribution.scale),
         sess.run(qx_bias.distribution.mean()),
-        # sess.run(qx_scale))
-        sess.run(tf.exp(qx_log_scale.distribution.mean())))
+        sess.run(qx_scale.distribution.mean()))
 
 
 
@@ -532,7 +395,8 @@ def linear_regression_map_inference(
 
     log_posterior = log_prior + log_likelihood
 
-    idx = 50369
+    # idx = 50369
+    # idx = 42283
 
     # qx_scale = tf.exp(qx_log_scale)
 
@@ -548,8 +412,8 @@ def linear_regression_map_inference(
     if sess is None:
         sess = tf.Session()
 
-    # train(sess, -log_posterior, init_feed_dict, 16000, 1e-3)
-    train(sess, -log_posterior, init_feed_dict, 8000, 1e-3)
+    train(sess, -log_posterior, init_feed_dict, 16000, 1e-3)
+    # train(sess, -log_posterior, init_feed_dict, 16000, 1e-2, decay_rate=0.995)
 
     return (
         sess.run(qw),
@@ -557,6 +421,29 @@ def linear_regression_map_inference(
         sess.run(qx_bias),
         # sess.run(qx_scale))
         sess.run(tf.exp(qx_log_scale)))
+
+
+"""
+Find a good initialization for w by optimizing the point estimate regression.
+"""
+def find_w_init(F, x_init, sess):
+
+    num_samples = int(F.shape[0])
+    num_factors = int(F.shape[1])
+    num_features = int(x_init.shape[1])
+
+    x_bias = tf.reduce_mean(x_init, axis=0)
+
+    qw = tf.Variable(
+        tf.zeros([num_features, num_factors]),
+        name="qw_")
+
+    loss = tf.reduce_sum(tf.square(tf.matmul(F, qw, transpose_b=True) - x_bias))
+
+    train(sess, loss, {}, 2000, 1e-3)
+
+    w_init = sess.run(qw)
+    return w_init
 
 """
 Run variational inference on transcript expression linear regression.
@@ -617,6 +504,11 @@ def estimate_feature_linear_regression(
 
     x_bias_mu0 = np.log(1/num_features)
     x_bias_sigma0 = 16.0
+
+    if sess is None:
+        sess = tf.Session()
+
+    # w_init = find_w_init(F, x_init, sess)
 
     return linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,

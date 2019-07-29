@@ -34,7 +34,7 @@ def linear_regression_model(
     # x_loc_mean = tf.reduce_mean(x_loc, axis=0, keepdims=True)
     x_loc_mean = tf.expand_dims(x_bias, 0)
 
-    x_scale_hinges_diff = tf.square(x_loc_mean - tf.expand_dims(x_scale_hinges, -1))
+    x_scale_hinges_diff = 1.5 * tf.square(x_loc_mean - tf.expand_dims(x_scale_hinges, -1))
     x_scale_hinges_weight = tf.exp(-x_scale_hinges_diff)
 
     # [scale_splice_degree, num_features]
@@ -131,7 +131,7 @@ def linear_regression_model(
             # loc=tf.fill([num_features], 0.0),
             # scale=tf.fill([num_features], 10.0)),
             loc=x_scale_loc_mix,
-            scale=1.0),
+            scale=0.5),
             # scale=x_scale_scale_mix),
         bijector=tfp.bijectors.Exp(),
         name="x_scale")
@@ -425,7 +425,8 @@ def linear_regression_inference(
     if sess is None:
         sess = tf.Session()
 
-    train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0)
+    # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0)
+    train(sess, -elbo, init_feed_dict, 80000, 1e-4, decay_rate=1.0)
 
     # initialized_vars = set(tf.global_variables())
     # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0,

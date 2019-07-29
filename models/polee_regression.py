@@ -13,7 +13,6 @@ from polee_approx_likelihood import *
 from polee_training import *
 
 
-scale_polynomial_degree = 3
 scale_spline_degree = 8
 
 
@@ -27,15 +26,34 @@ def linear_regression_model(
         num_factors, num_features, F,
         x_bias_loc, x_bias_scale, x_scale_hinges):
 
+    x_bias = ed.Normal(
+        loc=tf.fill([num_features], np.float32(x_bias_loc)),
+        scale=np.float32(x_bias_scale),
+        name="x_bias")
+
+    # x_loc_mean = tf.reduce_mean(x_loc, axis=0, keepdims=True)
+    x_loc_mean = tf.expand_dims(x_bias, 0)
+
+    x_scale_hinges_diff = tf.square(x_loc_mean - tf.expand_dims(x_scale_hinges, -1))
+    x_scale_hinges_weight = tf.exp(-x_scale_hinges_diff)
+
+    # [scale_splice_degree, num_features]
+    x_scale_hinges_weight = x_scale_hinges_weight / tf.reduce_sum(x_scale_hinges_weight, axis=0, keepdims=True)
+
     # w
     # -
 
     # horseshoe prior
-    tau = ed.HalfCauchy(loc=0.0, scale=10.0, name="tau")
+    tau = ed.HalfCauchy(loc=tf.zeros([scale_spline_degree]), scale=10.0, name="tau")
+
+    # [num_features]
+    tau_mix = tf.reduce_sum(
+        tf.expand_dims(tau, -1) * x_scale_hinges_weight, axis=0)
 
     w_scale = ed.HalfCauchy(
         loc=tf.zeros([num_features, num_factors]),
         # loc=tf.zeros([1, 1, 2]),
+        # scale=tf.expand_dims(tau_mix, -1),
         scale=0.1,
         name="w_scale")
 
@@ -45,7 +63,10 @@ def linear_regression_model(
 
     w = ed.Normal(
         loc=0.0,
-        scale=w_scale * tau,
+        scale=w_scale * tf.expand_dims(tau_mix, -1),
+        # scale=tf.expand_dims(tau_mix, -1),
+        # scale=tau * w_scale,
+        # scale=w_scale,
         name="w")
 
     # w = ed.StudentT(
@@ -81,11 +102,6 @@ def linear_regression_model(
     # x
     # -
 
-    x_bias = ed.Normal(
-        loc=tf.fill([num_features], np.float32(x_bias_loc)),
-        scale=np.float32(x_bias_scale),
-        name="x_bias")
-
     x_loc = tf.identity(
         tf.matmul(F, w, transpose_b=True) + x_bias,
         name="x_loc")
@@ -98,16 +114,11 @@ def linear_regression_model(
     x_scale_c = ed.Normal(
         loc=tf.zeros([scale_spline_degree]), scale=100.0, name="x_scale_c")
 
-    x_loc_mean = tf.reduce_mean(x_loc, axis=0, keepdims=True)
-
     # x_scale_loc = \
     #     x_scale_c[0] + \
     #     x_scale_c[1] * x_loc_mean + \
     #     x_scale_c[2] * x_loc_mean**2
 
-    x_scale_hinges_diff = tf.square(x_loc_mean - tf.expand_dims(x_scale_hinges, -1))
-    x_scale_hinges_weight = tf.exp(-x_scale_hinges_diff)
-    x_scale_hinges_weight = x_scale_hinges_weight / tf.reduce_sum(x_scale_hinges_weight, axis=0, keepdims=True)
 
     x_scale_loc_mix = tf.reduce_sum(
         tf.expand_dims(x_scale_c, -1) * x_scale_hinges_weight, axis=0)
@@ -117,8 +128,11 @@ def linear_regression_model(
 
     x_scale = ed.TransformedDistribution(
         distribution=tfd.Normal(
+            # loc=tf.fill([num_features], 0.0),
+            # scale=tf.fill([num_features], 10.0)),
             loc=x_scale_loc_mix,
-            scale=x_scale_scale_mix),
+            scale=1.0),
+            # scale=x_scale_scale_mix),
         bijector=tfp.bijectors.Exp(),
         name="x_scale")
 
@@ -235,8 +249,9 @@ def linear_regression_inference(
         lambda: linear_regression_model
             (num_factors, num_features, F, x_bias_mu0, x_bias_sigma0, x_scale_hinges))
 
-    qtau_loc_var = tf.Variable(0.0, name="qtau_loc_var")
-    qtau_scale_var = tf.nn.softplus(tf.Variable(0.0, name="qtau_scale_var"))
+    qtau_loc_var = tf.Variable(tf.zeros([scale_spline_degree]), name="qtau_loc_var")
+    # qtau_loc_var = tf.Variable([0.1, 0.1, 0.1, 0.1, 1.0, 1.0, 1.0, 1.0], name="qtau_loc_var", trainable=False)
+    qtau_scale_var = tf.nn.softplus(tf.Variable(tf.zeros([scale_spline_degree]), name="qtau_scale_var"))
 
     qw_mix_loc_var = tf.Variable(tf.fill([2], 0.0), name="qw_mix_loc_var")
 
@@ -297,8 +312,12 @@ def linear_regression_inference(
 
     qx_scale_var_ = tf.Variable(
         tf.fill([num_samples, num_features], 0.0),
-        # trainable=False,
         name="qx_scale_var")
+
+    # qx_scale_var_ = tf.Variable(
+    #     tf.fill([num_samples, num_features], -6.0),
+    #     trainable=False,
+    #     name="qx_scale_var")
 
     qx_scale_var = tf.nn.softplus(qx_scale_var_)
 
@@ -455,7 +474,7 @@ def linear_regression_map_inference(
         lambda: linear_regression_model
             (num_factors, num_features, F, x_bias_mu0, x_bias_sigma0, x_scale_hinges))
 
-    qtau = tf.nn.softplus(tf.Variable(0.0, name="qtau"))
+    qtau = tf.nn.softplus(tf.Variable(tf.zeros(scale_spline_degree), name="qtau"))
 
     qw_scale = tf.nn.softplus(tf.Variable(
         tf.zeros([num_features, num_factors]),

@@ -44,11 +44,19 @@ def linear_regression_model(
     # -
 
     # horseshoe prior
-    tau = ed.HalfCauchy(loc=tf.zeros([scale_spline_degree]), scale=10.0, name="tau")
+    # tau = ed.HalfCauchy(loc=tf.zeros([scale_spline_degree]), scale=10.0, name="tau")
+    tau = ed.HalfCauchy(loc=tf.zeros([scale_spline_degree]), scale=100.0, name="tau")
 
     # [num_features]
     tau_mix = tf.reduce_sum(
         tf.expand_dims(tau, -1) * x_scale_hinges_weight, axis=0)
+
+    # w_scale = ed.HalfCauchy(
+    #     loc=tf.zeros([num_features, num_factors]),
+    #     # loc=tf.zeros([1, 1, 2]),
+    #     # scale=tf.expand_dims(tau_mix, -1),
+    #     scale=0.1,
+    #     name="w_scale")
 
     w_scale = ed.HalfCauchy(
         loc=tf.zeros([num_features, num_factors]),
@@ -61,12 +69,12 @@ def linear_regression_model(
     #     scale=tf.fill([num_features, num_factors], 1.0),
     #     name="w_scale")
 
-    w = ed.Normal(
+    w = ed.StudentT(
+        df=1.0,
         loc=0.0,
-        scale=w_scale * tf.expand_dims(tau_mix, -1),
-        # scale=tf.expand_dims(tau_mix, -1),
+        # scale=w_scale * tf.expand_dims(tau_mix, -1),
+        scale=tf.expand_dims(tau_mix, -1),
         # scale=tau * w_scale,
-        # scale=w_scale,
         name="w")
 
     # w = ed.StudentT(
@@ -111,8 +119,11 @@ def linear_regression_model(
         scale=tf.fill([scale_spline_degree], 10.0),
         name="x_scale_scale")
 
+    # x_scale_c = ed.Normal(
+    #     loc=tf.zeros([scale_spline_degree]), scale=100.0, name="x_scale_c")
+
     x_scale_c = ed.Normal(
-        loc=tf.zeros([scale_spline_degree]), scale=100.0, name="x_scale_c")
+        loc=tf.fill([scale_spline_degree], 0.0), scale=100.0, name="x_scale_c")
 
     # x_scale_loc = \
     #     x_scale_c[0] + \
@@ -131,6 +142,7 @@ def linear_regression_model(
             # loc=tf.fill([num_features], 0.0),
             # scale=tf.fill([num_features], 10.0)),
             loc=x_scale_loc_mix,
+            # scale=10.0),
             scale=0.5),
             # scale=x_scale_scale_mix),
         bijector=tfp.bijectors.Exp(),
@@ -200,6 +212,10 @@ def linear_regression_variational_model(
         loc=qx_scale_c_loc_var,
         name="qx_scale_c")
 
+    # qx_scale_c = ed.Deterministic(
+    #     loc=[-0.04479938, -0.12852147, -0.37199628, -0.9026853,  -1.509923, -1.5990161, -1.2014195,  -1.3512771 ],
+    #     name="qx_scale_c")
+
     qx_scale = ed.LogNormal(
         loc=qx_scale_loc_var,
         scale=qx_scale_scale_var,
@@ -235,7 +251,7 @@ def linear_regression_variational_model(
 Set up a linear regression model for variational inference, returning
 """
 def linear_regression_inference(
-        init_feed_dict, F, param_inits, make_likelihood,
+        x_sample, init_feed_dict, F, param_inits, make_likelihood,
         x_bias_mu0, x_bias_sigma0, x_scale_hinges, use_point_estimates, sess):
 
     qtau_init, qw_scale_init, qw_mix_init, qw_init, qx_bias_init, \
@@ -307,12 +323,16 @@ def linear_regression_inference(
     qx_loc_var = tf.Variable(
         qx_init,
         name="qx_loc_var",
-        # trainable=False)
         trainable=not use_point_estimates)
 
     qx_scale_var_ = tf.Variable(
         tf.fill([num_samples, num_features], 0.0),
         name="qx_scale_var")
+
+    # qx_loc_var = tf.Variable(
+    #     qx_init,
+    #     trainable=False,
+    #     name="qx_loc_var")
 
     # qx_scale_var_ = tf.Variable(
     #     tf.fill([num_samples, num_features], -6.0),
@@ -345,6 +365,7 @@ def linear_regression_inference(
         x_scale=qx_scale,
         x_scale_scale=qx_scale_scale,
         x=qx)
+        # x=x_sample)
 
     variational_log_joint = ed.make_log_joint_fn(
         lambda: linear_regression_variational_model(
@@ -369,10 +390,13 @@ def linear_regression_inference(
         qx_scale_c=qx_scale_c,
         qx_scale_scale=qx_scale_scale,
         qx=qx)
+        # qx=x_sample)
 
     log_likelihood = make_likelihood(qx)
 
     elbo = log_prior + log_likelihood - entropy
+
+    # elbo = log_prior - entropy
 
     idx = 53091
 
@@ -425,8 +449,8 @@ def linear_regression_inference(
     if sess is None:
         sess = tf.Session()
 
-    # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0)
-    train(sess, -elbo, init_feed_dict, 80000, 1e-4, decay_rate=1.0)
+    train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0)
+    # train(sess, -elbo, init_feed_dict, 80000, 1e-4, decay_rate=1.0)
 
     # initialized_vars = set(tf.global_variables())
     # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0,
@@ -436,23 +460,25 @@ def linear_regression_inference(
     # train(sess, -elbo, init_feed_dict, 500000, 1e-5, decay_rate=1.0)
     # train(sess, -elbo, init_feed_dict, 60000, 1e-3, decay_rate=1.0)
 
-    print("c")
-    print(sess.run(qx_scale_c))
+    print("qw")
+    print(np.mean(sess.run(qw.distribution.loc)))
+    print(np.mean(sess.run(qw.distribution.scale)))
 
-    print("scale")
-    print(sess.run(qx_scale_scale))
+    print("qx")
+    print(np.mean(sess.run(qx.distribution.loc)))
+    print(np.mean(sess.run(qx.distribution.scale)))
 
-    print("qw_scale")
-    print(sess.run(qw_scale))
+    print("qx_bias")
+    print(np.mean(sess.run(qx_bias.distribution.loc)))
+    print(np.mean(sess.run(qx_bias.distribution.scale)))
 
-    print("qw_mix")
-    print(sess.run(qw_mix))
+    print("tau")
+    # print(np.mean(sess.run(qtau.distribution.loc)))
+    print(sess.run(qtau.distribution.loc))
 
-    print("qtau")
-    print(sess.run(qtau))
-
-    print("qx.scale quantiles")
-    print(np.quantile(sess.run(qx.distribution.scale), [0.0, 0.1, 0.5, 0.9, 1.0]))
+    print("qx_scale_c")
+    # print(np.mean(sess.run(qtau.distribution.loc)))
+    print(sess.run(qx_scale_c.distribution.loc))
 
     return (
         sess.run(qx_loc_var),
@@ -475,10 +501,10 @@ def linear_regression_map_inference(
         lambda: linear_regression_model
             (num_factors, num_features, F, x_bias_mu0, x_bias_sigma0, x_scale_hinges))
 
-    qtau = tf.nn.softplus(tf.Variable(tf.zeros(scale_spline_degree), name="qtau"))
+    qtau = tf.nn.softplus(tf.Variable(tf.fill([scale_spline_degree], 1.0), name="qtau"))
 
     qw_scale = tf.nn.softplus(tf.Variable(
-        tf.zeros([num_features, num_factors]),
+        tf.fill([num_features, num_factors], 0.0),
         # tf.zeros([1, 1, 2]),
         # [[[0.1, 10.0]]],
         name="qx_scale"))
@@ -495,7 +521,9 @@ def linear_regression_map_inference(
         name="qx_bias")
 
     qx_scale_scale = tf.nn.softplus(tf.Variable(tf.fill([scale_spline_degree], 0.0), name="qx_scale_scale"))
+
     qx_scale_c = tf.Variable(tf.zeros([scale_spline_degree]), name="qx_scale_c")
+
     qx_scale = tf.nn.softplus(tf.Variable(tf.fill([num_features], 1.0), name="qx_scale"))
 
     qx = tf.Variable(
@@ -521,8 +549,8 @@ def linear_regression_map_inference(
     if sess is None:
         sess = tf.Session()
 
-    # train(sess, -log_posterior, init_feed_dict, 10000, 1e-3)
-    train(sess, -log_posterior, init_feed_dict, 10, 1e-3)
+    # train(sess, -log_posterior, init_feed_dict, 10000, 1e-4)
+    train(sess, -log_posterior, init_feed_dict, 1, 1e-3)
 
     return sess.run([qtau, qw_scale, qw_mix, qw, qx_bias, qx_scale_scale, qx_scale_c, qx_scale, qx])
 
@@ -592,12 +620,12 @@ def estimate_feature_linear_regression(
     # # TODO: testing stuff
     # feature_scale.fill(1e-3)
 
-    feature_likelihood = tfd.Normal(
+    feature_likelihood = ed.Normal(
         loc=feature_loc,
         scale=feature_scale,
         name="feature_likelihood")
 
-    make_likelihood = lambda qx: tf.reduce_sum(feature_likelihood.log_prob(
+    make_likelihood = lambda qx: tf.reduce_sum(feature_likelihood.distribution.log_prob(
         tf.log(tf.nn.softmax(qx, axis=1))))
 
     F = tf.constant(F_arr, dtype=tf.float32)
@@ -634,7 +662,7 @@ def estimate_feature_linear_regression(
             x_bias_mu0, x_bias_sigma0, x_scale_hinges, use_point_estimates, sess)
 
     return linear_regression_inference(
-        init_feed_dict, F, param_inits, make_likelihood,
+        feature_likelihood, init_feed_dict, F, param_inits, make_likelihood,
         x_bias_mu0, x_bias_sigma0, x_scale_hinges, use_point_estimates, sess)
 
 

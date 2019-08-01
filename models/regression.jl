@@ -128,6 +128,13 @@ function main()
     factor_matrix, factor_names = build_factor_matrix(
         loaded_samples, factors, parsed_args["nonredundant"])
 
+    # TODO: testing alternative configuration
+    for idx in eachindex(factor_matrix)
+        if factor_matrix[idx] == 0
+            factor_matrix[idx] = -1
+        end
+    end
+
     if feature == "gene"
         # approximate genes expression likelihood
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
@@ -140,44 +147,7 @@ function main()
         feature_names = gene_ids
         feature_names_label = "gene_id"
 
-        # idx = findfirst(isequal("gene:ENSG00000285857"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000211623"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000241756"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000248651"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000242326"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000230882"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000261058"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000183423"), feature_names)
-        # idx = findfirst(isequal("gene:ENSG00000075624"), feature_names)
-        idx = findfirst(isequal("gene:ENSG00000135269"), feature_names)
-        @show idx
-
-        # @show transcript_idxs[gene_idxs .== idx]
-
-        # exit()
-
-        # pm = Polee.posterior_mean(loaded_samples)
-        # pm ./= loaded_samples.efflen_values
-        # pm ./= sum(pm, dims=2)
-
-        # qs = Float64[]
-        # for i in 1:size(pm, 1)
-        #     push!(qs, quantile(pm[i,:], 0.9999))
-        # end
-
-        # @show size(exp.(mean(log.(pm), dims=1)))
-        # @show exp.(mean(log.(pm), dims=1))[1,1:3]
-        # @show (pm ./ exp.(mean(log.(pm), dims=1)))[:,1:3]
-
-        # @show median(pm ./ exp.(mean(log.(pm), dims=1)), dims=2)
-
-        # @show qs
-        # @show qs ./ median(qs)
-        # exit()
-
         sess = tf.Session()
-
-        # tf.set_random_seed(1)
 
         qx_gene_loc, qx_gene_scale = polee_py.approximate_feature_likelihood(
             loaded_samples.init_feed_dict,
@@ -185,45 +155,6 @@ function main()
             num_samples, num_features, n,
             gene_idxs .- 1, transcript_idxs .- 1,
             sess)
-
-        @show qx_gene_loc[:,idx]
-        @show qx_gene_scale[:,idx]
-
-        # exit()
-
-        # TODO: Outputing a bunch of junk to check that point estimate are 
-        # at least similar.
-
-        # pm = Polee.posterior_mean(loaded_samples)
-        # pm ./= loaded_samples.efflen_values
-        # pm ./= sum(pm, dims=2)
-        # open("transcript-post-mean.csv", "w") do output
-        #     println(output, "transcript_id,tpm")
-        #     for (t, x) in zip(ts, pm[1,:])
-        #         println(output, t.metadata.name, ",", 1e6 * x)
-        #     end
-        # end
-
-        # open("alt-transcript-post-mean.csv", "w") do output
-        #     println(output, "transcript_id,tpm")
-        #     for (t, x) in zip(ts, qx_gene_loc[1,:])
-        #         println(output, t.metadata.name, ",", 1e6*x)
-        #     end
-        # end
-
-        # open("gene-post-mean.csv", "w") do output
-        #     println(output, "gene_id,tpm")
-        #     for (gene_id, x) in zip(feature_names, qx_gene_loc[1,:])
-        #         println(output, gene_id, ",", 1e6*exp(x))
-        #     end
-        # end
-
-        # idx = findfirst(isequal("gene:ENSG00000248537"), gene_ids)
-        # idx = findfirst(isequal("gene:ENSG00000135269"), gene_ids)
-        # @show idx
-        # @show qx_gene_loc[:,idx]
-        # @show qx_gene_scale[:,idx]
-        # exit(1)
 
         tf.reset_default_graph()
         sess.close()
@@ -233,16 +164,9 @@ function main()
                 loaded_samples.init_feed_dict, qx_gene_loc, qx_gene_scale,
                 x0_log, factor_matrix, parsed_args["point-estimates"])
 
-        # qw_loc, qw_scale, qx_bias, qx_scale, =
-        #     polee_regression_py.estimate_feature_linear_regression(
-        #         loaded_samples.variables, n, loaded_samples.init_feed_dict,
-        #         gene_idxs, transcript_idxs,
-        #         factor_matrix, parsed_args["point-estimates"])
-
-        # TODO: What I want to output is the actual mean of qx, not qx_bias
-
         qx_mean = mean(qx_loc, dims=1)
 
+        # TODO: debugging stuff. disable this.
         open("gene-mean-vs-sd.csv", "w") do output
             println(output, "gene_id,mean,sd")
             for i in 1:size(qx_bias, 1)
@@ -250,9 +174,6 @@ function main()
                 println(output, feature_names[i], ",", qx_mean[i], ",", qx_scale[i])
             end
         end
-
-        # @show qw_loc[idx]
-        # @show qw_scale[idx]
 
     elseif feature == "transcript"
         qw_loc, qw_scale, qx_bias, qx_scale =
@@ -270,7 +191,6 @@ function main()
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"
     end
-
 
     write_regression_effects(
         parsed_args["output"],
@@ -363,18 +283,14 @@ function write_regression_effects(
     open(output_filename, "w") do output
         print(output, "factor,", feature_names_label, ",post_mean_effect,lower_credible,upper_credible")
         if effect_size !== nothing
-            print(output, ",prob_de")
+            print(output, ",prob_de,prob_down_de,prob_up_de")
             effect_size = log(abs(effect_size))
         end
         println(output)
         for i in 1:num_features, j in 1:num_factors
-
-            # dist = Normal(qw_loc[i,j], qw_scale[i,j])
-            # lc = quantile(dist, q0)
-            # uc = quantile(dist, q1)
-
-            dist = TDist(10.0)
-            # dist = Normal(0.0, 1.0)
+            # Using t-distribution for what is actually Normal just to avoid
+            # 1.0 probabilities.
+            dist = TDist(20.0)
             lc = quantile(dist, q0) * qw_scale[i,j] + qw_loc[i,j]
             uc = quantile(dist, q1) * qw_scale[i,j] + qw_loc[i,j]
 
@@ -383,22 +299,13 @@ function write_regression_effects(
                 factor_names[j], feature_names[i],
                 qw_loc[i,j]/ln2, lc/ln2, uc/ln2)
             if effect_size !== nothing
-                # @printf(output, ",%e", cdf(dist, -effect_size) + (1 - cdf(dist, effect_size)))
-                @printf(output, ",%f",
-                    exp(logaddexp(
-                        logcdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j]),
-                        logccdf(dist, (effect_size - qw_loc[i,j]) / qw_scale[i,j]))))
-                    # exp(logaddexp(
-                    #     logcdf(dist, -effect_size),
-                    #     logccdf(dist, effect_size))))
+                prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
+                prob_up = ccdf(dist, (effect_size - qw_loc[i,j]) / qw_scale[i,j])
+                @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
             end
             println(output)
         end
     end
 end
 
-
-
 main()
-
-

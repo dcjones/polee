@@ -40,7 +40,7 @@ class Progbar:
 
 def train(
         sess, objective, init_feed_dict, n_iter, init_learning_rate,
-        var_list=None, initialized_vars=None, decay_rate=1.0):
+        var_list=None, initialized_vars=None, write_logs=False, decay_rate=1.0):
     if var_list is None:
         var_list = tf.trainable_variables()
 
@@ -49,6 +49,7 @@ def train(
         init_learning_rate, global_step, 10, decay_rate)
 
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+
     train = optimizer.minimize(objective, var_list=var_list, global_step=global_step)
     if initialized_vars is None:
         init = tf.global_variables_initializer()
@@ -56,17 +57,18 @@ def train(
         init = tf.initialize_variables(set(tf.global_variables()) - initialized_vars)
     prog = Progbar(50, n_iter)
 
-    tf.summary.scalar("loss", objective)
-    merged_summary = tf.summary.merge_all()
+    if write_logs:
+        tf.summary.scalar("loss", objective)
+        merged_summary = tf.summary.merge_all()
+        train_writer = tf.summary.FileWriter("log/" + "run-" + str(np.random.randint(1, 1000000)), sess.graph)
 
-    # with tf.Session() as sess:
-    train_writer = tf.summary.FileWriter("log/" + "run-" + str(np.random.randint(1, 1000000)), sess.graph)
     sess.run(init, feed_dict=init_feed_dict)
     for iter in range(n_iter):
         sess.run(train)
         obj_value = sess.run(objective)
         prog.update(iter, loss=obj_value)
-        train_writer.add_summary(sess.run(merged_summary), iter)
+        if write_logs:
+            train_writer.add_summary(sess.run(merged_summary), iter)
     print()
 
 

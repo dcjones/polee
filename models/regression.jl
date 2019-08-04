@@ -128,12 +128,12 @@ function main()
     factor_matrix, factor_names = build_factor_matrix(
         loaded_samples, factors, parsed_args["nonredundant"])
 
-    # TODO: testing alternative configuration
-    for idx in eachindex(factor_matrix)
-        if factor_matrix[idx] == 0
-            factor_matrix[idx] = -1
-        end
-    end
+    # TODO: make this optional behavior
+    # for idx in eachindex(factor_matrix)
+    #     if factor_matrix[idx] == 0
+    #         factor_matrix[idx] = -1
+    #     end
+    # end
 
     if feature == "gene"
         # approximate genes expression likelihood
@@ -156,13 +156,52 @@ function main()
             gene_idxs .- 1, transcript_idxs .- 1,
             sess)
 
+        gene_loc_mean = mean(qx_gene_loc, dims=1)[1,:]
+        uc = quantile(gene_loc_mean, 0.70)
+        high_expr_idx = gene_loc_mean .> uc
+        sample_scales = mean(
+            # qx_gene_loc[:,high_expr_idx] .-
+            # reshape(gene_loc_mean[high_expr_idx], (1, sum(high_expr_idx))),
+            reshape(gene_loc_mean[high_expr_idx], (1, sum(high_expr_idx))) .-
+            qx_gene_loc[:,high_expr_idx],
+            dims=2)
+
+
+        @show sample_scales
+        @show exp.(sample_scales)
+
+
+        # Ok, let's simulated some data here to try to understand what's going on.
+
+        # [num_samples, num_features]
+
+        # expr_scale = 2.0f0
+        # bio_scale = 4.0f0
+        # obs_scale = 1.0f0
+
+        # qx_gene_loc = fill(0.0f0, (num_samples, num_features))
+        # qx_gene_scale = fill(obs_scale, (num_samples, num_features))
+
+        # true_means = fill(0.0f0, num_features)
+
+        # for j in 1:num_features
+        #     μ = randn() * expr_scale
+        #     true_means[j] = μ
+        #     for i in 1:num_samples
+        #         obs_err = randn() * obs_scale
+        #         bio_err = randn() * bio_scale
+        #         qx_gene_loc[i, j] = μ + obs_err + bio_err
+        #     end
+        # end
+
         tf.reset_default_graph()
         sess.close()
 
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
             polee_regression_py.estimate_feature_linear_regression(
                 loaded_samples.init_feed_dict, qx_gene_loc, qx_gene_scale,
-                x0_log, factor_matrix, parsed_args["point-estimates"])
+                x0_log, factor_matrix, sample_scales,
+                parsed_args["point-estimates"])
 
         qx_mean = mean(qx_loc, dims=1)
 
@@ -302,6 +341,7 @@ function write_regression_effects(
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
                 prob_up = ccdf(dist, (effect_size - qw_loc[i,j]) / qw_scale[i,j])
                 @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
+                # @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
             end
             println(output)
         end

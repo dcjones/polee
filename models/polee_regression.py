@@ -13,8 +13,16 @@ from polee_approx_likelihood import *
 from polee_training import *
 
 
-scale_spline_degree = 8
+scale_spline_degree = 10
 
+
+class GammaNonNan(tfd.Gamma):
+    def __init__(self, concentration, rate):
+        super(GammaNonNan, self).__init__(concentration, rate)
+
+    def log_prob(self, x):
+        # return super(GammaNonNan, self).log_prob(tf.maximum(x, 0.0))
+        return super(GammaNonNan, self).log_prob(tf.maximum(x, 1e-6))
 
 """
 Define model for linear regression.
@@ -24,7 +32,7 @@ Define model for linear regression.
 """
 def linear_regression_model(
         num_factors, num_features, F,
-        x_bias_loc, x_bias_scale, x_scale_hinges):
+        x_bias_loc, x_bias_scale, x_scale_hinges, x_scale_hinge_weights):
 
     x_bias = ed.Normal(
         loc=tf.fill([num_features], np.float32(x_bias_loc)),
@@ -32,8 +40,28 @@ def linear_regression_model(
         name="x_bias")
 
     x_scale_hinges_diff = tf.square(tf.expand_dims(x_bias, 0) - tf.expand_dims(x_scale_hinges, -1))
-    x_scale_hinges_weight = tf.exp(-x_scale_hinges_diff) # [scale_spline_degree, num_features]
-    x_scale_hinges_weight = x_scale_hinges_weight / tf.reduce_sum(x_scale_hinges_weight, axis=0, keepdims=True)
+    # x_scale_hinges_diff = tf.clip_by_value(x_scale_hinges_diff, -100.0, 100.0)
+    # x_scale_hinges_diff = tf.Print(
+    #     x_scale_hinges_diff,
+    #     [tf.reduce_min(x_scale_hinges_diff), tf.reduce_max(x_scale_hinges_diff)],
+    #     "x_scale_hinges_diff")
+
+    # TODO: just replace this with softmax
+    x_scale_hinges_weight_w = tf.exp(-x_scale_hinges_diff / tf.square(tf.expand_dims(x_scale_hinge_weights, -1))) # [scale_spline_degree, num_features]
+    x_scale_hinges_weight_w = tf.clip_by_value(x_scale_hinges_weight_w, 1e-10, 1.0)
+    # x_scale_hinges_weight_w = tf.Print(
+    #     x_scale_hinges_weight_w,
+    #     [tf.reduce_min(x_scale_hinges_weight_w), tf.reduce_max(x_scale_hinges_weight_w)],
+    #     "x_scale_hinges_weight_w")
+    x_scale_hinges_weight_w = x_scale_hinges_weight_w / tf.reduce_sum(x_scale_hinges_weight_w, axis=0, keepdims=True)
+
+    # x_scale_hinges_weight_x = tf.exp(-x_scale_hinges_diff / tf.square(tf.expand_dims(x_scale_hinge_weights, -1))) # [scale_spline_degree, num_features]
+    # x_scale_hinges_weight_x = tf.clip_by_value(x_scale_hinges_weight_x, 1e-10, 1.0)
+    # # x_scale_hinges_weight_x = tf.Print(
+    # #     x_scale_hinges_weight_x,
+    # #     [tf.reduce_min(x_scale_hinges_weight_x), tf.reduce_max(x_scale_hinges_weight_x)],
+    # #     "x_scale_hinges_xeight_x")
+    # x_scale_hinges_weight_x = x_scale_hinges_weight_x / tf.reduce_sum(x_scale_hinges_weight_x, axis=0, keepdims=True)
 
     # w
     # -
@@ -41,55 +69,253 @@ def linear_regression_model(
     # horseshoe prior
     tau = ed.HalfCauchy(loc=tf.zeros([scale_spline_degree]), scale=10.0, name="tau")
 
-    w_scale = ed.HalfCauchy(loc=tf.zeros([num_features]), scale=0.1, name="w_scale")
+    w_scale = ed.HalfCauchy(loc=tf.zeros([num_features]), scale=10.0, name="w_scale")
+    # w_scale = ed.LogNormal(loc=tf.zeros([num_features]), scale=2.0, name="w_scale")
 
     # [num_features]
     tau_mix = tf.reduce_sum(
-        tf.expand_dims(tau, -1) * x_scale_hinges_weight, axis=0)
+        tf.expand_dims(tau, -1) * x_scale_hinges_weight_w, axis=0)
 
-    w = ed.StudentT(
-        df=1.0,
+    # w = ed.StudentT(
+    #     df=0.1,
+
+    # w_df = ed.HalfCauchy(loc=0.0, scale=1.0, name="w_df")
+    w_df = ed.Normal(loc=[0.0, 0.0, 0.0], scale=[10.0, 10.0, 10.0], name="w_df")
+
+    # w = ed.StudentT(
+    #     # df=tf.sigmoid(w_df),
+    #     # df=w_df,
+    #     # df=tf.expand_dims(w_scale, -1),
+    #     df=1.0,
+    # # w = ed.Normal(
+    #     loc=0.0,
+    #     scale=tf.expand_dims(tau_mix, -1),
+    #     # scale=tf.ones([num_features, num_factors]) * tau[0],
+    #     # scale=tf.fill([num_features, num_factors], 10.0),
+    #     # scale=tf.ones([1, num_factors]) * tf.expand_dims(w_scale * tau[0], -1),
+    #     # scale=tf.ones([1, num_factors]) * tf.expand_dims(w_scale * tau_mix, -1),
+    #     # scale=tf.fill([num_features, num_factors], 0.06971968),
+    #     name="w")
+
+    # This (one of) the prior(s) described in Lewin, et al 2007
+
+    # print(tf.ones([num_features, num_factors, 1]) * w_df)
+
+    # print(tfd.Categorical(logits=tf.ones([num_features, num_factors, 1]) * w_df))
+
+    # print(tfd.Normal(
+    #     loc=tf.zeros([num_features, num_factors]),
+    #     scale=tf.ones([num_features, num_factors]) * 0.01))
+
+    # print(tfd.TransformedDistribution(
+    #     distribution=tfd.Gamma(
+    #         concentration=tf.ones([num_features, num_factors]) * 1.0,
+    #         rate=tf.ones([num_features, num_factors]) * tau[0]),
+    #     bijector=tfp.bijectors.Affine(0.0, -1.0)))
+
+    # print(tfd.Gamma(
+    #     concentration=tf.ones([num_features, num_factors]) * 1.0,
+    #     rate=tf.ones([num_features, num_factors]) * tau[0]))
+
+    # w = ed.StudentT(
+    #     df=tf.exp(w_df[0]),
     # w = ed.Normal(
-        loc=0.0,
-        # scale=tf.expand_dims(tau_mix, -1),
-        scale=tf.ones([num_features, num_factors]) * tau[0],
-        # scale=tf.ones([1, num_factors]) * tf.expand_dims(w_scale * tau[0], -1),
-        # scale=tf.ones([1, num_factors]) * tf.expand_dims(w_scale * tau_mix, -1),
-        # scale=tf.fill([num_features, num_factors], 0.06971968),
+    #     loc=tf.zeros([num_features, num_factors]),
+    #     # scale=tf.ones([num_features, num_factors]) * 0.1,
+    #     scale=tf.ones([num_features, num_factors]) * tau[0],
+    #     # scale=tf.ones([1, num_factors]) * tf.expand_dims(w_scale * tau_mix, -1),
+    #     # scale=tf.expand_dims(tau_mix, -1),
+    #     name="w")
+
+    w = ed.Normal(
+        loc=tf.zeros([num_features, num_factors]),
+        scale=tf.expand_dims(tau_mix, -1),
         name="w")
+
+    # w = ed.Mixture(
+    #     cat=tfd.Categorical(logits=tf.ones([num_features, num_factors, 1]) * w_df),
+    #     # cat=tfd.Categorical(probs=tf.ones([num_features, num_factors, 1]) * [0.8, 0.1, 0.1]),
+    #     components=[
+    #         # null distribution
+    #         tfd.Normal(
+    #             loc=tf.zeros([num_features, num_factors]),
+    #             scale=tf.ones([num_features, num_factors]) * 0.05),
+    #         # downreg distribution
+    #         tfd.TransformedDistribution(
+    #             distribution=GammaNonNan(
+    #                 concentration=tf.ones([num_features, num_factors]) * 3.0,
+    #                 rate=tf.ones([num_features, num_factors]) * tau[0]),
+    #                 # rate=tf.ones([num_features, num_factors]) * 1.0),
+    #             bijector=tfp.bijectors.AffineScalar(scale=-1.0)),
+    #         # GammaNonNan(
+    #         #     concentration=tf.ones([num_features, num_factors]) * 1.5,
+    #         #     # rate=tf.ones([num_features, num_factors]) * tau[0])],
+    #         #     rate=tf.ones([num_features, num_factors]) * 1.0),
+    #         # upreg distribution
+    #         GammaNonNan(
+    #             concentration=tf.ones([num_features, num_factors]) * 3.0,
+    #             rate=tf.ones([num_features, num_factors]) * tau[0])],
+    #             # rate=tf.ones([num_features, num_factors]) * 1.0)],
+    #     name="w")
+
+    # TODO: The problem here is that evaluating probability of a negative number
+    # on the Gamma will give a NaN. I guess I need to make a custom distribution.
+
+    # We can't do horseshoe like this because w=0.0 has non-finite probability.
+    # w = ed.Horseshoe(
+    #     # scale=tf.expand_dims(tau_mix, -1),
+    #     scale=tf.ones([num_features, num_factors]),
+    #     name="w")
+
+    # w = ed.Mixture(
+    #     # mixture_distribution=tfd.Categorical(logits=[tf.log(w_df)]),
+    #     # cat=tfd.Categorical(logits=tf.ones([num_features, num_factors, 1]) * [-1.0, 1.0]),
+    #     # cat=tfd.Categorical(logits=tf.ones([num_features, num_factors, 1]) * [0.0, tf.log(w_df)]),
+    #     cat=tfd.Categorical(probs=tf.ones([num_features, num_factors, 1]) * [0.2, 0.9]),
+    #     # cat=tfd.Categorical(logits=tf.ones([num_features, num_factors, 1]) * w_df),
+    #     # tf.expand_dims(tf.expand_dims([-1.0, 1.0], axis=0), axis=0)),
+    #     components=[
+    #         tfd.StudentT(
+    #             df=1.0,
+    #             loc=0.0,
+    #             # scale=tf.expand_dims(tau_mix, -1)),
+    #             # scale=tf.ones([num_features, num_factors]) * tau[0]),
+    #             scale=tf.ones([num_features, num_factors]) * 2.0),
+    #         # tfd.Normal(
+    #         #     loc=tf.zeros([num_features, num_factors]),
+    #         #     scale=tf.ones([num_features, num_factors]) * 1.0),
+    #         tfd.Normal(
+    #             loc=tf.zeros([num_features, num_factors]),
+    #             # scale=tf.expand_dims(tau_mix, -1))],
+    #             scale=tf.ones([num_features, num_factors]) * 0.1)],
+    #     name="w")
+
+    # w = ed.Mixture(
+    #     # mixture_distribution=tfd.Categorical(logits=[tf.log(w_df)]),
+    #     # cat=tfd.Categorical(logits=tf.ones([num_features, num_factors, 1]) * [-1.0, 1.0]),
+    #     cat=tfd.Categorical(logits=tf.ones([num_features, num_factors, 1]) * w_df),
+    #     # tf.expand_dims(tf.expand_dims([-1.0, 1.0], axis=0), axis=0)),
+    #     components=[
+    #         tfd.StudentT(
+    #             df=0.1,
+    #             loc=tf.zeros([num_features, num_factors]),
+    #             # scale=tf.expand_dims(tau_mix, -1)),
+    #             scale=tf.ones([num_features, num_factors]) * tau[0]),
+    #         tfd.StudentT(
+    #             df=1.0,
+    #             loc=tf.zeros([num_features, num_factors]),
+    #             # scale=tf.expand_dims(tau_mix, -1))],
+    #             scale=tf.ones([num_features, num_factors]) * tau[0])],
+    #     name="w")
 
     # x
     # -
 
     x_loc = tf.identity(
         tf.matmul(F, w, transpose_b=True) + x_bias,
-        name="x_loc")
+        name="x_loc") # [num_samples, num_features]
 
-    # [num_samples, num_features]
-    # num_samples = int(F.shape[0])
-    # x_loc = tf.ones([num_samples, 1]) * x_bias
+    print(x_loc)
 
-    x_scale_c = ed.Normal(
-        loc=tf.fill([scale_spline_degree], 0.0), scale=100.0, name="x_scale_c")
+    # x_scale_hinges_diff = tf.square(tf.expand_dims(x_loc, 0) - tf.expand_dims(tf.expand_dims(x_scale_hinges, -1), -1))
+    # x_scale_hinges_weight_x = tf.exp(-x_scale_hinges_diff / tf.square(tf.expand_dims(tf.expand_dims(x_scale_hinge_weights, -1), -1))) # [scale_spline_degree, num_features]
+    # x_scale_hinges_weight_x = tf.clip_by_value(x_scale_hinges_weight_x, 1e-10, 1.0)
+    # x_scale_hinges_weight_x = x_scale_hinges_weight_x / tf.reduce_sum(x_scale_hinges_weight_x, axis=0, keepdims=True)
 
-    x_scale_loc_mix = tf.reduce_sum(
-        tf.expand_dims(x_scale_c, -1) * x_scale_hinges_weight, axis=0)
-        # tf.expand_dims([-0.39864218, -0.41476408, -0.5135315, -1.0101233, -1.4462073, -1.5743896, -1.4225029, -1.2755697 ], -1) * x_scale_hinges_weight, axis=0)
+    x_scale_hinges_diff = tf.square(tf.expand_dims(x_bias, 0) - tf.expand_dims(x_scale_hinges, -1))
+    x_scale_hinges_weight_x = tf.exp(-x_scale_hinges_diff / (0.5 * tf.square(tf.expand_dims(x_scale_hinge_weights, -1)))) # [scale_spline_degree, num_features]
+    x_scale_hinges_weight_x = tf.clip_by_value(x_scale_hinges_weight_x, 1e-10, 1.0)
+    x_scale_hinges_weight_x = x_scale_hinges_weight_x / tf.reduce_sum(x_scale_hinges_weight_x, axis=0, keepdims=True)
 
-    x_scale = ed.TransformedDistribution(
-        distribution=tfd.StudentT(
-            df=1.0,
-            loc=x_scale_loc_mix,
-            scale=0.5),
-        bijector=tfp.bijectors.Exp(),
+    x_scale_concentration_c = ed.Normal(
+        loc=tf.fill([scale_spline_degree], 0.0), scale=100.0, name="x_scale_concentration_c")
+
+    x_scale_rate_c = ed.Normal(
+        loc=tf.fill([scale_spline_degree], 0.0), scale=100.0, name="x_scale_rate_c")
+
+    x_scale_concentration_mix = tf.reduce_sum(
+        tf.expand_dims(x_scale_concentration_c, -1) * x_scale_hinges_weight_x, axis=0)
+        # tf.expand_dims(tf.expand_dims(x_scale_concentration_c, -1), -1) * x_scale_hinges_weight_x, axis=0)
+
+    x_scale_rate_mix = tf.reduce_sum(
+        tf.expand_dims(x_scale_rate_c, -1) * x_scale_hinges_weight_x, axis=0)
+        # tf.expand_dims(tf.expand_dims(x_scale_rate_c, -1), -1) * x_scale_hinges_weight_x, axis=0)
+
+    x_scale_scale = ed.HalfCauchy(
+        loc=0.0,
+        scale=10.0,
+        name="x_scale_scale")
+
+    # TODO: OK!!! Here's the issue! X scale is not properly set!
+    # How can I deal with this?
+
+    # x_scale = ed.TransformedDistribution(
+    #     distribution=tfd.Normal(
+    #     # distribution=tfd.Cauchy(
+    #         loc=x_scale_loc_mix,
+    #         # loc=tf.ones([num_features]) * x_scale_c[0],
+    #         # loc=tf.fill([num_features], -1.0),
+    #         # scale=0.4),
+    #         scale=x_scale_scale),
+    #     bijector=tfp.bijectors.Exp(),
+    #     name="x_scale")
+
+    # x_scale = ed.TransformedDistribution(
+    #     distribution=tfd.Normal(
+    #         loc=x_scale_concentration_mix,
+    #         # scale=x_scale_rate_mix),
+    #         scale=0.5),
+    #     bijector=tfp.bijectors.Exp(),
+    #     name="x_scale")
+
+
+
+    # This does ok
+
+    mode = tf.exp(x_scale_rate_mix)
+    # mode = tf.exp(x_scale_rate_c[0])
+
+    # sd = tf.exp(x_scale_rate_mix)
+    # sd = tf.ones([num_features]) * x_scale_rate_c[0]
+    # sd = tf.ones([num_features]) * 0.2
+
+    # inverse-gamma parameters
+    # concentration = tf.exp(x_scale_concentration_mix)
+    concentration = tf.exp(x_scale_concentration_c[0])
+    # concentration = 10.0
+    # rate = 1 / ((concentration + 1) * mode)
+    rate = (concentration + 1) * mode
+
+    # gamma parameters
+    # rate = (mode + tf.sqrt(mode**2 + 4*sd**2)) / (2 * sd**2)
+    # concentration = 1 + mode * rate
+
+    # x_scale = ed.InverseGamma(
+    #     concentration=concentration,
+    #     rate=rate,
+    #     name="x_scale")
+
+    x_scale = ed.InverseGamma(
+        concentration=concentration,
+        rate=rate,
         name="x_scale")
+
+    # Try doing precision istead of sd
+
+    # x_scale = ed.HalfCauchy(
+    #     loc=0.0,
+    #     # scale=tf.exp(x_scale_rate_mix),
+    #     scale=tf.ones(x_loc.shape) * tf.exp(x_scale_rate_c[0]),
+    #     name="x_scale")
 
     x = ed.Normal(
         loc=x_loc,
         scale=x_scale,
+        # scale=1.0/x_scale,
         name="x")
 
-    return tau, w_scale, w, x_bias, x_scale_c, x_scale, x
+    return tau, w_scale, w_df, w, x_bias, x_scale_concentration_c, x_scale_rate_c, x_scale_scale, x_scale, x
+    # return tau, w_scale, w, x_bias, x_scale_c, x_scale, x
 
 
 """
@@ -98,16 +324,26 @@ Variational model for linear regression, to be paired with `linear_regression_mo
 def linear_regression_variational_model(
         qtau_loc_var, qtau_scale_var,
         qw_scale_loc_var, qw_scale_scale_var,
+        qw_df_loc_var,
         qw_loc_var, qw_scale_var,
         qx_bias_loc_var, qx_bias_scale_var,
-        qx_scale_c_loc_var, qx_scale_c_scale_var,
+        qx_scale_concentration_c_loc_var, qx_scale_concentration_c_scale_var,
+        qx_scale_rate_c_loc_var, qx_scale_rate_c_scale_var,
+        qx_scale_scale_loc_var,
         qx_scale_loc_var, qx_scale_scale_var,
         qx_loc_var, qx_scale_var,
         use_point_estimates):
 
     qtau = ed.Deterministic(
-        loc=tf.exp(qtau_loc_var),
+        # loc=tf.exp(qtau_loc_var),
+        loc=tf.nn.softplus(qtau_loc_var),
         name="qtau")
+
+    qw_df = ed.Deterministic(
+        # loc=tf.exp(qw_df_loc_var),
+        # loc=tf.nn.softplus(qw_df_loc_var),
+        loc=qw_df_loc_var,
+        name="qw_df")
 
     qw_scale = ed.LogNormal(
         loc=qw_scale_loc_var,
@@ -133,15 +369,28 @@ def linear_regression_variational_model(
         scale=qx_bias_scale_var,
         name="qx_bias")
 
-    qx_scale_c = ed.Deterministic(
-        # loc=tf.Print(qx_scale_c_loc_var, [qx_scale_c_loc_var], "qx_scale_c_loc_var"),
-        loc=qx_scale_c_loc_var,
-        name="qx_scale_c")
+    qx_scale_concentration_c = ed.Deterministic(
+        loc=qx_scale_concentration_c_loc_var,
+        name="qx_scale_concentration_c")
+
+    qx_scale_rate_c = ed.Deterministic(
+        loc=qx_scale_rate_c_loc_var,
+        name="qx_scale_rate_c")
+
+    qx_scale_scale = ed.Deterministic(
+        loc=qx_scale_scale_loc_var,
+        # loc=tf.Print(qx_scale_scale_loc_var, [qx_scale_scale_loc_var], "qx_scale_scale_loc_var"),
+        name="qx_scale_scale")
 
     qx_scale = ed.LogNormal(
         loc=qx_scale_loc_var,
         scale=qx_scale_scale_var,
         name="qx_scale")
+
+    # qx_scale = ed.InverseGamma(
+    #     concentration=tf.nn.softplus(qx_scale_loc_var),
+    #     rate=qx_scale_scale_var,
+    #     name="qx_scale")
 
     # qx_scale = ed.Gamma(
     #     concentration=tf.nn.softplus(qx_scale_loc_var),
@@ -160,7 +409,8 @@ def linear_regression_variational_model(
             scale=qx_scale_var,
             name="qx")
 
-    return qtau, qw_scale, qw, qx_bias, qx_scale_c, qx_scale, qx
+    return qtau, qw_scale, qw_df, qw, qx_bias, qx_scale_concentration_c, qx_scale_rate_c, qx_scale_scale, qx_scale, qx
+    # return qtau, qw_scale, qw, qx_bias, qx_scale_c, qx_scale, qx
 
 
 
@@ -169,7 +419,7 @@ Set up a linear regression model for variational inference, returning
 """
 def linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
+        x_bias_mu0, x_bias_sigma0, x_scale_hinges, x_scale_hinge_weights, sample_scales,
         use_point_estimates, sess):
 
     num_samples = int(F.shape[0])
@@ -178,9 +428,10 @@ def linear_regression_inference(
 
     log_joint = ed.make_log_joint_fn(
         lambda: linear_regression_model
-            (num_factors, num_features, F, x_bias_mu0, x_bias_sigma0, x_scale_hinges))
+            (num_factors, num_features, F, x_bias_mu0, x_bias_sigma0, x_scale_hinges, x_scale_hinge_weights))
 
-    qtau_loc_var = tf.Variable(tf.zeros([scale_spline_degree]), name="qtau_loc_var")
+    qtau_loc_var = tf.Variable(tf.fill([scale_spline_degree], -2.0), name="qtau_loc_var")
+    # qtau_loc_var = tf.Variable([-2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], name="qtau_loc_var")
     qtau_scale_var = tf.nn.softplus(tf.Variable(tf.zeros([scale_spline_degree]), name="qtau_scale_var"))
 
     qw_scale_loc_var = tf.Variable(
@@ -189,6 +440,10 @@ def linear_regression_inference(
     qw_scale_scale_var = tf.nn.softplus(tf.Variable(
         tf.fill([num_features], -1.0),
         name="qw_scale_loc_var"))
+
+    qw_df_loc_var = tf.Variable(
+        [2.0, -2.0, -2.0],
+        name="qw_df_loc_var")
 
     qw_loc_var = tf.Variable(
         tf.zeros([num_features, num_factors]),
@@ -207,15 +462,37 @@ def linear_regression_inference(
         tf.fill([num_features], -1.0),
         name="qx_bias_scale_var"))
 
-    qx_scale_c_loc_var = tf.Variable(
-        tf.zeros([scale_spline_degree]),
-        name="qx_scale_c_loc_var")
-    qx_scale_c_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([scale_spline_degree], -1.0),
-        name="qx_scale_c_scale_var"))
+    # qx_scale_c_loc_var = tf.Variable(
+    #     tf.zeros([scale_spline_degree]),
+    #     name="qx_scale_c_loc_var")
 
+    qx_scale_concentration_c_loc_var = tf.Variable(
+        tf.fill([scale_spline_degree], 1.0),
+        name="qx_scale_concentration_c_loc_var")
+
+    qx_scale_concentration_c_scale_var = tf.nn.softplus(tf.Variable(
+        tf.fill([scale_spline_degree], -1.0),
+        name="qx_scale_concentration_c_scale_var"))
+
+    qx_scale_rate_c_loc_var = tf.Variable(
+        tf.fill([scale_spline_degree], 1.0),
+        name="qx_scale_rate_c_loc_var")
+
+    qx_scale_rate_c_scale_var = tf.nn.softplus(tf.Variable(
+        tf.fill([scale_spline_degree], -1.0),
+        name="qx_scale_rate_c_scale_var"))
+
+    qx_scale_scale_loc_var = tf.nn.softplus(tf.Variable(
+        0.0, name="qx_scale_scale_loc_var"))
+
+    # qx_scale_loc_var = tf.Variable(
+    #     tf.fill([num_samples, num_features], 3.0),
+    #     name="qx_scale_loc_var")
+    # qx_scale_scale_var = tf.nn.softplus(tf.Variable(
+    #     tf.fill([num_samples, num_features], -1.0),
+    #     name="qx_scale_scale_var"))
     qx_scale_loc_var = tf.Variable(
-        tf.fill([num_features], 2.0),
+        tf.fill([num_features], 3.0),
         name="qx_scale_loc_var")
     qx_scale_scale_var = tf.nn.softplus(tf.Variable(
         tf.fill([num_features], -1.0),
@@ -227,7 +504,7 @@ def linear_regression_inference(
         trainable=not use_point_estimates)
 
     qx_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([num_samples, num_features], 1.0),
+        tf.fill([num_samples, num_features], 0.0),
         name="qx_scale_var"))
 
     # qx_loc_var = tf.Variable(
@@ -241,13 +518,17 @@ def linear_regression_inference(
     #     trainable=False)
     # qx_scale_var = tf.nn.softplus(qx_scale_var_)
 
-    qtau, qw_scale, qw, qx_bias, qx_scale_c, qx_scale, qx = \
+    # qtau, qw_scale, qw, qx_bias, qx_scale_c, qx_scale, qx = \
+    qtau, qw_scale, qw_df, qw, qx_bias, qx_scale_concentration_c, qx_scale_rate_c, qx_scale_scale, qx_scale, qx = \
         linear_regression_variational_model(
             qtau_loc_var, qtau_scale_var,
             qw_scale_loc_var, qw_scale_scale_var,
+            qw_df_loc_var,
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
-            qx_scale_c_loc_var, qx_scale_c_scale_var,
+            qx_scale_concentration_c_loc_var, qx_scale_concentration_c_scale_var,
+            qx_scale_rate_c_loc_var, qx_scale_rate_c_scale_var,
+            qx_scale_scale_loc_var,
             qx_scale_loc_var, qx_scale_scale_var,
             qx_loc_var, qx_scale_var,
             use_point_estimates)
@@ -255,9 +536,12 @@ def linear_regression_inference(
     log_prior = log_joint(
         tau=qtau,
         w_scale=qw_scale,
+        w_df=qw_df,
         w=qw,
         x_bias=qx_bias,
-        x_scale_c=qx_scale_c,
+        x_scale_concentration_c=qx_scale_concentration_c,
+        x_scale_rate_c=qx_scale_rate_c,
+        x_scale_scale=qx_scale_scale,
         x_scale=qx_scale,
         x=qx)
 
@@ -265,9 +549,12 @@ def linear_regression_inference(
         lambda: linear_regression_variational_model(
             qtau_loc_var, qtau_scale_var,
             qw_scale_loc_var, qw_scale_scale_var,
+            qw_df_loc_var,
             qw_loc_var, qw_scale_var,
             qx_bias_loc_var, qx_bias_scale_var,
-            qx_scale_c_loc_var, qx_scale_c_scale_var,
+            qx_scale_concentration_c_loc_var, qx_scale_concentration_c_scale_var,
+            qx_scale_rate_c_loc_var, qx_scale_rate_c_scale_var,
+            qx_scale_scale_loc_var,
             qx_scale_loc_var, qx_scale_scale_var,
             qx_loc_var, qx_scale_var,
             use_point_estimates))
@@ -275,10 +562,13 @@ def linear_regression_inference(
     entropy = variational_log_joint(
         qtau=qtau,
         qw_scale=qw_scale,
+        qw_df=qw_df,
         qw=qw,
         qx_bias=qx_bias,
+        qx_scale_scale=qx_scale_scale,
         qx_scale=qx_scale,
-        qx_scale_c=qx_scale_c,
+        qx_scale_concentration_c=qx_scale_concentration_c,
+        qx_scale_rate_c=qx_scale_rate_c,
         qx=qx)
 
     log_likelihood = make_likelihood(qx)
@@ -293,17 +583,27 @@ def linear_regression_inference(
 
     elbo = log_prior + log_likelihood - entropy + scale_penalty
     # elbo = log_prior + log_likelihood - entropy
+    elbo = tf.check_numerics(elbo, "Non-finite ELBO value")
+
+    # elbo = log_prior + log_likelihood - entropy
 
     # elbo = log_prior + log_likelihood - entropy
 
     if sess is None:
         sess = tf.Session()
 
+    # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=0.999)
+    # train(sess, -elbo, init_feed_dict, 30000, 1e-3, decay_rate=0.9995)
+    # train(sess, -elbo, init_feed_dict, 30000, 1e-3, decay_rate=1.0)
     # train(sess, -elbo, init_feed_dict, 80000, 1e-4, decay_rate=1.0)
-    train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=0.999)
+    # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=0.999)
+    train(sess, -elbo, init_feed_dict, 20000, 1e-2, decay_rate=0.999)
 
     # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0)
-    # train(sess, -elbo, init_feed_dict, 30000, 1e-2, decay_rate=1.0)
+    # train(sess, -elbo, init_feed_dict, 40000, 1e-1, decay_rate=0.999)
+    # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=0.999)
+    # train(sess, -elbo, init_feed_dict, 80000, 1e-4, decay_rate=1.0)
+    # train(sess, -elbo, init_feed_dict, 80000, 1e-2, decay_rate=0.999)
 
     # train(sess, -elbo, init_feed_dict, 20000, 1e-3, decay_rate=1.0,
     #     initialized_vars=set(tf.all_variables()),
@@ -312,8 +612,14 @@ def linear_regression_inference(
     print("tau")
     print(sess.run(qtau))
 
-    print("x_scale_c")
-    print(sess.run(tf.exp(qx_scale_c))[0])
+    print("x_scale_concentration_c")
+    print(sess.run(tf.exp(qx_scale_concentration_c)))
+
+    print("x_scale_rate_c")
+    print(sess.run(tf.exp(qx_scale_rate_c)))
+
+    print("x_scale_scale")
+    print(sess.run(qx_scale_scale))
 
     print("x_bias quantile")
     print(np.quantile(sess.run(qx_bias), [0.0, 0.1, 0.5, 0.9, 1.0]))
@@ -327,6 +633,10 @@ def linear_regression_inference(
     print("x quantiles")
     for i in range(num_samples):
         print(np.quantile(sess.run(qx[i,:]), [0.0, 0.1, 0.5, 0.9, 1.0]))
+
+    print("w_df")
+    print(sess.run(qw_df))
+    print(sess.run(tf.nn.softmax(qw_df)))
 
     return (
         sess.run(qx.distribution.mean()),
@@ -381,8 +691,11 @@ def estimate_feature_linear_regression(
         scale=feature_scale,
         name="feature_likelihood")
 
-    make_likelihood = lambda qx: tf.reduce_sum(feature_likelihood.distribution.log_prob(
-        tf.log(tf.nn.softmax(qx, axis=1))))
+    if use_point_estimates:
+        make_likelihood = lambda qx: 0.0
+    else:
+        make_likelihood = lambda qx: tf.reduce_sum(feature_likelihood.distribution.log_prob(
+            tf.log(tf.nn.softmax(qx, axis=1))))
     # make_likelihood = lambda qx: tf.reduce_sum(feature_likelihood.distribution.log_prob(qx))
 
     F = tf.constant(F_arr, dtype=tf.float32)
@@ -400,8 +713,31 @@ def estimate_feature_linear_regression(
     d = (x_init_mean_max - x_init_mean_min) / (scale_spline_degree+1)
     for i in range(scale_spline_degree):
         x_scale_hinges.append(x_init_mean_min + (i+1)*d)
+    x_scale_hinge_weights = np.ones(scale_spline_degree, dtype=np.float32)
 
+    # x_scale_hinges = np.float32(np.quantile(
+    #     x_init_mean,
+    #     np.linspace(0.0, 1.0, scale_spline_degree+1, endpoint=False)[1:]))
+
+    # x_scale_hinge_weights = np.copy(x_scale_hinges)
+    # for i in range(scale_spline_degree):
+    #     if i == 0:
+    #         x_scale_hinge_weights[i] = x_scale_hinges[i+1] - x_scale_hinges[i]
+    #     elif i == scale_spline_degree - 1:
+    #         x_scale_hinge_weights[i] = x_scale_hinges[i] - x_scale_hinges[i-1]
+    #     else:
+    #         x_scale_hinge_weights[i] = \
+    #             (x_scale_hinges[i+1] - x_scale_hinges[i])/2 + \
+    #             (x_scale_hinges[i] - x_scale_hinges[i-1])/2
+
+    # print("mean quantiles")
+    # print(np.quantile(x_init_mean, [0.0, 0.1, 0.5, 0.9, 1.0]))
+
+    print("hinges")
     print(x_scale_hinges)
+
+    print("hinge weights")
+    print(x_scale_hinge_weights)
 
     x_bias_mu0 = np.log(1/num_features)
     x_bias_sigma0 = 16.0
@@ -411,7 +747,7 @@ def estimate_feature_linear_regression(
 
     return linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales, use_point_estimates, sess)
+        x_bias_mu0, x_bias_sigma0, x_scale_hinges, x_scale_hinge_weights, sample_scales, use_point_estimates, sess)
 
 
 """

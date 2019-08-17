@@ -39,8 +39,15 @@ def approximate_feature_likelihood(
         init_feed_dict, vars, num_samples, num_features, n,
         feature_idxs, transcript_idxs, sess=None):
 
+    x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
+
+    x_feature_exp = transcript_expression_to_feature_expression(
+        num_features, n, feature_idxs, transcript_idxs, x)
+
+    x_feature = tf.log(x_feature_exp)
+
     qx_feature_loc = tf.Variable(
-        tf.fill([num_samples, num_features], np.float32(np.log(1/num_features))),
+        x_feature,
         name="qx_feature_loc")
 
     qx_feature_scale = tf.nn.softplus(tf.Variable(
@@ -51,16 +58,12 @@ def approximate_feature_likelihood(
         loc=qx_feature_loc,
         scale=qx_feature_scale)
 
-    x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
-    x_feature = tf.log(transcript_expression_to_feature_expression(
-        num_features, n, feature_idxs, transcript_idxs, x))
-
     log_prob = tf.reduce_sum(qx_feature.log_prob(x_feature))
 
     if sess is None:
         sess = tf.Session()
 
-    train(sess, -log_prob, init_feed_dict, 1000, 1e-1)
+    train(sess, -log_prob, init_feed_dict, 2000, 1e-1, decay_rate=0.97)
 
     return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
 

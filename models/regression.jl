@@ -116,6 +116,8 @@ function main()
         end
     end
 
+    @show extrema(loaded_samples.x0_values)
+
     num_samples, n = size(loaded_samples.x0_values)
     x0_log = log.(loaded_samples.x0_values)
 
@@ -129,11 +131,11 @@ function main()
         loaded_samples, factors, parsed_args["nonredundant"])
 
     # TODO: make this optional behavior
-    # for idx in eachindex(factor_matrix)
-    #     if factor_matrix[idx] == 0
-    #         factor_matrix[idx] = -1
-    #     end
-    # end
+    for idx in eachindex(factor_matrix)
+        if factor_matrix[idx] == 0
+            factor_matrix[idx] = -1
+        end
+    end
 
     if feature == "gene"
         # approximate genes expression likelihood
@@ -149,27 +151,22 @@ function main()
 
         sess = tf.Session()
 
-        qx_gene_loc, qx_gene_scale = polee_py.approximate_feature_likelihood(
-            loaded_samples.init_feed_dict,
-            loaded_samples.variables,
-            num_samples, num_features, n,
-            gene_idxs .- 1, transcript_idxs .- 1,
-            sess)
+        if parsed_args["point-estimates"] === nothing
+            qx_gene_loc, qx_gene_scale = polee_py.approximate_feature_likelihood(
+                loaded_samples.init_feed_dict,
+                loaded_samples.variables,
+                num_samples, num_features, n,
+                gene_idxs .- 1, transcript_idxs .- 1,
+                sess)
+        else
+            qx_gene_loc = log.(sess.run(polee_py.transcript_expression_to_feature_expression(
+                num_features, n, gene_idxs .- 1, transcript_idxs .- 1,
+                loaded_samples.x0_values)))
+            qx_gene_scale = similar(qx_gene_loc)
+            fill!(qx_gene_scale, 0.0)
+        end
 
-        gene_loc_mean = mean(qx_gene_loc, dims=1)[1,:]
-        uc = quantile(gene_loc_mean, 0.70)
-        high_expr_idx = gene_loc_mean .> uc
-        sample_scales = mean(
-            # qx_gene_loc[:,high_expr_idx] .-
-            # reshape(gene_loc_mean[high_expr_idx], (1, sum(high_expr_idx))),
-            reshape(gene_loc_mean[high_expr_idx], (1, sum(high_expr_idx))) .-
-            qx_gene_loc[:,high_expr_idx],
-            dims=2)
-
-
-        @show sample_scales
-        @show exp.(sample_scales)
-
+        sample_scales = estimate_sample_scales(qx_gene_loc)
 
         # Ok, let's simulated some data here to try to understand what's going on.
 
@@ -201,7 +198,8 @@ function main()
             polee_regression_py.estimate_feature_linear_regression(
                 loaded_samples.init_feed_dict, qx_gene_loc, qx_gene_scale,
                 x0_log, factor_matrix, sample_scales,
-                parsed_args["point-estimates"])
+                parsed_args["point-estimates"] !== nothing)
+
 
         qx_mean = mean(qx_loc, dims=1)
 
@@ -211,6 +209,20 @@ function main()
             for i in 1:size(qx_bias, 1)
                 # println(output, feature_names[i], ",", qx_bias[i], ",", qx_scale[i])
                 println(output, feature_names[i], ",", qx_mean[i], ",", qx_scale[i])
+            end
+        end
+
+        open("gene-expression.csv", "w") do output
+            println(output, "gene_id,sample,expression")
+            for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
+                println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
+            end
+        end
+
+        open("gene-expression-naive.csv", "w") do output
+            println(output, "gene_id,sample,expression")
+            for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
+                println(output, feature_names[j], ",", i, ",", qx_gene_loc[i,j])
             end
         end
 
@@ -329,7 +341,7 @@ function write_regression_effects(
         for i in 1:num_features, j in 1:num_factors
             # Using t-distribution for what is actually Normal just to avoid
             # 1.0 probabilities.
-            dist = TDist(20.0)
+            dist = TDist(10.0)
             lc = quantile(dist, q0) * qw_scale[i,j] + qw_loc[i,j]
             uc = quantile(dist, q1) * qw_scale[i,j] + qw_loc[i,j]
 
@@ -340,8 +352,8 @@ function write_regression_effects(
             if effect_size !== nothing
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
                 prob_up = ccdf(dist, (effect_size - qw_loc[i,j]) / qw_scale[i,j])
-                @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
-                # @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
+                # @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
+                @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
             end
             println(output)
         end

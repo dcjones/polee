@@ -161,13 +161,6 @@ function load_point_estimates(filenames, ts, ts_metadata)
     end
     println("Sample data loaded")
 
-    # basic normalization
-    x_mean = mean(x0_values, dims=1)
-    idx = x_mean .> 1f-6
-    sample_normalization =
-        mean(x0_values[:, idx[1,:]] ./ reshape(x_mean[idx], (1, sum(idx))), dims=2)
-    x0_values ./= sample_normalization
-
     return LoadedSamples(
         Array{Float32}(undef, (0,0)),
         x0_values,

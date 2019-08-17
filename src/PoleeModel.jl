@@ -10,7 +10,8 @@ export
     load_transcripts_from_args,
     approximate_splicing_likelihood,
     write_transcripts,
-    create_tensorflow_variables!
+    create_tensorflow_variables!,
+    estimate_sample_scales
 
 import Polee
 using Polee: HSBTransform, Transcripts, TranscriptsMetadata, LoadedSamples
@@ -51,6 +52,22 @@ function init_python_modules()
     pushfirst!(python_path, joinpath(dirname(pathof(Polee)), "..", "models"))
     copy!(polee_py, pyimport("polee"))
     copy!(tf, pyimport("tensorflow"))
+end
+
+
+"""
+Estimate log scaling factors by choosing a scale that minimizes median difference
+between highly expressed features.
+
+x should be log expression with shape [num_samples, num_features]
+"""
+function estimate_sample_scales(x; upper_quantile=0.90)
+    x_mean = mean(x, dims=1)[1,:]
+    high_expr_idx = x_mean .> quantile(x_mean, upper_quantile)
+    @show sum(high_expr_idx)
+    return median(
+        reshape(x_mean[high_expr_idx], (1, sum(high_expr_idx))) .- x[:,high_expr_idx],
+        dims=2)
 end
 
 

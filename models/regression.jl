@@ -227,10 +227,13 @@ function main()
         end
 
     elseif feature == "transcript"
-        qw_loc, qw_scale, qx_bias, qx_scale =
+        sample_scales = estimate_sample_scales(x0_log)
+        @show sample_scales
+
+        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
             polee_regression_py.estimate_transcript_linear_regression(
                 loaded_samples.init_feed_dict, loaded_samples.variables,
-                x0_log, factor_matrix, parsed_args["point-estimates"])
+                x0_log, factor_matrix, sample_scales, parsed_args["point-estimates"])
 
         open("transcript-mean-vs-sd.csv", "w") do output
             println(output, "mean,sd")
@@ -352,8 +355,8 @@ function write_regression_effects(
             if effect_size !== nothing
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
                 prob_up = ccdf(dist, (effect_size - qw_loc[i,j]) / qw_scale[i,j])
-                # @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
-                @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
+                @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
+                # @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
             end
             println(output)
         end

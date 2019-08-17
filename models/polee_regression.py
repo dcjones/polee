@@ -298,13 +298,13 @@ Run variational inference on transcript expression linear regression.
 """
 def estimate_transcript_linear_regression(
         init_feed_dict, vars, x_init, F_arr,
-        use_point_estimates, sess=None):
+        sample_scales, use_point_estimates, sess=None):
 
     F = tf.constant(F_arr, dtype=tf.float32)
     num_features = x_init.shape[1]
 
-    # TODO: trying different initalization
-    x_init = np.repeat(np.mean(x_init, axis=0, keepdims=True), repeats=x_init.shape[0], axis=0)
+    x_init_mean = np.mean(x_init, axis=0)
+    x_scale_hinges = choose_spline_hinges(np.min(x_init_mean), np.max(x_init_mean))
 
     x_bias_mu0 = np.log(1/num_features)
     x_bias_sigma0 = 12.0
@@ -316,7 +316,7 @@ def estimate_transcript_linear_regression(
 
     return linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu0, x_bias_sigma0, use_point_estimates, sess)
+        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales, use_point_estimates, sess)
 
 
 """

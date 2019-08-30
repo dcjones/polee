@@ -228,7 +228,6 @@ function main()
 
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)
-        @show sample_scales
 
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
             polee_regression_py.estimate_transcript_linear_regression(

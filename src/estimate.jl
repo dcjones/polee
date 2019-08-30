@@ -84,6 +84,49 @@ end
 
 
 """
+Read point estimates from csv files (rather than approximated likelihood
+in hdf5 files)
+
+"""
+function load_samplers_from_specification(spec, ts, ts_metadata; max_num_samples=nothing)
+
+    filenames, sample_names, sample_factors =
+        read_specification(
+            spec,
+            max_num_samples=max_num_samples)
+
+    num_samples = length(filenames)
+    n = length(ts)
+
+    samplers = Polee.ApproxLikelihoodSampler[]
+    efflens = Array{Float32}(undef, (num_samples, n))
+
+    for (i, filename) in enumerate(filenames)
+        input = h5open(filename)
+
+        node_parent_idxs = read(input["node_parent_idxs"])
+        node_js          = read(input["node_js"])
+        efflens_i        = read(input["effective_lengths"])
+        m                = read(input["m"])
+
+        mu    = read(input["mu"])
+        sigma = exp.(read(input["omega"]))
+        alpha = read(input["alpha"])
+
+        t = Polee.PolyaTreeTransform(node_parent_idxs, node_js)
+
+        sampler = Polee.ApproxLikelihoodSampler()
+        Polee.set_transform!(sampler, t, mu, sigma, alpha)
+        push!(samplers, sampler)
+
+        efflens[i,:] = efflens_i
+    end
+
+    return samplers, efflens, sample_names, sample_factors
+end
+
+
+"""
 Load samples from a a YAML specification file.
 
 Input:

@@ -12,7 +12,8 @@ using Statistics
 using Distributions
 using StatsFuns
 using Random
-using DelimitedFiles
+using DecisionTree
+
 
 const arg_settings = ArgParseSettings()
 arg_settings.prog = "polee model classify"
@@ -117,7 +118,7 @@ function main()
     # exit()
 
     sample_scales = estimate_sample_scales(x0, upper_quantile=0.9)
-    fill!(sample_scales, 0.0)
+    # fill!(sample_scales, 0.0)
 
     polee_regression_py = pyimport("polee_regression")
     polee_classify_py = pyimport("polee_classify")
@@ -158,27 +159,25 @@ function main()
 
 
     # TODO: write data to files so we can independently tinker with it
-    open("train-x.csv", "w") do output
-        train_x = x0[train_idx,:]
-        writedlm(output, train_x, ",")
-    end
+    # open("train-x.csv", "w") do output
+    #     train_x = x0[train_idx,:]
+    #     writedlm(output, train_x, ",")
+    # end
 
-    open("test-x.csv", "w") do output
-        test_x = x0[test_idx,:]
-        writedlm(output, test_x, ",")
-    end
+    # open("test-x.csv", "w") do output
+    #     test_x = x0[test_idx,:]
+    #     writedlm(output, test_x, ",")
+    # end
 
-    open("train-y.csv", "w") do output
-        train_y = z_true[train_idx,:]
-        writedlm(output, train_y, ",")
-    end
+    # open("train-y.csv", "w") do output
+    #     train_y = z_true[train_idx,:]
+    #     writedlm(output, train_y, ",")
+    # end
 
-    open("test-y.csv", "w") do output
-        test_y = z_true[test_idx,:]
-        writedlm(output, test_y, ",")
-    end
-
-    exit()
+    # open("test-y.csv", "w") do output
+    #     test_y = z_true[test_idx,:]
+    #     writedlm(output, test_y, ",")
+    # end
 
 
 

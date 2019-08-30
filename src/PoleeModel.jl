@@ -7,6 +7,7 @@ export
     init_python_modules,
     load_samples_from_specification,
     load_point_estimates_from_specification,
+    load_samplers_from_specification,
     load_transcripts_from_args,
     approximate_splicing_likelihood,
     write_transcripts,
@@ -64,7 +65,6 @@ x should be log expression with shape [num_samples, num_features]
 function estimate_sample_scales(x; upper_quantile=0.90)
     x_mean = mean(x, dims=1)[1,:]
     high_expr_idx = x_mean .> quantile(x_mean, upper_quantile)
-    @show sum(high_expr_idx)
     return median(
         reshape(x_mean[high_expr_idx], (1, sum(high_expr_idx))) .- x[:,high_expr_idx],
         dims=2)

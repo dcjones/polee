@@ -153,7 +153,7 @@ Set up a linear regression model for variational inference, returning
 def linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
         x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
-        use_point_estimates, sess):
+        use_point_estimates, sess, niter=30000):
 
     num_samples = int(F.shape[0])
     num_factors = int(F.shape[1])
@@ -275,7 +275,7 @@ def linear_regression_inference(
     if sess is None:
         sess = tf.Session()
 
-    train(sess, -elbo, init_feed_dict, 30000, 1e-2, decay_rate=.993)
+    train(sess, -elbo, init_feed_dict, niter, 1e-2, decay_rate=.993)
 
     return (
         sess.run(qx.distribution.mean()),
@@ -298,7 +298,7 @@ Run variational inference on transcript expression linear regression.
 """
 def estimate_transcript_linear_regression(
         init_feed_dict, vars, x_init, F_arr,
-        sample_scales, use_point_estimates, sess=None):
+        sample_scales, use_point_estimates, sess=None, niter=30000):
 
     F = tf.constant(F_arr, dtype=tf.float32)
     num_features = x_init.shape[1]
@@ -316,7 +316,8 @@ def estimate_transcript_linear_regression(
 
     return linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
-        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales, use_point_estimates, sess)
+        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
+        use_point_estimates, sess, niter)
 
 
 """

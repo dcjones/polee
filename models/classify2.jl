@@ -13,6 +13,7 @@ using Distributions
 using StatsFuns
 using Random
 using DecisionTree
+using DelimitedFiles
 
 
 const arg_settings = ArgParseSettings()
@@ -73,6 +74,7 @@ function main()
     spec = YAML.load_file(parsed_args["experiment"])
 
     if parsed_args["point-estimates"] !== nothing
+        Random.seed!(parsed_args["seed"])
         loaded_samples = load_point_estimates_from_specification(
             spec, ts, ts_metadata, parsed_args["point-estimates"],
             max_num_samples=parsed_args["max-num-samples"])
@@ -87,11 +89,52 @@ function main()
         sample_names = loaded_samples.sample_names
         sample_factors = loaded_samples.sample_factors
 
+        # x_mean = mean(x0, dims=1)[1,:]
+        # p = sortperm(x_mean, rev=true)
+        # @show p[1:10]
+        # @show x0[:,p[1]]
+        # @show x0[:,p[2]]
+
+
+        # @show sum(loaded_samples.x0_values, dims=2)
+        # @show size(x0)
+        # @show typeof(x0)
+        # exit()
     else
+        Random.seed!(parsed_args["seed"])
         samplers, efflens, sample_names, sample_factors = load_samplers_from_specification(
             spec, ts, ts_metadata,
             max_num_samples=parsed_args["max-num-samples"])
-        num_samples = length(samplers)
+
+        # TODO: this should be combined into one function that loads tf variables
+        # and builds samplers
+
+        init_python_modules()
+        Random.seed!(parsed_args["seed"])
+        loaded_samples = load_samples_from_specification(
+            spec, ts, ts_metadata,
+            max_num_samples=parsed_args["max-num-samples"])
+        x0 = log.(loaded_samples.x0_values)
+        num_samples = size(x0, 1)
+
+        sample_names = loaded_samples.sample_names
+        sample_factors = loaded_samples.sample_factors
+
+        efflens = loaded_samples.efflen_values
+
+        # x_mean = mean(x0, dims=1)[1,:]
+        # p = sortperm(x_mean, rev=true)
+        # @show p[1:10]
+        # @show x0[:,p[1]]
+        # @show x0[:,p[2]]
+
+        # @show sum(loaded_samples.x0_values, dims=2)
+        # @show size(x0)
+        # @show typeof(x0)
+        # exit()
+
+        polee_regression_py = pyimport("polee_regression")
+        tf = pyimport("tensorflow")
     end
 
     z_true_onehot, factor_names = build_factor_matrix(
@@ -117,8 +160,83 @@ function main()
         forest = build_forest(z_true[train_idx], x0[train_idx,:], -1, n_trees)
         z_predict = apply_forest_proba(forest, x0[test_idx,:], collect(1:num_factors))
     else
-        forest = build_forest_with_samples(
-            z_true[train_idx], samplers[train_idx], efflens[train_idx,:], -1, n_trees)
+        empty!(loaded_samples.variables)
+        empty!(loaded_samples.init_feed_dict)
+        tf.reset_default_graph()
+        create_tensorflow_variables!(loaded_samples, num_train_samples)
+
+        train_feed_dict_subset = subset_feed_dict(
+            loaded_samples.init_feed_dict, train_idx)
+
+        sample_scales = estimate_sample_scales(x0[train_idx,:], upper_quantile=0.9)
+        fill!(sample_scales, 0.0f0)
+
+        sess = tf.Session()
+
+        qx_loc = x0[train_idx,:]
+        # qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
+        #     polee_regression_py.estimate_transcript_linear_regression(
+        #         train_feed_dict_subset, loaded_samples.variables,
+        #         x0[train_idx,:],
+        #         # zeros(Float32, (num_train_samples, 0)),
+        #         z_true_onehot[train_idx,:],
+        #         sample_scales,
+        #         parsed_args["point-estimates"], sess,
+        #         # 4000)
+        #         800)
+
+        # open("train-x.csv", "w") do output
+        #     writedlm(output, qx_loc, ",")
+        # end
+
+        # open("train-y.csv", "w") do output
+        #     train_y = z_true[train_idx,:]
+        #     writedlm(output, train_y, ",")
+        # end
+
+        # TODO: I could also try building the forest by sampling from the
+        # posterion for x
+
+
+        forest = build_forest(
+            z_true[train_idx], qx_loc, -1, n_trees)
+
+        empty!(loaded_samples.variables)
+        empty!(loaded_samples.init_feed_dict)
+        tf.reset_default_graph()
+        sess.close()
+        sess = tf.Session()
+
+        num_test_samples = length(test_idx)
+        create_tensorflow_variables!(loaded_samples, num_test_samples)
+
+        test_feed_dict_subset = subset_feed_dict(
+            loaded_samples.init_feed_dict, test_idx)
+
+        sample_scales = estimate_sample_scales(x0[test_idx,:], upper_quantile=0.9)
+        fill!(sample_scales, 0.0f0)
+
+        # qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
+        #     polee_regression_py.estimate_transcript_linear_regression(
+        #         test_feed_dict_subset, loaded_samples.variables,
+        #         x0[test_idx,:], zeros(Float32, (num_test_samples, 0)), sample_scales,
+        #         parsed_args["point-estimates"], sess, 8000)
+
+        # open("test-x.csv", "w") do output
+        #     writedlm(output, qx_loc, ",")
+        # end
+
+        # open("test-y.csv", "w") do output
+        #     test_y = z_true[test_idx,:]
+        #     writedlm(output, test_y, ",")
+        # end
+
+
+
+        # forest = build_forest_with_samples(
+        #     z_true[train_idx], samplers[train_idx], efflens[train_idx,:], -1, n_trees)
+
+
 
         samplers_test = samplers[test_idx]
         efflens_test = efflens[test_idx,:]
@@ -144,7 +262,7 @@ function main()
         #     forest, xs, collect(1:num_factors))
 
         z_predict = zeros(Float64, (length(test_idx), num_factors))
-        n_predict_iter = 400
+        n_predict_iter = 200
         for i in 1:n_predict_iter
             @show i
 
@@ -157,12 +275,30 @@ function main()
             xs ./= sum(xs, dims=2)
 
             z_predict .+= apply_forest_proba(
-                forest, xs, collect(1:num_factors))
+                forest, log.(xs), collect(1:num_factors))
         end
         z_predict ./= n_predict_iter
+
+        # @show typeof(qx_loc)
+        # @show size(qx_loc)
+        # z_predict = apply_forest_proba(
+        #     forest, qx_loc, collect(1:num_factors))
     end
 
     write_classification_probs(factor_names, z_predict, z_true_onehot[test_idx,:])
+end
+
+
+function subset_feed_dict(feed_dict, idx)
+    feed_dict_subset = Dict()
+    for (k, v) in feed_dict
+        if length(size(v)) > 1
+            feed_dict_subset[k] = v[idx,:]
+        else
+            feed_dict_subset[k] = v[idx]
+        end
+    end
+    return feed_dict_subset
 end
 
 
@@ -268,16 +404,16 @@ function build_forest_with_samples(
 
 
     # manually doing posterior mean
-    fill!(features, 0.0f0)
-    for i in 1:n_trees
-        for j in 1:length(samplers)
-            rand!(samplers[j], feature_row)
-            feature_row ./= efflens[j,:]
-            feature_row ./= sum(feature_row)
-            features[j,:] .+= feature_row
-        end
-    end
-    features ./= n_trees
+    # fill!(features, 0.0f0)
+    # for i in 1:n_trees
+    #     for j in 1:length(samplers)
+    #         rand!(samplers[j], feature_row)
+    #         feature_row ./= efflens[j,:]
+    #         feature_row ./= sum(feature_row)
+    #         features[j,:] .+= feature_row
+    #     end
+    # end
+    # features ./= n_trees
 
 
     # rngs = mk_rng(rng)::Random.AbstractRNG
@@ -287,13 +423,14 @@ function build_forest_with_samples(
         @show i
         inds = rand(rngs, 1:t_samples, n_samples)
 
-        # # draw new sample
-        # for j in 1:length(samplers)
-        #     rand!(samplers[j], feature_row)
-        #     features[j,:] = feature_row
-        # end
-        # features ./= efflens
-        # features ./= sum(features, dims=2)
+        # draw new sample
+        for j in 1:length(samplers)
+            rand!(samplers[j], feature_row)
+            features[j,:] = feature_row
+        end
+        features ./= efflens
+        features ./= sum(features, dims=2)
+        features = log.(features)
 
         tree = build_tree(
             labels[inds],

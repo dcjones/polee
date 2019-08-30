@@ -75,8 +75,10 @@ end
 If transcripts are passed specifically as an argument, load them, otherwise
 try to determine their location from metadata.
 """
-function load_transcripts_from_args(parsed_args, excluded_transcripts=Set{String}())
-    spec = YAML.load_file(parsed_args["experiment"])
+function load_transcripts_from_args(
+        parsed_args, excluded_transcripts=Set{String}();
+        experiment_arg="experiment")
+    spec = YAML.load_file(parsed_args[experiment_arg])
     prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
 
     transcripts_filename = nothing

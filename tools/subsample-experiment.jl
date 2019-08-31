@@ -69,6 +69,8 @@ function main()
     Random.seed!(parse(Int, ARGS[3]))
     train_count = parse(Int, ARGS[4])
     test_count = parse(Int, ARGS[5])
+    train_filename = ARGS[6]
+    test_filename = ARGS[7]
 
     spec = YAML.load_file(experiment_filename)
 
@@ -163,12 +165,12 @@ function main()
     end
 
     spec["samples"] = training_samples
-    open("training.yml", "w") do output
+    open(train_filename, "w") do output
         print_yaml(output, spec)
     end
 
     spec["samples"] = testing_samples
-    open("testing.yml", "w") do output
+    open(test_filename, "w") do output
         print_yaml(output, spec)
     end
 end

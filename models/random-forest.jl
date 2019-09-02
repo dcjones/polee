@@ -127,10 +127,19 @@ function main()
 
     if use_point_estimates
         forest = build_forest(y_true_training, x_training, -1, ntrees)
+
         y_predicted = apply_forest_proba(
             forest, x_testing, collect(1:num_factors))
     else
         sess = tf.Session()
+
+        # Let's think about this.
+        #
+        #
+
+        sample_scales = estimate_sample_scales(
+            log.(training_loaded_samples.x0_values), upper_quantile=0.9)
+        fill!(sample_scales, 0.0f0)
 
         qx_loc_training, _, _, _, _ =
             polee_regression_py.estimate_transcript_linear_regression(
@@ -138,9 +147,15 @@ function main()
                 training_loaded_samples.variables,
                 log.(training_loaded_samples.x0_values),
                 y_true_onehot_training,
-                zeros(Float32, (num_training_samples, 1)),
-                parsed_args["point-estimates"], sess,
+                # zeros(Float32, (num_training_samples, 1)),
+                sample_scales,
+                use_point_estimates, sess,
                 800)
+
+        # The shrinkage model may very well shift the scales so that qx_loc_training
+        # doesn't sum to one
+        @show log.(sum(exp.(qx_loc_training), dims=2))
+        qx_loc_training .-= log.(sum(exp.(qx_loc_training), dims=2))
 
         sess.close()
 
@@ -160,8 +175,11 @@ function main()
             xs ./= testing_efflens
             xs ./= sum(xs, dims=2)
 
+            sample_scales = estimate_sample_scales(log.(xs), upper_quantile=0.9)
+            fill!(sample_scales, 0.0f0)
+
             y_predicted .+= apply_forest_proba(
-                forest, log.(xs), collect(1:num_factors))
+                forest, log.(xs) .- sample_scales, collect(1:num_factors))
         end
         y_predicted ./= n_predict_iter
     end

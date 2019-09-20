@@ -9,18 +9,19 @@ import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 import sys
 from tensorflow_probability import edward2 as ed
+import polee
 from polee_approx_likelihood import *
 from polee_training import *
 
 from tensorflow.python import debug as tf_debug
 
 
-kernel_regression_degree = 10
+kernel_regression_degree = 15
 kernel_regression_bandwidth = 1.0
 
 
 def gaussian_kernel(u, bandwidth):
-    return tf.exp(-tf.square(u))
+    return tf.exp(-tf.square(u/bandwidth))
 
 
 def SoftplusNormal(loc, scale, name="SoftplusNormal"):
@@ -125,29 +126,15 @@ def linear_regression_model(
         rate=rate,
         name="x_scale")
 
-    # x_distortion_c_ = tf.log(tf.nn.softmax(x_distortion_c, axis=1)) - np.log(1/scale_spline_degree)
-
-    # x_distortion = tf.squeeze(tf.matmul(
-    #     tf.expand_dims(x_distortion_c, 1),
-    #     tf.expand_dims(x_scale_hinges_weight_x, 0)))
-
-    # x_distortion = evalpoly(x_distortion_c, tf.expand_dims(x_bias, 0))
-
-    # x_distortion -= tf.reduce_mean(x_distortion, axis=1, keepdims=True)
-    # x_distortion = tf.log(tf.nn.softmax(x_distortion, axis=1) * num_features)
-    # x_distortion = tf.check_numerics(x_distortion, "x_distortion error")
-
-    # center distortion so it doesn't cause scale changes
-
     x = ed.Normal(
-        # loc=x_loc - sample_scales + x_distortion,
         loc=x_loc - sample_scales,
         scale=x_scale,
         name="x")
 
     return w_global_scale_variance, w_global_scale_noncentered, \
         w_local_scale_variance, w_local_scale_noncentered, \
-        w, x_bias, x_scale_concentration_c, x_scale_rate_c, x_scale, w_distortion_c, x
+        w, x_bias, x_scale_concentration_c, x_scale_rate_c, x_scale, \
+        w_distortion_c, x
 
 
 """
@@ -166,25 +153,6 @@ def linear_regression_variational_model(
         qw_distortion_c_loc_var,
         qx_loc_var, qx_scale_var,
         use_point_estimates):
-
-    # qw_global_scale = ed.Deterministic(
-    #     loc=tf.nn.softplus(qw_global_scale_loc_var),
-    #     name="qw_global_scale")
-
-    # qw_global_scale = ed.LogNormal(
-    #     loc=qw_global_scale_loc_var,
-    #     scale=qw_global_scale_scale_var,
-    #     name="qw_global_scale")
-
-    # qw_local_scale_loc = ed.InverseGamma(
-    #     loc=tf.nn.softplus(qw_local_scale_loc_loc_var),
-    #     scale=tf.nn.softplus(qw_local_scale_loc_scale_var),
-    #     name="qw_local_scale_loc")
-
-    # qw_local_scale = ed.InverseGamma(
-    #     loc=tf.nn.softplus(qw_local_scale_loc_var),
-    #     scale=qw_local_scale_scale_var,
-    #     name="qw_local_scale")
 
     qw_global_scale_variance = SoftplusNormal(
         loc=qw_global_scale_variance_loc_var,
@@ -206,21 +174,10 @@ def linear_regression_variational_model(
         scale=qw_local_scale_noncentered_scale_var,
         name="qw_local_scale_noncentered")
 
-    # qw_local_scale_loc = ed.Deterministic(
-    #     loc=tf.exp(qw_local_scale_loc_loc_var),
-    #     name="qw_local_scale_loc")
-
-    # qw_local_scale = ed.Deterministic(
-    #     loc=tf.exp(qw_local_scale_loc_var),
-    #     name="qw_local_scale")
-
     qw = ed.Normal(
         loc=qw_loc_var,
         scale=qw_scale_var,
         name="qw")
-    # qw = ed.Deterministic(
-    #     loc=tf.zeros(qw_loc_var.shape),
-    #     name="qw")
 
     qx_bias = ed.Normal(
         loc=qx_bias_loc_var,
@@ -235,23 +192,10 @@ def linear_regression_variational_model(
         loc=tf.nn.softplus(qx_scale_rate_c_loc_var),
         name="qx_scale_rate_c")
 
-    # qx_scale_concentration_c = ed.Deterministic(
-    #     loc=qx_scale_concentration_c_loc_var,
-    #     name="qx_scale_concentration_c")
-
-    # qx_scale_rate_c = ed.Deterministic(
-    #     loc=qx_scale_rate_c_loc_var,
-    #     name="qx_scale_rate_c")
-
     qx_scale = SoftplusNormal(
         loc=qx_scale_loc_var,
         scale=qx_scale_scale_var,
         name="qx_scale")
-
-    # qx_scale = ed.Gamma(
-    #     concentration=qx_scale_loc_var,
-    #     rate=qx_scale_scale_var,
-    #     name="qx_scale")
 
     qw_distortion_c = ed.Deterministic(
         loc=qw_distortion_c_loc_var,
@@ -267,7 +211,8 @@ def linear_regression_variational_model(
 
     return qw_global_scale_variance, qw_global_scale_noncentered, \
         qw_local_scale_variance, qw_local_scale_noncentered, qw, qx_bias, \
-        qx_scale_concentration_c, qx_scale_rate_c, qx_scale, qw_distortion_c, qx
+        qx_scale_concentration_c, qx_scale_rate_c, qx_scale, \
+        qw_distortion_c, qx
 
 
 def softminus(x):
@@ -280,7 +225,8 @@ Set up a linear regression model for variational inference, returning
 def linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,
         x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
-        use_point_estimates, sess, niter=6000, elbo_add_term=0.0):
+        use_point_estimates, sess, niter=8000, elbo_add_term=0.0,
+        scale_penalty_c=5e-4):
 
     num_samples = int(F.shape[0])
     num_factors = int(F.shape[1])
@@ -309,21 +255,10 @@ def linear_regression_inference(
     qw_local_scale_noncentered_scale_var = tf.nn.softplus(tf.Variable(
         tf.fill([num_features], -1.0),
         name="qw_local_scale_noncentered_scale_var"))
-    # qw_local_scale_noncentered_loc_var = tf.Print(
-    #     qw_local_scale_noncentered_loc_var,
-    #     [tf.reduce_min(qw_local_scale_noncentered_loc_var),
-    #     tf.reduce_max(qw_local_scale_noncentered_loc_var) ],
-    #     "qw_local_scale_noncentered_loc_var span")
-    # qw_local_scale_noncentered_scale_var = tf.Print(
-    #     qw_local_scale_noncentered_scale_var,
-    #     [tf.reduce_min(qw_local_scale_noncentered_scale_var),
-    #     tf.reduce_max(qw_local_scale_noncentered_scale_var) ],
-    #     "qw_local_scale_noncentered_scale_var span")
 
     qw_loc_var = tf.Variable(
         tf.zeros([num_features, num_factors]),
         name="qw_loc_var")
-    # qw_loc_var = tf.Print(qw_loc_var, [tfp.stats.percentile(qw_loc_var, [45, 50, 55])], "w median")
     qw_scale_var = tf.nn.softplus(tf.Variable(
         tf.fill([num_features, num_factors], -2.0),
         name="qw_scale_var"))
@@ -362,17 +297,6 @@ def linear_regression_inference(
     qx_scale_var = tf.nn.softplus(tf.Variable(
         tf.fill([num_samples, num_features], -1.0),
         name="qx_scale_var"))
-
-    # qx_loc_var = tf.Variable(
-    #     x_init,
-    #     name="qx_loc_var",
-    #     trainable=False)
-
-    # qx_scale_var_ = tf.Variable(
-    #     tf.fill([num_samples, num_features], -5.0),
-    #     name="qx_scale_var",
-    #     trainable=False)
-    # qx_scale_var = tf.nn.softplus(qx_scale_var_)
 
     qw_global_scale_variance, qw_global_scale_noncentered, \
         qw_local_scale_variance, qw_local_scale_noncentered, qw, qx_bias, \
@@ -434,120 +358,23 @@ def linear_regression_inference(
         qx=qx)
 
     log_likelihood = make_likelihood(qx)
-    log_likelihood = tf.Print(log_likelihood, [tf.reduce_sum(tf.exp(qx), axis=1)], "scales", summarize=6)
-    log_likelihood = tf.Print(log_likelihood, [tf.reduce_sum(tf.exp(qx_bias))], "bias scale", summarize=6)
 
-    scale_penalty = tf.reduce_sum(tfd.Normal(loc=0.0, scale=1e-3).log_prob(
+    scale_penalty = tf.reduce_sum(tfd.Normal(loc=0.0, scale=scale_penalty_c).log_prob(
         tf.log(tf.reduce_sum(tf.exp(qx), axis=1))))
-    # qx_loc = tf.matmul(F, qw, transpose_b=True) + qx_bias
-    # scale_penalty += tf.reduce_sum(tfd.Normal(loc=0.0, scale=1e-3).log_prob(
-    #     tf.log(tf.reduce_sum(tf.exp(qx_loc), axis=1))))
 
-    # scale_penalty = tf.reduce_sum(tfd.StudentT(df=10.0, loc=-25.0, scale=tf.fill([1, num_features], 1e-2)).log_prob(
-    #     qx))
-
-    elbo = log_prior + log_likelihood - entropy + elbo_add_term # + scale_penalty
-
-    # elbo = tf.Print(elbo, [log_prior], "log_prior")
-    # elbo = tf.Print(elbo, [log_likelihood], "log_likelihood")
-    # elbo = tf.Print(elbo, [entropy], "entropy")
-
-    # elbo = tf.Print(elbo, [tf.reduce_min(qw_global_scale_variance), tf.reduce_max(qw_global_scale_variance)], "qw_global_scale_variance span")
-    # elbo = tf.Print(elbo, [tf.reduce_min(qw_global_scale_noncentered), tf.reduce_max(qw_global_scale_noncentered)], "qw_global_scale_noncentered span")
-    # elbo = tf.Print(elbo, [tf.reduce_min(qw_local_scale_variance), tf.reduce_max(qw_local_scale_variance)], "qw_local_scale_variance span")
-    # elbo = tf.Print(elbo, [tf.reduce_min(qw_local_scale_noncentered), tf.reduce_max(qw_local_scale_noncentered)], "qw_local_scale_noncentered span")
-
-    # elbo = tf.Print(elbo, [
-    #     tf.reduce_min(tfd.HalfNormal(scale=1.0).log_prob(qw_local_scale_noncentered))],
-    #     "qw_local_scale_noncentered log_prob min")
-
-    # elbo = tf.Print(elbo, [
-    #     tf.reduce_sum(qw_local_scale_noncentered.distribution.log_prob(qw_local_scale_noncentered))],
-    #     "qw_local_scale_noncentered entropy")
-
-    # elbo = tf.Print(elbo, [
-    #     qw_global_scale_noncentered.distribution.log_prob(qw_global_scale_noncentered)],
-    #     "qw_global_scale_noncentered entropy")
-
+    elbo = log_prior + log_likelihood - entropy + elbo_add_term + scale_penalty
     elbo = tf.check_numerics(elbo, "Non-finite ELBO value")
 
     if sess is None:
         sess = tf.Session()
 
-    # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-
-    # train(sess, -elbo, init_feed_dict, 8000, 1e-2, decay_rate=0.993)
-
-    train(sess, -elbo, init_feed_dict, 5000, 1e-3, decay_rate=1.0)
-    # train(sess, -elbo, init_feed_dict, 10000, 1e-3, decay_rate=1.0)
-
-    # train(sess, -elbo, init_feed_dict, niter, 1e-2, decay_rate=.993)
-    # train(sess, -elbo, init_feed_dict, 8000, 1e-2, decay_rate=.993)
-    # train(sess, -elbo, init_feed_dict, niter, 1e-3, decay_rate=1.0)
-
-    # train(
-    #     sess, -elbo, init_feed_dict, 30000, 1e-3,
-    #     decay_boundaries=[10000, 20000],
-    #     decay_values=[1e-2, 1e-3, 1e-4])
-
-    # Print mean values for everything so I can better initialize these
-    # print("mean values")
-    # print(sess.run([
-    #     qw_global_scale_loc_var,
-    #     tf.reduce_mean(qw_local_scale_loc_var),
-    #     tf.reduce_mean(softminus(qw_local_scale_scale_var)),
-    #     tf.reduce_mean(qw_loc_var),
-    #     tf.reduce_mean(softminus(qw_scale_var)),
-    #     tf.reduce_mean(qx_bias_loc_var),
-    #     tf.reduce_mean(softminus(qx_bias_scale_var)),
-    #     tf.reduce_mean(qx_scale_concentration_c_loc_var),
-    #     tf.reduce_mean(qx_scale_rate_c_loc_var),
-    #     tf.reduce_mean(qx_scale_loc_var),
-    #     tf.reduce_mean(softminus(qx_scale_scale_var)),
-    #     tf.reduce_mean(softminus(qx_scale_var)) ] ))
-
-    print("qw_distortion_c")
-    print(sess.run(qw_distortion_c))
-
-    print("qx_scale_concentration_c")
-    print(sess.run(qx_scale_concentration_c))
-
-    print("qx_scale_rate_c")
-    print(sess.run(qx_scale_rate_c))
-
-    print("qw_global_scale")
-    print(sess.run(qw_global_scale_variance_loc_var))
-    print(sess.run(qw_global_scale_variance_scale_var))
-
-    print(sess.run(qw_global_scale_noncentered_loc_var))
-    print(sess.run(qw_global_scale_noncentered_scale_var))
-
-    print("qw_local_scale quantiles")
-    print(np.quantile(sess.run(qw_local_scale_variance_loc_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-    print(np.quantile(sess.run(qw_local_scale_variance_scale_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-
-    print(np.quantile(sess.run(qw_local_scale_noncentered_loc_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-    print(np.quantile(sess.run(qw_local_scale_noncentered_scale_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-
-    print("qx_scale quantiles")
-    print(np.quantile(sess.run(qx_scale), [0.0, 0.1, 0.5, 0.9, 1.0]))
-    print(np.quantile(sess.run(qx_scale_loc_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-    print(np.quantile(sess.run(qx_scale_scale_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-
-    print("qx")
-    print(np.quantile(sess.run(qx_loc_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-    print(np.quantile(sess.run(qx_scale_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-
-    print("qw")
-    print(np.quantile(sess.run(qw_loc_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
-    print(np.quantile(sess.run(qw_scale_var), [0.0, 0.1, 0.5, 0.9, 1.0]))
+    train(sess, -elbo, init_feed_dict, niter, 1e-3, decay_rate=1.0)
 
     return (
         sess.run(qx.distribution.mean()),
         sess.run(qw.distribution.mean()),
         sess.run(qw.distribution.stddev()),
         sess.run(qx_bias.distribution.mean()),
-        # sess.run(qx_scale.distribution.mean()))
         sess.run(qx_scale))
 
 
@@ -598,8 +425,8 @@ def estimate_transcript_linear_regression(
 Run variational inference on feature log-ratio linear regression.
 """
 def estimate_feature_linear_regression(
-        init_feed_dict, feature_loc, feature_scale, x0_log, F_arr, sample_scales,
-        use_point_estimates, sess=None):
+        init_feed_dict, feature_loc, feature_scale, feature_sizes, x0_log,
+        F_arr, sample_scales, use_point_estimates, sess=None):
 
     # don't need this since we already used the transcript expression
     # likelihood approximation to approximate splicing likelihood.
@@ -608,16 +435,20 @@ def estimate_feature_linear_regression(
     num_samples = feature_loc.shape[0]
     num_features = feature_scale.shape[1]
 
-    feature_likelihood = ed.Normal(
+    feature_likelihood = tfd.Normal(
         loc=feature_loc,
         scale=feature_scale,
         name="feature_likelihood")
 
+    def full_likelihood(qx):
+        x_gene = tf.log(tf.nn.softmax(qx, axis=1))
+        return tf.reduce_sum(feature_likelihood.log_prob(x_gene)) + \
+            polee.noninformative_gene_prior(x_gene, feature_sizes)
+
     if use_point_estimates:
         make_likelihood = lambda qx: 0.0
     else:
-        make_likelihood = lambda qx: tf.reduce_sum(feature_likelihood.distribution.log_prob(
-            tf.log(tf.nn.softmax(qx, axis=1))))
+        make_likelihood = full_likelihood
 
     F = tf.constant(F_arr, dtype=tf.float32)
 
@@ -631,13 +462,6 @@ def estimate_feature_linear_regression(
 
     x_bias_mu0 = np.log(1./num_features)
     x_bias_sigma0 = 12.0
-
-    # x_bias_mu0 = np.log(1e-4/num_features)
-    # x_bias_sigma0 = 2.0
-
-    # different initialization
-    # x_init = np.tile(x_init_mean, (num_samples, 1))
-
 
     return linear_regression_inference(
         init_feed_dict, F, x_init, make_likelihood,

@@ -28,6 +28,17 @@ def transcript_expression_to_feature_expression(
 
 
 """
+Since likelihood is in terms of transcript expression, gene expression models
+can have the undesirable property that there is effectively a uniform prior
+over transcript expression, leading to a non-uniform prior over gene
+expression. This corrects for that by computing the log determinant of the
+Jacobian for the transcript expression to gene expression bijection.
+"""
+def noninformative_gene_prior(x_gene, gene_sizes):
+    return tf.reduce_sum(-(gene_sizes-1) * x_gene)
+
+
+"""
 Approximate likelihood function for features (typically gene), where a
 "feature" is a set of transcripts. Approximated using a normal distribution
 and minimizing KL(p||q), where `p` is the "true" distribution (not really

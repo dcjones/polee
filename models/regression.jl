@@ -16,7 +16,7 @@ import Random
 
 
 const arg_settings = ArgParseSettings()
-arg_settings.prog = "polee model pca"
+arg_settings.prog = "polee model regression"
 @add_arg_table arg_settings begin
     "--feature"
         metavar = "F"
@@ -65,6 +65,10 @@ arg_settings.prog = "polee model pca"
         help = "Avoid overparameterization by excluding one factor from each group"
         action = :store_true
         default = false
+    "--balanced"
+        help = "Instead of factors represented as 0/1 in the design matrix, use -1/1"
+        action = :store_true
+        default = false
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification"
@@ -88,7 +92,6 @@ function main()
     n = length(ts)
 
     init_python_modules()
-    # polee_regression_py = pyimport("polee_regression2")
     polee_regression_py = pyimport("polee_regression")
     polee_py = pyimport("polee")
     tf = pyimport("tensorflow")
@@ -116,8 +119,6 @@ function main()
         end
     end
 
-    @show extrema(loaded_samples.x0_values)
-
     num_samples, n = size(loaded_samples.x0_values)
     x0_log = log.(loaded_samples.x0_values)
 
@@ -130,10 +131,11 @@ function main()
     factor_matrix, factor_names = build_factor_matrix(
         loaded_samples, factors, parsed_args["nonredundant"])
 
-    # TODO: make this optional behavior
-    for idx in eachindex(factor_matrix)
-        if factor_matrix[idx] == 0
-            factor_matrix[idx] = -1
+    if parsed_args["balanced"]
+        for idx in eachindex(factor_matrix)
+            if factor_matrix[idx] == 0
+                factor_matrix[idx] = -1
+            end
         end
     end
 
@@ -141,6 +143,11 @@ function main()
         # approximate genes expression likelihood
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
+
+        gene_sizes = zeros(Float32, num_features)
+        for i in gene_idxs
+            gene_sizes[i] += 1
+        end
 
         p = sortperm(gene_idxs)
         permute!(gene_idxs, p)
@@ -168,63 +175,98 @@ function main()
 
         sample_scales = estimate_sample_scales(qx_gene_loc)
 
-        # Ok, let's simulated some data here to try to understand what's going on.
-
-        # [num_samples, num_features]
-
-        # expr_scale = 2.0f0
-        # bio_scale = 4.0f0
-        # obs_scale = 1.0f0
-
-        # qx_gene_loc = fill(0.0f0, (num_samples, num_features))
-        # qx_gene_scale = fill(obs_scale, (num_samples, num_features))
-
-        # true_means = fill(0.0f0, num_features)
-
-        # for j in 1:num_features
-        #     μ = randn() * expr_scale
-        #     true_means[j] = μ
-        #     for i in 1:num_samples
-        #         obs_err = randn() * obs_scale
-        #         bio_err = randn() * bio_scale
-        #         qx_gene_loc[i, j] = μ + obs_err + bio_err
-        #     end
-        # end
-
         tf.reset_default_graph()
         sess.close()
 
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
             polee_regression_py.estimate_feature_linear_regression(
                 loaded_samples.init_feed_dict, qx_gene_loc, qx_gene_scale,
-                x0_log, factor_matrix, sample_scales,
+                gene_sizes, x0_log, factor_matrix, sample_scales,
                 parsed_args["point-estimates"] !== nothing)
 
 
+        # dumping stuff to help debug
+        # open("gene-mean-vs-sd.csv", "w") do output
+        #     qx_mean = mean(qx_loc, dims=1)
+        #     println(output, "gene_id,mean,sd")
+        #     for i in 1:size(qx_bias, 1)
+        #         # println(output, feature_names[i], ",", qx_bias[i], ",", qx_scale[i])
+        #         println(output, feature_names[i], ",", qx_mean[i], ",", qx_scale[i])
+        #     end
+        # end
+
+        # open("gene-expression.csv", "w") do output
+        #     println(output, "gene_id,sample,expression")
+        #     for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
+        #         println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
+        #     end
+        # end
+
+    # This is the full likelihood version of gene regression, which is much
+    # slower and doesn't seem to be any better than the version above
+    #=
+    elseif feature == "gene"
+        num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
+            Polee.gene_feature_matrix(ts, ts_metadata)
+
+        p = sortperm(gene_idxs)
+        permute!(gene_idxs, p)
+        permute!(transcript_idxs, p)
+
+        feature_names = gene_ids
+        feature_names_label = "gene_id"
+
+        # # figure out some reasonable initial values
+        x_gene_init    = zeros(Float32, (num_samples, num_features))
+        x_isoform_init = zeros(Float32, (num_samples, n))
+        for i in 1:num_samples
+            for (j, k) in zip(gene_idxs, transcript_idxs)
+                x_gene_init[i, j] += loaded_samples.x0_values[i, k]
+                x_isoform_init[i, k] = loaded_samples.x0_values[i, k]
+            end
+
+            for (j, k) in zip(gene_idxs, transcript_idxs)
+                x_isoform_init[i, k] /= x_gene_init[i, j]
+                x_isoform_init[i, k] = log.(x_isoform_init[i, k])
+            end
+
+            for j in 1:num_features
+                x_gene_init[i, j] = log(x_gene_init[i, j])
+            end
+        end
+
+        sample_scales = estimate_sample_scales(log.(loaded_samples.x0_values), upper_quantile=0.95)
+        @show sample_scales
+
+        polee_gene_regression_py = pyimport("polee_gene_regression")
+
+        sess = tf.Session()
+
+        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
+            polee_gene_regression_py.estimate_gene_linear_regression(
+                loaded_samples.init_feed_dict, loaded_samples.variables,
+                n, num_features, gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
+                factor_matrix, sample_scales,
+                parsed_args["point-estimates"] !== nothing, sess)
+
         qx_mean = mean(qx_loc, dims=1)
 
-        # TODO: debugging stuff. disable this.
-        open("gene-mean-vs-sd.csv", "w") do output
-            println(output, "gene_id,mean,sd")
-            for i in 1:size(qx_bias, 1)
-                # println(output, feature_names[i], ",", qx_bias[i], ",", qx_scale[i])
-                println(output, feature_names[i], ",", qx_mean[i], ",", qx_scale[i])
-            end
-        end
+        # dump stuff for debugging
+        # open("gene-mean-vs-sd.csv", "w") do output
+        #     println(output, "gene_id,mean,sd")
+        #     for i in 1:size(qx_bias, 1)
+        #         # println(output, feature_names[i], ",", qx_bias[i], ",", qx_scale[i])
+        #         println(output, feature_names[i], ",", qx_mean[i], ",", qx_scale[i])
+        #     end
+        # end
 
-        open("gene-expression.csv", "w") do output
-            println(output, "gene_id,sample,expression")
-            for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
-                println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
-            end
-        end
-
-        open("gene-expression-naive.csv", "w") do output
-            println(output, "gene_id,sample,expression")
-            for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
-                println(output, feature_names[j], ",", i, ",", qx_gene_loc[i,j])
-            end
-        end
+        # open("gene-expression.csv", "w") do output
+        #     println(output, "gene_id,sample,expression")
+        #     for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
+        #         println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
+        #     end
+        # end
+    =#
 
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)
@@ -234,12 +276,13 @@ function main()
                 loaded_samples.init_feed_dict, loaded_samples.variables,
                 x0_log, factor_matrix, sample_scales, parsed_args["point-estimates"])
 
-        open("transcript-mean-vs-sd.csv", "w") do output
-            println(output, "mean,sd")
-            for i in 1:size(qx_bias, 1)
-                println(output, qx_bias[i], ",", qx_scale[i])
-            end
-        end
+        # dump stuff for debugging
+        # open("transcript-mean-vs-sd.csv", "w") do output
+        #     println(output, "mean,sd")
+        #     for i in 1:size(qx_bias, 1)
+        #         println(output, qx_bias[i], ",", qx_scale[i])
+        #     end
+        # end
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"
@@ -344,6 +387,7 @@ function write_regression_effects(
             # Using t-distribution for what is actually Normal just to avoid
             # 1.0 probabilities.
             dist = TDist(10.0)
+            # dist = Normal()
             lc = quantile(dist, q0) * qw_scale[i,j] + qw_loc[i,j]
             uc = quantile(dist, q1) * qw_scale[i,j] + qw_loc[i,j]
 
@@ -354,6 +398,10 @@ function write_regression_effects(
             if effect_size !== nothing
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
                 prob_up = ccdf(dist, (effect_size - qw_loc[i,j]) / qw_scale[i,j])
+
+                # max(prob_up, prob_down) sometimes does better than the more
+                # standard prob_up + prob_down. It's particularly useful because it
+                # let's us specific a minimum effect size of 0.
                 @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
                 # @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
             end

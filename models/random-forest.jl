@@ -7,12 +7,12 @@ using .PoleeModel
 
 using ArgParse
 using YAML
-using PyCall
 using Statistics
 using Distributions
 using StatsFuns
 using Random
 using DecisionTree
+using DelimitedFiles
 
 
 const arg_settings = ArgParseSettings()
@@ -34,7 +34,26 @@ arg_settings.prog = "polee model classify"
         arg_type = Int
     "--ntrees"
         help = "Number of decision trees in the random forest."
-        default = 400
+        default = 200
+        arg_type = Int
+    "--nsubfeatures"
+        help = """
+            Number of predictors to used as a factor of the square root
+            of the total number (of transcripts or genes).
+            """
+        default = 10.0
+        arg_type = Float64
+    "--partial-sampling"
+        help = "Proportion of samples to subsample"
+        default = 1.0
+        arg_type = Float64
+    "--training-samples"
+        help = "Expand training data by sampling this many times from each sampler."
+        default = 20
+        arg_type = Int
+    "--testing-samples"
+        help = "Classify by averaging over this many samples."
+        default = 20
         arg_type = Int
     "--output-predictions"
         help = "Output prediction probility matrix"
@@ -91,18 +110,10 @@ function main()
         testing_sample_names = testing_loaded_samples.sample_names
         testing_sample_factors = testing_loaded_samples.sample_factors
     else
-        init_python_modules()
-        training_loaded_samples = load_samples_from_specification(
-            training_spec, ts, ts_metadata)
+        x_samplers_training, training_efflens, training_sample_names, training_sample_factors =
+                load_samplers_from_specification(training_spec, ts, ts_metadata)
 
-        training_sample_names = training_loaded_samples.sample_names
-        training_sample_factors = training_loaded_samples.sample_factors
-
-        polee_regression_py = pyimport("polee_regression")
-        tf = pyimport("tensorflow")
-
-        x_samplers_testing, testing_efflens, testing_sample_names,
-            testing_sample_factors =
+        x_samplers_testing, testing_efflens, testing_sample_names, testing_sample_factors =
                 load_samplers_from_specification(testing_spec, ts, ts_metadata)
     end
 
@@ -124,64 +135,40 @@ function main()
     y_true_testing = decode_onehot(y_true_onehot_testing)
 
     ntrees = parsed_args["ntrees"]
+    nsubfeatures = min(n, round(Int, parsed_args["nsubfeatures"] * sqrt(n)))
 
     if use_point_estimates
-        forest = build_forest(y_true_training, x_training, -1, ntrees)
+        println("training...")
+        forest = build_forest(
+            y_true_training, x_training, nsubfeatures, ntrees,
+            parsed_args["partial-sampling"])
 
+        println("testing...")
         y_predicted = apply_forest_proba(
             forest, x_testing, collect(1:num_factors))
     else
-        sess = tf.Session()
-
-        # Let's think about this.
-        #
-        #
-
-        sample_scales = estimate_sample_scales(
-            log.(training_loaded_samples.x0_values), upper_quantile=0.9)
-        fill!(sample_scales, 0.0f0)
-
-        qx_loc_training, _, _, _, _ =
-            polee_regression_py.estimate_transcript_linear_regression(
-                training_loaded_samples.init_feed_dict,
-                training_loaded_samples.variables,
-                log.(training_loaded_samples.x0_values),
-                y_true_onehot_training,
-                # zeros(Float32, (num_training_samples, 1)),
-                sample_scales,
-                use_point_estimates, sess,
-                800)
-
-        # The shrinkage model may very well shift the scales so that qx_loc_training
-        # doesn't sum to one
-        @show log.(sum(exp.(qx_loc_training), dims=2))
-        qx_loc_training .-= log.(sum(exp.(qx_loc_training), dims=2))
-
-        sess.close()
+        # Build an enlarged training set by drawing samples from the
+        # approximated likelihood
+        println("training...")
+        features = Array{Float32}(undef,
+            (num_training_samples * parsed_args["training-samples"], n))
+        features_row = Array{Float32}(undef, n)
+        draw_samples!(x_samplers_training, training_efflens, features)
+        labels = repeat(y_true_training, parsed_args["training-samples"])
 
         forest = build_forest(
-           y_true_training, qx_loc_training, -1, ntrees)
+            labels, features, nsubfeatures, ntrees, parsed_args["partial-sampling"])
 
+        # Evaluate by drawing samples and averaging the result
+        println("testing...")
         xs = similar(testing_efflens)
-        xs_row = Array{Float32}(undef, n)
         y_predicted = zeros(Float64, (num_testing_samples, num_factors))
-        n_predict_iter = 200
-        for i in 1:n_predict_iter
-            # draw new sample
-            for j in 1:num_testing_samples
-                rand!(x_samplers_testing[j], xs_row)
-                xs[j,:] = xs_row
-            end
-            xs ./= testing_efflens
-            xs ./= sum(xs, dims=2)
-
-            sample_scales = estimate_sample_scales(log.(xs), upper_quantile=0.9)
-            fill!(sample_scales, 0.0f0)
-
+        for i in 1:parsed_args["testing-samples"]
+            draw_samples!(x_samplers_testing, testing_efflens, xs)
             y_predicted .+= apply_forest_proba(
-                forest, log.(xs) .- sample_scales, collect(1:num_factors))
+                forest, xs, collect(1:num_factors))
         end
-        y_predicted ./= n_predict_iter
+        y_predicted ./= parsed_args["testing-samples"]
     end
 
     write_classification_probs(
@@ -190,6 +177,26 @@ function main()
         parsed_args["output-truth"],
         y_predicted,
         y_true_onehot_testing)
+end
+
+
+"""
+Draw sample from approximated likelihood, adjust for effective length and log
+transform.
+"""
+function draw_samples!(samplers, efflens, xs)
+    num_samples = length(samplers)
+    # conceivably this could draw from the same sampler twice in different threads
+    # which would break things. Sampling isn't a big bottleneck anyway.
+    # Threads.@threads for i in 1:size(xs, 1)
+    for i in 1:size(xs, 1)
+        xs_row = @view xs[i,:]
+        k = mod1(i, num_samples)
+        rand!(samplers[k], xs_row)
+        xs_row ./= @view efflens[k,:]
+        xs_row ./= sum(xs_row)
+        map!(log, xs_row, xs_row)
+    end
 end
 
 

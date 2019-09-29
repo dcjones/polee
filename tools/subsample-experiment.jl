@@ -147,7 +147,7 @@ function main()
         allocated_count =
             factor_training_counts[factor_value] +
             factor_testing_counts[factor_value]
-        @assert length(samples) <= allocated_count
+        @assert length(samples) >= allocated_count
     end
 
     training_samples = Any[]

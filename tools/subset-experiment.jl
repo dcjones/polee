@@ -11,6 +11,7 @@ function print_usage()
         """)
 end
 
+
 """
 Extremely simple and incomplete YAML printer.
 """
@@ -18,7 +19,7 @@ function print_yaml(output, item, level=0, indent_first=true)
     if isa(item, Array)
         for subitem in item
             print_indent(output, level)
-            print("- ")
+            print(output, "- ")
             print_yaml(output, subitem, level+1, false)
         end
     elseif isa(item, Dict)
@@ -35,9 +36,10 @@ function print_yaml(output, item, level=0, indent_first=true)
             end
         end
     else
-        println(item)
+        println(output, item)
     end
 end
+
 
 function print_indent(output, level)
     for _ in 1:level

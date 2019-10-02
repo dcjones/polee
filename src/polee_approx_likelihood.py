@@ -53,7 +53,7 @@ def rnaseq_approx_likelihood_sampler(
     # effective length transform
     x_scaled = x_efflen / efflens
     x = x_scaled / tf.reduce_sum(x_scaled, axis=1, keepdims=True)
-    x = tf.clip_by_value(x, 1e-15, 0.9999999e0)
+    x = tf.clip_by_value(x, 1e-16, 0.99999999e0)
     return x
 
 

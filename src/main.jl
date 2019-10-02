@@ -169,6 +169,8 @@ end
 
 @add_arg_table arg_settings["sample"] begin
     "--output", "-o"
+        arg_type = String
+        default = "post-mean.csv"
     "--kallisto"
         help = """Output samples in a format compatible with kallisto,
         for use with sleuth. """

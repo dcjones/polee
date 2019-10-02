@@ -94,9 +94,11 @@ function main()
     gene_db = write_transcripts("genes.db", ts, ts_metadata)
 
     if feature == "transcript"
+        sample_scales = estimate_sample_scales(x0_log, upper_quantile=0.9)
+
         z, w = polee_pca_py.estimate_transcript_pca(
             loaded_samples.init_feed_dict, num_samples, n,
-            loaded_samples.variables, x0_log, num_pca_components,
+            loaded_samples.variables, x0_log, sample_scales, num_pca_components,
             parsed_args["posterior-mean"],
             parsed_args["neural-network"])
 

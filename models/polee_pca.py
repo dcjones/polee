@@ -7,37 +7,75 @@ import sys
 from tensorflow_probability import edward2 as ed
 from polee_approx_likelihood import *
 from polee_training import *
+import polee_regression
+
 
 
 def estimate_transcript_pca(
         init_feed_dict, num_samples, n, vars, x_init,
+        sample_scales,
         num_pca_components,
-        use_posterior_mean=False,
+        use_point_estimates=False,
         use_neural_network=False):
 
-    log_prior, x_bias, w, z, x_scale_softminus, x = \
-        pca_model(
-            num_samples, n, num_pca_components, x_init, np.log(1/n),
-            use_neural_network)
+    Z = tf.Variable(tf.zeros([num_samples, num_pca_components]))
+    Z_prior = tfd.Normal(loc=0.0, scale=1.0)
 
-    # likelihood
-    log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
-    tf.summary.scalar("log_prior", log_prior)
-    tf.summary.scalar("log_likelihood", log_likelihood)
-    log_posterior = log_likelihood + log_prior
+    x_init_mean = np.mean(x_init, axis=0)
+    x_scale_hinges = polee_regression.choose_spline_hinges(np.min(x_init_mean), np.max(x_init_mean))
+
+    if use_point_estimates:
+        make_likelihood = lambda qx: 0.0
+    else:
+        make_likelihood = lambda qx: rnaseq_approx_likelihood_from_vars(vars, qx)
+
+    num_features = x_init.shape[1]
+    print("num_features")
+    print(num_features)
+    x_bias_mu0 = np.log(1/num_features)
+    x_bias_sigma0 = 12.0
 
     sess = tf.Session()
 
-    # Train
-    if use_posterior_mean:
-        train(sess, -log_prior, init_feed_dict, 1000, 5e-2)
-    else:
-        train(
-            sess, -log_posterior, init_feed_dict, 1000, 5e-2,
-            var_list=tf.trainable_variables() + [x, x_scale_softminus])
+    qx_mean, qw_mean, qw_stddev, qx_bias_mean, qx_scale_mean = \
+        polee_regression.linear_regression_inference(
+            init_feed_dict, Z, x_init, make_likelihood, x_bias_mu0, x_bias_sigma0,
+            x_scale_hinges, sample_scales,
+            use_point_estimates, sess, 1000, tf.reduce_sum(Z_prior.log_prob(Z)))
 
-    w_values = None if w is None else sess.run(w)
-    return (sess.run(z), w_values)
+    return sess.run(Z), qw_mean
+
+
+# def estimate_transcript_pca(
+#         init_feed_dict, num_samples, n, vars, x_init,
+#         num_pca_components,
+#         use_posterior_mean=False,
+#         use_neural_network=False):
+
+#     log_prior, x_bias, w, z, x_scale_softminus, x = \
+#         pca_model(
+#             num_samples, n, num_pca_components, x_init, np.log(1/n),
+#             use_neural_network)
+
+#     # likelihood
+#     log_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
+#     tf.summary.scalar("log_prior", log_prior)
+#     tf.summary.scalar("log_likelihood", log_likelihood)
+#     log_posterior = log_likelihood + log_prior
+
+#     sess = tf.Session()
+
+#     # Train
+#     if use_posterior_mean:
+#         train(sess, -log_prior, init_feed_dict, 1000, 5e-2)
+#     else:
+#         train(
+#             sess, -log_posterior, init_feed_dict, 1000, 5e-2,
+#             var_list=tf.trainable_variables() + [x, x_scale_softminus])
+
+#     w_values = None if w is None else sess.run(w)
+#     return (sess.run(z), w_values)
+
 
 
 def estimate_feature_pca(

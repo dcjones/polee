@@ -12,6 +12,7 @@ using Statistics
 using StatsFuns
 using Distributions
 using Printf: @printf
+using LinearAlgebra
 import Random
 
 
@@ -41,6 +42,10 @@ arg_settings.prog = "polee model reduced-rank-regression"
         metavar = "filename"
         help = "Output for factors in latent factor space."
         default = "latent-factors.csv"
+    "--latent-sample-error-output"
+        metavar = "filename"
+        help = "Output sample error values in latent factor space."
+        default = "latent-sample-error.csv"
     "--lower-credible"
         metavar = "L"
         default = 0.025
@@ -99,6 +104,7 @@ function main()
 
     init_python_modules()
     polee_reduced_rank_regression_py = pyimport("polee_reduced_rank_regression")
+    polee_lda = pyimport("polee_lda")
     polee_py = pyimport("polee")
     tf = pyimport("tensorflow")
 
@@ -107,7 +113,9 @@ function main()
 
     spec = YAML.load_file(parsed_args["experiment"])
 
-    if parsed_args["point-estimates"] !== nothing
+    use_point_estimates = parsed_args["point-estimates"] !== nothing
+
+    if use_point_estimates
         loaded_samples = load_point_estimates_from_specification(
             spec, ts, ts_metadata, parsed_args["point-estimates"],
             max_num_samples=parsed_args["max-num-samples"])
@@ -140,11 +148,11 @@ function main()
         loaded_samples, factors, parsed_args["nonredundant"])
 
     # TODO: make this optional behavior
-    for idx in eachindex(factor_matrix)
-        if factor_matrix[idx] == 0
-            factor_matrix[idx] = -1
-        end
-    end
+    #for idx in eachindex(factor_matrix)
+        #if factor_matrix[idx] == 0
+            #factor_matrix[idx] = -1
+        #end
+    #end
 
     k = parsed_args["latent-dimensionality"]
 
@@ -162,7 +170,7 @@ function main()
 
         sess = tf.Session()
 
-        if parsed_args["point-estimates"] === nothing
+        if use_point_estimates
             qx_gene_loc, qx_gene_scale = polee_py.approximate_feature_likelihood(
                 loaded_samples.init_feed_dict,
                 loaded_samples.variables,
@@ -205,22 +213,46 @@ function main()
         tf.reset_default_graph()
         sess.close()
 
-        qx_loc, qw_loc, qw_scale, qv_loc, qx_bias, qx_scale, =
+        qx_loc, qx_err_loc, qw_loc, qw_scale, qv_loc, qx_bias, qx_scale, =
             polee_reduced_rank_regression_py.estimate_feature_linear_regression(
                 loaded_samples.init_feed_dict, qx_gene_loc, qx_gene_scale,
                 x0_log, factor_matrix, k, sample_scales,
-                parsed_args["point-estimates"] !== nothing)
+                use_point_estimates)
 
         qx_mean = mean(qx_loc, dims=1)
 
     elseif feature == "transcript"
-        sample_scales = estimate_sample_scales(x0_log)
+        feature_names = String[t.metadata.name for t in ts]
+        feature_names_label = "transcript_id"
 
-        qx_loc, qw_loc, qw_scale, qv_loc, qx_bias, qx_scale, =
+        sample_scales = estimate_sample_scales(x0_log, upper_quantile=0.9)
+
+        #@show estimate_sample_scales(x0_log, upper_quantile=0.5)
+        #@show estimate_sample_scales(x0_log, upper_quantile=0.6)
+        #@show estimate_sample_scales(x0_log, upper_quantile=0.7)
+        #@show estimate_sample_scales(x0_log, upper_quantile=0.8)
+        #@show estimate_sample_scales(x0_log, upper_quantile=0.9)
+        #@show estimate_sample_scales(x0_log, upper_quantile=0.95)
+
+
+        ##p = sortperm(mean(x0_log, dims=1)[1,:])
+        ##@show feature_names[p][end-10:end]
+        #exit()
+
+        qx_loc, qx_err_loc, qw_loc, qw_scale, qv_loc, qx_bias, qx_scale, =
             polee_reduced_rank_regression_py.estimate_transcript_linear_regression(
                 loaded_samples.init_feed_dict, loaded_samples.variables,
                 x0_log, factor_matrix, k, sample_scales,
-                parsed_args["point-estimates"], niter=6000)
+                use_point_estimates, niter=10000)
+
+            #@show size(pinv(qw_loc))
+            #@show size(qx_err_loc)
+
+            #qx_err_loc = qx_err_loc * pinv(qw_loc)
+
+            #@show qw_loc * pinv(qw_loc)
+
+            #@show size(qx_err_loc)
 
         #open("transcript-mean-vs-sd.csv", "w") do output
             #println(output, "mean,sd")
@@ -229,29 +261,77 @@ function main()
             #end
         #end
 
-        feature_names = String[t.metadata.name for t in ts]
-        feature_names_label = "transcript_id"
+        # # Made up dataset for testing purposes
+        # num_samples = 12
+        # n = 2
+        # sample_scales = ones(Float32, (num_samples, 1))
+        # x0_log = zeros(Float32, (num_samples, n))
+
+        # x0_log[1:div(num_samples, 2),1] .= log(1/10000)
+        # x0_log[1:div(num_samples, 2),2] .= log(1.0)
+
+        # x0_log[div(num_samples, 2)+1:num_samples,1] .= log(1.0)
+        # x0_log[div(num_samples, 2)+1:num_samples,2] .= log(1/10000)
+
+        # sample_names = String[string("sample-", i) for i in 1:num_samples]
+        # feature_names = String[string("transcript-", i) for i in 1:n]
+
+        # factor_matrix = zeros(Float32, (num_samples, 2))
+        # factor_matrix[1:div(num_samples, 2),1] .= 1
+        # factor_matrix[div(num_samples, 2)+1:num_samples,2] .= 1
+
+        # qx_loc, qw_loc, qw_scale, qx_bias_loc, qx_scale_loc,
+        #     qu_scale_loc, qu_loc, qv_loc = polee_lda.estimate_transcript_lda(
+        #         loaded_samples.init_feed_dict, loaded_samples.variables,
+        #         x0_log, factor_matrix, k, sample_scales, use_point_estimates,
+        #         niter=2000)
+
+        # exit()
+
+        write_expression_estimates("transcript-expression.csv", ts, qx_loc)
     end
 
-    
+
     latent_factor_names = String[
         string("latent_dimension_", i) for i in 1:k]
 
-    write_regression_effects(
-        parsed_args["output"],
-        latent_factor_names,
-        feature_names_label,
-        feature_names,
-        qw_loc, qw_scale,
-        parsed_args["lower-credible"],
-        parsed_args["upper-credible"],
-        parsed_args["effect-size"])
+    # TODO: this doesn't work with lda because coefficients there are
+    # in the latent space
+    # write_regression_effects(
+    #     parsed_args["output"],
+    #     latent_factor_names,
+    #     feature_names_label,
+    #     feature_names,
+    #     transpose(qw_loc),
+    #     transpose(qw_scale),
+    #     parsed_args["lower-credible"],
+    #     parsed_args["upper-credible"],
+    #     parsed_args["effect-size"])
 
     write_latent_factor_space(
         parsed_args["latent-factor-output"],
         latent_factor_names,
         factor_names,
         qv_loc)
+
+    write_latent_sample_error(
+        parsed_args["latent-sample-error-output"],
+        latent_factor_names,
+        loaded_samples.sample_names,
+        qx_err_loc)
+
+    # write_latent_factor(
+    #     parsed_args["latent-factor-output"],
+    #     latent_factor_names,
+    #     factor_names,
+    #     qv_loc,
+    #     qu_scale_loc)
+
+    # write_latent_sample(
+    #     parsed_args["latent-sample-error-output"],
+    #     latent_factor_names,
+    #     loaded_samples.sample_names,
+    #     qu_loc)
 end
 
 
@@ -327,7 +407,7 @@ function write_regression_effects(
         qw_loc, qw_scale, q0, q1, effect_size)
 
     @assert size(qw_loc) == size(qw_scale)
-    num_features, num_factors = size(qw_loc)
+    num_factors, num_features = size(qw_loc)
 
     ln2 = log(2f0)
 
@@ -338,7 +418,7 @@ function write_regression_effects(
             effect_size = log(abs(effect_size))
         end
         println(output)
-        for i in 1:num_features, j in 1:num_factors
+        for i in 1:num_factors, j in 1:num_features
             # Using t-distribution for what is actually Normal just to avoid
             # 1.0 probabilities.
             dist = TDist(10.0)
@@ -347,7 +427,7 @@ function write_regression_effects(
 
             @printf(
                 output, "%s,%s,%f,%f,%f",
-                factor_names[j], feature_names[i],
+                factor_names[i], feature_names[j],
                 qw_loc[i,j]/ln2, lc/ln2, uc/ln2)
             if effect_size !== nothing
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
@@ -360,13 +440,60 @@ function write_regression_effects(
     end
 end
 
+function write_latent_factor(
+        # output_filename, latent_factor_names, factor_names, qv_loc, qu_scale)
+        output_filename, latent_factor_names, factor_names, qv_loc)
+    open(output_filename, "w") do output
+        println(output, "latent_factor,factor,v,v_sd")
+        for i in 1:size(qv_loc, 1), j in 1:size(qv_loc, 2)
+            # println(output, latent_factor_names[j], ",", factor_names[i], ",", qv_loc[i, j], ",", qu_scale[i, j])
+            println(output, latent_factor_names[j], ",", factor_names[i], ",", qv_loc[i, j])
+        end
+    end
+end
+
+function write_latent_sample(
+        output_filename, latent_factor_names, sample_names, qu_loc)
+    open(output_filename, "w") do output
+        println(output, "latent_factor,sample,u")
+        for i in 1:size(qu_loc, 1), j in 1:size(qu_loc, 2)
+            println(output, latent_factor_names[j], ",", sample_names[i], ",", qu_loc[i, j])
+        end
+    end
+end
+
 
 function write_latent_factor_space(
         output_filename, latent_factor_names, factor_names, qv_loc)
     open(output_filename, "w") do output
         println(output, "latent_factor,factor,v")
         for i in 1:size(qv_loc, 1), j in 1:size(qv_loc, 2)
-            println(output, latent_factor_names[i], ",", factor_names[j], ",", qv_loc[i, j])
+            println(output, latent_factor_names[j], ",", factor_names[i], ",", qv_loc[i, j])
+        end
+    end
+end
+
+function write_latent_sample_error(
+        output_filename, latent_factor_names, sample_names, qx_err_loc)
+    open(output_filename, "w") do output
+        println(output, "latent_factor,sample,err")
+        for i in 1:size(qx_err_loc, 1), j in 1:size(qx_err_loc, 2)
+            println(output, latent_factor_names[j], ",", sample_names[i], ",", qx_err_loc[i, j])
+        end
+    end
+end
+
+function write_expression_estimates(output_filename, ts, qx_loc)
+    x_tpm = exp.(copy(qx_loc))
+    x_tpm ./= sum(x_tpm, dims=2)
+    x_tpm .*= 1e6
+
+    open(output_filename, "w") do output
+        println(output, "transcript_id,sample,tpm")
+        for (j, t) in enumerate(ts)
+            for i in 1:size(qx_loc, 1)
+                println(output, t.metadata.name, ",", i, ",", x_tpm[i,j])
+            end
         end
     end
 end

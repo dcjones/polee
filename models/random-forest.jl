@@ -32,6 +32,9 @@ arg_settings.prog = "polee model classify"
         help = "RNG seed used to partition data into test and training sets"
         default = 12345
         arg_type = Int
+    "--annotations"
+        help = "Transcript annotation file. If omitted, use h5 file to guess location."
+        default = nothing
     "--ntrees"
         help = "Number of decision trees in the random forest."
         default = 200
@@ -78,8 +81,12 @@ end
 function main()
     parsed_args = parse_args(arg_settings)
 
-    ts, ts_metadata = load_transcripts_from_args(
-        parsed_args, experiment_arg="training-experiment")
+    if parsed_args["annotations"] !== nothing
+        ts, ts_metadata = Polee.Transcripts(parsed_args["annotations"])
+    else
+        ts, ts_metadata = load_transcripts_from_args(
+            parsed_args, experiment_arg="training-experiment")
+    end
     n = length(ts)
     feature_names = String[t.metadata.name for t in ts]
 

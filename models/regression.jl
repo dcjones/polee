@@ -275,6 +275,10 @@ function main()
             polee_regression_py.estimate_transcript_linear_regression(
                 loaded_samples.init_feed_dict, loaded_samples.variables,
                 x0_log, factor_matrix, sample_scales, parsed_args["point-estimates"])
+                # niter=4000)
+
+        feature_names = String[t.metadata.name for t in ts]
+        feature_names_label = "transcript_id"
 
         # dump stuff for debugging
         # open("transcript-mean-vs-sd.csv", "w") do output
@@ -284,8 +288,19 @@ function main()
         #     end
         # end
 
-        feature_names = String[t.metadata.name for t in ts]
-        feature_names_label = "transcript_id"
+        # open("transcript-expression.csv", "w") do output
+        #     println(output, "transcript_id,sample,expression")
+        #     for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
+        #         println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
+        #     end
+        # end
+
+        # open("transcript-expression-naive.csv", "w") do output
+        #     println(output, "transcript_id,sample,expression")
+        #     for j in 1:size(x0_log, 2), i in 1:size(x0_log, 1)
+        #         println(output, feature_names[j], ",", i, ",", x0_log[i,j])
+        #     end
+        # end
     end
 
     write_regression_effects(

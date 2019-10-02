@@ -1,6 +1,6 @@
 
 """
-Simple bayesian linear regression.
+Bayesian linear regression.
 """
 
 import numpy as np
@@ -33,31 +33,25 @@ def SoftplusNormal(loc, scale, name="SoftplusNormal"):
         name=name)
 
 
-"""
-Define model for linear regression.
-    * `num_factors`: Number of factors
-    * `num_features`: Dimensionality
-    * `F`: 0/1 design matrix of shape [num_samples, num_factors]
-"""
-def linear_regression_model(
-        num_factors, num_features, F,
-        x_bias_loc, x_bias_scale, x_scale_hinges, sample_scales):
-
-    num_samples = len(sample_scales)
-
+def linear_regression_x_bias_model(num_features, hinges, x_bias_loc, x_bias_scale):
     x_bias = ed.Normal(
         loc=tf.fill([num_features], np.float32(x_bias_loc)),
         scale=np.float32(x_bias_scale),
         name="x_bias")
 
     hinge_weights = gaussian_kernel(
-        tf.expand_dims(x_bias, 0) - tf.expand_dims(x_scale_hinges, -1),
+        tf.expand_dims(x_bias, 0) - tf.expand_dims(hinges, -1),
         kernel_regression_bandwidth)
     hinge_weights = tf.clip_by_value(hinge_weights, 1e-12, 1.0)
     hinge_weights = hinge_weights / tf.reduce_sum(hinge_weights, axis=0, keepdims=True)
 
-    # w
-    # -
+    return x_bias, hinge_weights
+
+
+"""
+Horseshoe prior for regression coefficients matrix.
+"""
+def linear_regression_w_model(num_features, num_factors):
 
     # Different horseshoe parameterization used in tfp.sts.SparseLinearRegression
     # This works because a standard cauchy is a t distribution with df=1, and
@@ -83,22 +77,15 @@ def linear_regression_model(
         scale=tf.expand_dims(w_global_scale * w_local_scale, -1),
         name="w")
 
-    # x
-    # -
+    return w_global_scale_variance, w_global_scale_noncentered, \
+        w_local_scale_variance, w_local_scale_noncentered, \
+        w
 
-    w_distortion_c = ed.Normal(
-        loc=tf.zeros([num_factors, kernel_regression_degree]),
-        scale=1.0,
-        name="w_distortion_c")
 
-    w_distortion = tf.expand_dims(tf.squeeze(tf.matmul(
-        tf.expand_dims(w_distortion_c, 1),
-        tf.expand_dims(hinge_weights, 0))), -1)
-
-    x_loc = tf.identity(
-        tf.matmul(F, w + w_distortion, transpose_b=True) + x_bias,
-        name="x_loc") # [num_samples, num_features]
-
+"""
+Use (essentially) kernel regression to model the mean variance relationship for x.
+"""
+def linear_regression_x_scale_model(hinge_weights):
     x_scale_concentration_c = ed.HalfCauchy(
         loc=tf.zeros([kernel_regression_degree]), scale=100.0, name="x_scale_concentration_c")
 
@@ -126,7 +113,60 @@ def linear_regression_model(
         rate=rate,
         name="x_scale")
 
+    return x_scale_concentration_c, x_scale_rate_c, x_scale
+
+
+"""
+Define model for linear regression.
+    * `num_factors`: Number of factors
+    * `num_features`: Dimensionality
+    * `F`: 0/1 design matrix of shape [num_samples, num_factors]
+"""
+def linear_regression_model(
+        num_factors, num_features, F,
+        x_bias_loc, x_bias_scale, hinges, sample_scales):
+
+    num_samples = len(sample_scales)
+
+    x_bias, hinge_weights = linear_regression_x_bias_model(
+        num_features, hinges, x_bias_loc, x_bias_scale)
+
+    # w
+    # -
+
+    w_rvs = linear_regression_w_model(num_features, num_factors)
+
+    w_global_scale_variance, w_global_scale_noncentered, \
+        w_local_scale_variance, w_local_scale_noncentered, \
+        w = w_rvs
+
+    # x
+    # -
+
+    w_distortion_c = ed.Normal(
+        loc=tf.zeros([num_factors, kernel_regression_degree]),
+        scale=1.0,
+        name="w_distortion_c")
+
+    # This is weird. Do I really need to squeeze and expand?
+    w_distortion = tf.expand_dims(tf.squeeze(tf.matmul(
+        tf.expand_dims(w_distortion_c, 1),
+        tf.expand_dims(hinge_weights, 0))), -1)
+
+    # w_distortion = tf.transpose(tf.squeeze(tf.matmul(
+    #     tf.expand_dims(w_distortion_c, 1),
+    #     tf.expand_dims(hinge_weights, 0))))
+
+    x_loc = tf.identity(
+        tf.matmul(F, w + w_distortion, transpose_b=True) + x_bias,
+        name="x_loc") # [num_samples, num_features]
+
+    x_scale_rvs = linear_regression_x_scale_model(hinge_weights)
+    x_scale_concentration_c, x_scale_rate_c, x_scale = x_scale_rvs
+
+    # TODO: add a `rubust` option to use StudentT instead of Normal
     x = ed.Normal(
+    # x = ed.StudentT(df=1.0,
         loc=x_loc - sample_scales,
         scale=x_scale,
         name="x")

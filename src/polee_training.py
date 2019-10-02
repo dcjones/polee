@@ -40,13 +40,22 @@ class Progbar:
 
 def train(
         sess, objective, init_feed_dict, n_iter, init_learning_rate,
-        var_list=None, initialized_vars=None, write_logs=False, decay_rate=1.0):
+        var_list=None, initialized_vars=None, write_logs=False,
+        decay_rate=1.0, decay_boundaries=None, decay_values=None):
+
     if var_list is None:
         var_list = tf.trainable_variables()
 
     global_step = tf.Variable(0, trainable=False)
-    learning_rate = tf.train.exponential_decay(
-        init_learning_rate, global_step, 10, decay_rate)
+
+    if decay_boundaries is not None or decay_values is not None:
+        assert decay_boundaries is not None
+        assert decay_values is not None
+        learning_rate = tf.train.piecewise_constant_decay(
+            global_step, decay_boundaries, decay_values)
+    else:
+        learning_rate = tf.train.exponential_decay(
+            init_learning_rate, global_step, 10, decay_rate)
 
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 

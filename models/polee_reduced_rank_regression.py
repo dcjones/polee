@@ -7,433 +7,223 @@ but in one model.
 
 
 import numpy as np
+from functools import partial
 import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 import sys
-from tensorflow_probability import edward2 as ed
+# from tensorflow_probability import edward2 as ed
 from polee_approx_likelihood import *
 from polee_training import *
 
 
 scale_spline_degree = 10
 
+JDCRoot = tfd.JointDistributionCoroutine.Root
+
+def Independent(dist):
+    return tfd.Independent(
+        dist,
+        reinterpreted_batch_ndims=len(dist.batch_shape))
 
 
-"""
-Define model for linear regression.
-    * `num_factors`: Number of factors
-    * `num_features`: Dimensionality
-    * `k`: latent factor dimensionality
-    * `F`: 0/1 design matrix of shape [num_samples, num_factors]
-"""
-def linear_regression_model(
-        num_factors, num_features, F, k,
-        x_bias_loc, x_bias_scale, x_scale_hinges, sample_scales):
-
-    x_bias = ed.Normal(
-        loc=tf.fill([num_features], np.float32(x_bias_loc)),
-        scale=np.float32(x_bias_scale),
-        name="x_bias")
-
-    # w
-    # -
-
-    w_global_scale = ed.HalfCauchy(loc=tf.zeros([k]), scale=1.0, name="w_global_scale")
-    w_local_scale = ed.HalfCauchy(loc=tf.zeros([k, num_features]), scale=1.0, name="w_local_scale")
-
-    # need to transpose this one
-    w = ed.Normal(
-        # df=1.0,
-        loc=tf.zeros([k, num_features]),
-        # scale=w_global_scale * tf.expand_dims(w_local_scale, 0),
-        scale=tf.expand_dims(w_global_scale, -1) * w_local_scale,
-        # scale=tf.expand_dims(w_global_scale, -1),
-        # scale=10.0,
-        name="w")
-
-    v = ed.Normal(
-        loc=tf.zeros([num_factors, k]),
-        scale=10.0,
-        name="v")
-
-    # x_err
-    # -----
-
-    num_samples = int(F.shape[0])
-
-    # TODO: per factor scales?
-    # x_err_scale = ed.HalfCauchy(loc=0.0, scale=0.1, name="x_err_scale")
-    x_err_scale = ed.HalfCauchy(loc=tf.zeros([num_factors, k]), scale=0.1, name="x_err_scale")
-
-    x_err_scale = tf.Print(x_err_scale, [x_err_scale], "x_err_scale", summarize=10)
-
-    # x_err = ed.Normal(
-        # loc=tf.zeros([num_samples, k]),
-        # scale=x_err_scale,
-        # name="x_err")
-
-    x_err = ed.Normal(
-        loc=tf.zeros([num_samples, k]),
-        # scale=x_err_scale,
-        scale=tf.matmul(F, x_err_scale),
-        # scale=1e-1,
-        name="x_err")
-
-    # x
-    # -
-
-    # x_loc = tf.identity(tf.matmul(tf.matmul(F, v) + x_err, w), name="x_loc") + x_bias
+def SoftplusNormal(loc, scale, name="SoftplusNormal"):
+    return tfd.TransformedDistribution(
+        distribution=tfd.Normal(
+            loc=loc,
+            scale=scale),
+        bijector=tfp.bijectors.Softplus(),
+        name=name)
 
 
+def mean_variance_model(mean, hinges, concentration_c, mode_c):
+    # relative distance from hinges for each value in mean
+    diffs = tf.square(tf.expand_dims(mean, 0) - tf.expand_dims(hinges, -1))
+    weights = tf.exp(-diffs) # [scale_spline_degree, num_features]
+    weights = tf.clip_by_value(weights, 1e-12, 1.0)
+    weights = weights / tf.reduce_sum(weights, axis=0, keepdims=True)
 
-    lyr1 = tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu)
-    lyr1_output = lyr1(tf.matmul(F, v) + x_err)
+    concentration = tf.reduce_sum(
+        tf.expand_dims(concentration_c, -1) * weights, axis=0)
 
-    lyr2 = tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu)
-    lyr2_output = lyr2(lyr1_output)
+    mode = tf.reduce_sum(
+        tf.expand_dims(mode_c, -1) * weights, axis=0)
 
-    lyr3 = tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu)
-    lyr3_output = lyr3(lyr2_output)
+    scale = (concentration + 1) * mode
 
-    lyrn = tf.keras.layers.Dense(num_features)
-    x_loc = x_bias + lyrn(lyr3_output)
-
-
-
-    # x_loc = tf.identity(tf.matmul(tf.matmul(F, v), w), name="x_loc") + x_bias
-    # x_loc = tf.identity(tf.matmul(tf.matmul(F, v), w), name="x_loc") + x_bias
-
-    x_scale_hinges_diff = tf.square(tf.expand_dims(x_bias, 0) - tf.expand_dims(x_scale_hinges, -1))
-    x_scale_hinges_weight_x = tf.exp(-x_scale_hinges_diff) # [scale_spline_degree, num_features]
-    x_scale_hinges_weight_x = tf.clip_by_value(x_scale_hinges_weight_x, 1e-12, 1.0)
-    x_scale_hinges_weight_x = x_scale_hinges_weight_x / tf.reduce_sum(x_scale_hinges_weight_x, axis=0, keepdims=True)
-
-    x_scale_concentration_c = ed.HalfCauchy(
-        loc=tf.zeros([scale_spline_degree]), scale=100.0, name="x_scale_concentration_c")
-
-    x_scale_rate_c = ed.HalfCauchy(
-        loc=tf.zeros([scale_spline_degree]), scale=100.0, name="x_scale_rate_c")
-
-    x_scale_concentration_mix = tf.reduce_sum(
-        tf.expand_dims(x_scale_concentration_c, -1) * x_scale_hinges_weight_x, axis=0)
-
-    x_scale_rate_mix = tf.reduce_sum(
-        tf.expand_dims(x_scale_rate_c, -1) * x_scale_hinges_weight_x, axis=0)
-
-    concentration = x_scale_concentration_mix
-
-    # mode parameterization
-    mode = tf.exp(x_scale_rate_mix)
-    rate = 1 / ((concentration + 1) * mode)
-
-    # rate parameterization
-    # rate = x_scale_rate_mix
-
-    x_scale = ed.InverseGamma(
+    return tfd.InverseGamma(
         concentration=concentration,
-        rate=rate,
-        name="x_scale")
-
-    # x = ed.Normal(
-    x = ed.StudentT(
-        df=1.0,
-        loc=x_loc - sample_scales,
-        scale=x_scale,
-        name="x")
-
-    return w_global_scale, w_local_scale, w, v, x_err, x_err_scale, x_bias, x_scale_concentration_c, x_scale_rate_c, x_scale, x
+        scale=scale)
 
 
-"""
-Variational model for linear regression, to be paired with `linear_regression_model`.
-"""
-def linear_regression_variational_model(
-        qw_global_scale_loc_var,
-        qw_local_scale_loc_var, qw_local_scale_scale_var,
-        qw_loc_var, qw_scale_var,
-        qv_loc_var,
-        qx_err_loc_var, qx_err_scale_var,
-        qx_err_scale_loc_var,
-        qx_bias_loc_var, qx_bias_scale_var,
-        qx_scale_concentration_c_loc_var,
-        qx_scale_rate_c_loc_var,
-        qx_scale_loc_var, qx_scale_scale_var,
-        qx_loc_var, qx_scale_var,
-        use_point_estimates):
-
-    qw_global_scale_loc_var = tf.nn.softplus(qw_global_scale_loc_var)
-    # qw_global_scale_loc_var = tf.Print(qw_global_scale_loc_var, [qw_global_scale_loc_var], "qw_global_scale_loc_var")
-    qw_global_scale = ed.Deterministic(
-        # loc=tf.nn.softplus(qw_global_scale_loc_var),
-        loc=qw_global_scale_loc_var,
-        name="qw_global_scale")
-
-    qw_local_scale = ed.LogNormal(
-        loc=qw_local_scale_loc_var,
-        scale=qw_local_scale_scale_var,
-        name="qw_local_scale")
-
-    qw = ed.Normal(
-        loc=qw_loc_var,
-        scale=qw_scale_var,
-        name="qw")
-
-    qv = ed.Deterministic(
-        loc=qv_loc_var,
-        name="qv")
-
-    qx_err = ed.Normal(
-        loc=qx_err_loc_var,
-        scale=qx_err_scale_var,
-        name="qx_err")
-
-    qx_err_scale = ed.Deterministic(
-        loc=tf.nn.softplus(qx_err_scale_loc_var),
-        name="qx_err_scale")
-
-    qx_bias = ed.Normal(
-        loc=qx_bias_loc_var,
-        scale=qx_bias_scale_var,
-        name="qx_bias")
-
-    qx_scale_concentration_c = ed.Deterministic(
-        loc=tf.nn.softplus(qx_scale_concentration_c_loc_var),
-        name="qx_scale_concentration_c")
-
-    qx_scale_rate_c = ed.Deterministic(
-        loc=tf.nn.softplus(qx_scale_rate_c_loc_var),
-        name="qx_scale_rate_c")
-
-    qx_scale = ed.LogNormal(
-        loc=qx_scale_loc_var,
-        scale=qx_scale_scale_var,
-        name="qx_scale")
-
-    if use_point_estimates:
-        qx = ed.Deterministic(loc=qx_loc_var, name="qx")
-    else:
-        qx = ed.Normal(
-            loc=qx_loc_var,
-            scale=qx_scale_var,
-            name="qx")
-
-    return qw_global_scale, qw_local_scale, qw, qv, qx_err, qx_err_scale, qx_bias, \
-        qx_scale_concentration_c, qx_scale_rate_c, qx_scale, qx
-
-
-
-"""
-Set up a linear regression model for variational inference, returning
-"""
-def linear_regression_inference(
-        init_feed_dict, F, k, x_init, make_likelihood,
-        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
-        use_point_estimates, sess, niter=100000, elbo_add_term=0.0):
+def reduced_rank_regression_inference(
+        F, k, x_init, make_likelihood,
+        x_bias_loc0, x_bias_scale0, x_scale_hinges, sample_scales,
+        use_point_estimates, niter=100000):
 
     num_samples = int(F.shape[0])
     num_factors = int(F.shape[1])
     num_features = int(x_init.shape[1])
 
-    log_joint = ed.make_log_joint_fn(
-        lambda: linear_regression_model
-            (num_factors, num_features, F, k, x_bias_mu0, x_bias_sigma0,
-                x_scale_hinges, sample_scales))
+    # decoder network
+    # ---------------
+    decoder = tf.keras.Sequential()
+    decoder.add(tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu))
+    decoder.add(tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu))
+    decoder.add(tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu))
+    decoder.add(tf.keras.layers.Dense(num_features, activation=tf.identity))
 
-    qw_global_scale_loc_var = tf.Variable(tf.fill([k], -2.0), name="qw_global_scale_loc_var")
+    # generative model
+    # ----------------
+    def model_fn():
+        # regression in latent space
+        w = yield JDCRoot(Independent(tfd.Normal(
+            loc=tf.zeros([num_factors, k]),
+            scale=tf.fill([num_factors, k], 10.0))))
 
-    qw_local_scale_loc_var = tf.Variable(
-        tf.zeros([k, num_features]),
-        name="qw_local_scale_loc_var")
-    qw_local_scale_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([k, num_features], -1.0),
-        name="qw_local_scale_loc_var"))
+        z_scale = yield JDCRoot(Independent(tfd.HalfCauchy(
+            loc=tf.zeros([num_factors, k]),
+            scale=1.0)))
 
+        z = yield Independent(tfd.Normal(
+            loc=tf.matmul(F, w),
+            scale=tf.matmul(F, z_scale)))
+
+        x_bias = yield JDCRoot(Independent(tfd.Normal(
+            loc=tf.fill([num_features], np.float32(x_bias_loc0)),
+            scale=np.float32(x_bias_scale0))))
+
+        # decoded log-expression space
+        x_loc = x_bias + decoder(z) - sample_scales
+        # x_loc = x_bias
+
+        x_scale_concentration_c = yield JDCRoot(Independent(tfd.HalfCauchy(
+            loc=tf.zeros([scale_spline_degree]), scale=1.0)))
+
+        x_scale_mode_c = yield JDCRoot(Independent(tfd.HalfCauchy(
+            loc=tf.zeros([scale_spline_degree]), scale=1.0)))
+
+        x_scale = yield Independent(mean_variance_model(
+            x_bias, x_scale_hinges, x_scale_concentration_c, x_scale_mode_c))
+
+        # log expression distribution
+        x = yield Independent(tfd.StudentT(
+            df=1.0,
+            loc=x_loc,
+            scale=x_scale))
+        # tf.print("x: ", x.log_prob(x.sample()))
+
+        if not use_point_estimates:
+            rnaseq_reads = yield Independent(make_likelihood(x))
+
+
+    model = tfd.JointDistributionCoroutine(model_fn)
+
+    # variational model
+    # -----------------
     qw_loc_var = tf.Variable(
-        tf.zeros([k, num_features]),
-        name="qw_loc_var")
-    qw_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([k, num_features], -1.0),
-        name="qw_scale_var"))
+        tf.random.normal([num_factors, k]))
+    qw_softplus_scale_var = tf.Variable(
+        tf.fill([num_factors, k], -1.0))
 
-    qv_loc_var = tf.Variable(
-        tf.random_normal([num_factors, k]),
-        name="qv_loc_var")
+    qz_scale_loc_var = tf.Variable(
+        tf.fill([num_factors, k], 0.0))
+    qz_scale_softplus_scale_var = tf.Variable(
+        tf.fill([num_factors, k], -1.0))
 
-    qx_err_loc_var = tf.Variable(
-        tf.zeros([num_samples, k]),
-        name="qx_err_loc_var")
-    qx_err_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([num_samples, k], -1.0),
-        name="qx_err_scale_var"))
-
-    # qx_err_scale_loc_var = tf.Variable(-2.0, name="qx_err_scale_loc_var")
-    qx_err_scale_loc_var = tf.Variable(tf.fill([num_factors, k], -2.0), name="qx_err_scale_loc_var")
+    qz_loc_var = tf.Variable(
+        tf.matmul(F, qw_loc_var))
+        # tf.random.normal([num_samples, k]))
+    qz_softplus_scale_var = tf.Variable(
+        tf.fill([num_samples, k], -1.0))
 
     qx_bias_loc_var = tf.Variable(
-        tf.reduce_mean(x_init, axis=0),
-        name="qx_bias_loc_var")
-    qx_bias_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([num_features], -1.0),
-        name="qx_bias_scale_var"))
+        tf.reduce_mean(x_init, axis=0))
+    qx_bias_softplus_scale_var = tf.Variable(
+        tf.fill([num_features], -1.0))
 
     qx_scale_concentration_c_loc_var = tf.Variable(
-        tf.fill([scale_spline_degree], 0.0),
-        name="qx_scale_concentration_c_loc_var")
+        tf.zeros([scale_spline_degree]))
 
-    qx_scale_rate_c_loc_var = tf.Variable(
-        tf.fill([scale_spline_degree], 0.0),
-        name="qx_scale_rate_c_loc_var")
+    qx_scale_mode_c_loc_var = tf.Variable(
+        tf.zeros([scale_spline_degree]))
 
     qx_scale_loc_var = tf.Variable(
-        tf.fill([num_features], 0.0),
-        name="qx_scale_loc_var")
-    qx_scale_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([num_features], -1.0),
-        name="qx_scale_scale_var"))
+        tf.fill([num_features], 0.0))
+    qx_scale_softplus_scale_var = tf.Variable(
+        tf.fill([num_features], -1.0))
 
     qx_loc_var = tf.Variable(
         x_init,
-        name="qx_loc_var",
         trainable=not use_point_estimates)
-
-    qx_scale_var = tf.nn.softplus(tf.Variable(
-        tf.fill([num_samples, num_features], 0.0),
-        name="qx_scale_var"))
-
-    qw_global_scale, qw_local_scale, qw, qv, qx_err, qx_err_scale, qx_bias, \
-        qx_scale_concentration_c, qx_scale_rate_c, qx_scale, qx = \
-        linear_regression_variational_model(
-            qw_global_scale_loc_var,
-            qw_local_scale_loc_var, qw_local_scale_scale_var,
-            qw_loc_var, qw_scale_var,
-            qv_loc_var,
-            qx_err_loc_var, qx_err_scale_var,
-            qx_err_scale_loc_var,
-            qx_bias_loc_var, qx_bias_scale_var,
-            qx_scale_concentration_c_loc_var,
-            qx_scale_rate_c_loc_var,
-            qx_scale_loc_var, qx_scale_scale_var,
-            qx_loc_var, qx_scale_var,
-            use_point_estimates)
-
-    log_prior = log_joint(
-        w_global_scale=qw_global_scale,
-        w_local_scale=qw_local_scale,
-        w=qw,
-        v=qv,
-        x_err=qx_err,
-        x_err_scale=qx_err_scale,
-        x_bias=qx_bias,
-        x_scale_concentration_c=qx_scale_concentration_c,
-        x_scale_rate_c=qx_scale_rate_c,
-        x_scale=qx_scale,
-        x=qx)
-
-    variational_log_joint = ed.make_log_joint_fn(
-        lambda: linear_regression_variational_model(
-            qw_global_scale_loc_var,
-            qw_local_scale_loc_var, qw_local_scale_scale_var,
-            qw_loc_var, qw_scale_var,
-            qv_loc_var,
-            qx_err_loc_var, qx_err_scale_var,
-            qx_err_scale_loc_var,
-            qx_bias_loc_var, qx_bias_scale_var,
-            qx_scale_concentration_c_loc_var,
-            qx_scale_rate_c_loc_var,
-            qx_scale_loc_var, qx_scale_scale_var,
-            qx_loc_var, qx_scale_var,
-            use_point_estimates))
-
-    entropy = variational_log_joint(
-        qw_global_scale=qw_global_scale,
-        qw_local_scale=qw_local_scale,
-        qw=qw,
-        qv=qv,
-        qx_err=qx_err,
-        qx_err_scale=qx_err_scale,
-        qx_bias=qx_bias,
-        qx_scale=qx_scale,
-        qx_scale_concentration_c=qx_scale_concentration_c,
-        qx_scale_rate_c=qx_scale_rate_c,
-        qx=qx)
-
-    log_likelihood = make_likelihood(qx)
-
-    elbo = log_prior + log_likelihood - entropy + elbo_add_term
-    elbo = tf.check_numerics(elbo, "Non-finite ELBO value")
-
-    if sess is None:
-        sess = tf.Session()
-
-    # train(sess, -elbo, init_feed_dict, niter, 1e-2, decay_rate=.993)
-    train(sess, -elbo, init_feed_dict, niter, 1e-3)
+    qx_softplus_scale_var = tf.Variable(
+        tf.fill([num_samples, num_features], 0.0))
 
 
-    qx_mean, qx_err_mean, qw_mean, qw_stddev, qv_mean, qx_bias_mean, qx_scale_mean = sess.run([
-        qx.distribution.mean(),
-        tf.matmul(F, qv.distribution.mean()) + qx_err.distribution.mean(),
-        qw.distribution.mean(),
-        qw.distribution.stddev(),
-        qv.distribution.mean(),
-        qx_bias.distribution.mean(),
-        qx_scale.distribution.mean() ])
+    def variational_model_fn():
+        qw = yield JDCRoot(Independent(tfd.Normal(
+            loc=qw_loc_var,
+            scale=tf.nn.softplus(qw_softplus_scale_var))))
 
-    # project samples onto latent space
+        qz_scale = yield JDCRoot(Independent(SoftplusNormal(
+            loc=qz_scale_loc_var,
+            scale=tf.nn.softplus(qz_scale_softplus_scale_var))))
 
-    # x_loc_est = tf.matmul(tf.matmul(F, qv.distribution.mean()),
-            # qw.distribution.mean()) + qx_bias.distribution.mean()
+        # qz = yield JDCRoot(Independent(tfd.Normal(
+        #     loc=qz_loc_var,
+        #     scale=tf.nn.softplus(qz_softplus_scale_var))))
+        qz = yield JDCRoot(Independent(tfd.Deterministic(
+            loc=qz_loc_var)))
 
-    # x_err_est = sess.run(qx.distribution.mean() - x_loc_est)
-    x_err_est = sess.run(qx.distribution.mean() - qx_bias.distribution.mean())
+        qx_bias = yield JDCRoot(Independent(tfd.Normal(
+            loc=qx_bias_loc_var,
+            scale=tf.nn.softplus(qx_bias_softplus_scale_var))))
 
-    Fv_est = sess.run(tf.matmul(F, qv.distribution.mean()))
+        qx_scale_concentration_c = yield JDCRoot(Independent(tfd.Deterministic(
+            loc=tf.nn.softplus(qx_scale_concentration_c_loc_var))))
 
-    tf.reset_default_graph()
-    sess.close()
-    sess = tf.Session()
+        qx_scale_mode_c = yield JDCRoot(Independent(tfd.Deterministic(
+            loc=tf.nn.softplus(qx_scale_mode_c_loc_var))))
 
-    # print("x_loc_est")
-    # print(x_loc_est)
+        qx_scale = yield JDCRoot(Independent(SoftplusNormal(
+            loc=qx_scale_loc_var,
+            scale=tf.nn.softplus(qx_scale_softplus_scale_var))))
 
-    print("x_err_est")
-    print(x_err_est)
+        if use_point_estimates:
+            qx = yield JDCRoot(Independent(tfd.Deterministic(
+                loc=qx_loc_var)))
+        else:
+            qx = yield JDCRoot(Independent(tfd.Normal(
+                loc=qx_loc_var,
+                scale=tf.nn.softplus(qx_softplus_scale_var))))
 
-    print("qv_mean")
-    print(qv_mean)
+            qrnaseq_reads = yield JDCRoot(tfd.Deterministic(()))
 
-    # x_projection = tf.Variable(tf.zeros([num_samples, k]))
+    variational_model = tfd.JointDistributionCoroutine(variational_model_fn)
 
-    # objective = tf.reduce_sum(tf.square(
-    #     x_err_est - tf.matmul(x_projection, qw_mean)))
+    # inference
+    # ---------
 
-    # train(sess, objective, {}, 1000, 1e-2)
+    step_num = tf.Variable(1, trainable=False)
 
-    # print("x_projection")
-    # print(sess.run(x_projection))
+    @tf.function
+    def trace_fn(loss, grad, vars):
+        if tf.math.mod(step_num, 200) == 0:
+            tf.print("[", step_num, "/", niter, "]  loss: ", loss, sep='')
+        step_num.assign(step_num + 1)
+        return loss
 
-    # # x_projection_est = sess.run(Fv_est + x_projection)
-    # x_projection_est = sess.run(x_projection)
-
+    trace = tfp.vi.fit_surrogate_posterior(
+        target_log_prob_fn=lambda *args: model.log_prob(args),
+        surrogate_posterior=variational_model,
+        optimizer=tf.optimizers.Adam(learning_rate=1e-3),
+        sample_size=1,
+        num_steps=niter,
+        trace_fn=trace_fn)
 
     return (
-        qx_mean,
-        qx_err_mean,
-        # x_projection_est,
-        qw_mean,
-        qw_stddev,
-        qv_mean,
-        qx_bias_mean,
-        qx_scale_mean )
-
-    # return sess.run([
-        # qx.distribution.mean(),
-        # x_projection,
-        # qw.distribution.mean(),
-        # qw.distribution.stddev(),
-        # qv.distribution.mean(),
-        # qx_bias.distribution.mean(),
-        # qx_scale.distribution.mean() ])
+        qw_loc_var.numpy(),
+        qz_loc_var.numpy() )
 
 
 def choose_spline_hinges(low, high):
@@ -447,29 +237,29 @@ def choose_spline_hinges(low, high):
 """
 Run variational inference on transcript expression linear regression.
 """
-def estimate_transcript_linear_regression(
+def estimate_reduced_rank_regression(
         init_feed_dict, vars, x_init, F_arr, k,
         sample_scales, use_point_estimates, sess=None, niter=30000):
-
-    print(F_arr)
 
     F = tf.constant(F_arr, dtype=tf.float32)
     num_features = x_init.shape[1]
 
     x_init_mean = np.mean(x_init, axis=0)
-    x_scale_hinges = choose_spline_hinges(np.min(x_init_mean), np.max(x_init_mean))
+    x_scale_hinges = tf.constant(
+        choose_spline_hinges(np.min(x_init_mean), np.max(x_init_mean)),
+        dtype=tf.float32)
 
     x_bias_mu0 = np.log(1/num_features)
     x_bias_sigma0 = 12.0
 
     if use_point_estimates:
-        make_likelihood = lambda qx: 0.0
+        make_likelihood = None
     else:
         make_likelihood = lambda qx: rnaseq_approx_likelihood_from_vars(vars, qx)
 
-    return linear_regression_inference(
-        init_feed_dict, F, k, x_init, make_likelihood,
+    return reduced_rank_regression_inference(
+        F, k, x_init, make_likelihood,
         x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
-        use_point_estimates, sess, niter)
+        use_point_estimates, niter)
 
 

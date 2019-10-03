@@ -104,7 +104,7 @@ function main()
 
     init_python_modules()
     polee_reduced_rank_regression_py = pyimport("polee_reduced_rank_regression")
-    polee_lda = pyimport("polee_lda")
+    # polee_lda = pyimport("polee_lda")
     polee_py = pyimport("polee")
     tf = pyimport("tensorflow")
 
@@ -227,111 +227,30 @@ function main()
 
         sample_scales = estimate_sample_scales(x0_log, upper_quantile=0.9)
 
-        #@show estimate_sample_scales(x0_log, upper_quantile=0.5)
-        #@show estimate_sample_scales(x0_log, upper_quantile=0.6)
-        #@show estimate_sample_scales(x0_log, upper_quantile=0.7)
-        #@show estimate_sample_scales(x0_log, upper_quantile=0.8)
-        #@show estimate_sample_scales(x0_log, upper_quantile=0.9)
-        #@show estimate_sample_scales(x0_log, upper_quantile=0.95)
-
-
-        ##p = sortperm(mean(x0_log, dims=1)[1,:])
-        ##@show feature_names[p][end-10:end]
-        #exit()
-
-        qx_loc, qx_err_loc, qw_loc, qw_scale, qv_loc, qx_bias, qx_scale, =
-            polee_reduced_rank_regression_py.estimate_transcript_linear_regression(
+        w, z =
+            polee_reduced_rank_regression_py.estimate_reduced_rank_regression(
                 loaded_samples.init_feed_dict, loaded_samples.variables,
                 x0_log, factor_matrix, k, sample_scales,
                 use_point_estimates, niter=10000)
 
-            #@show size(pinv(qw_loc))
-            #@show size(qx_err_loc)
-
-            #qx_err_loc = qx_err_loc * pinv(qw_loc)
-
-            #@show qw_loc * pinv(qw_loc)
-
-            #@show size(qx_err_loc)
-
-        #open("transcript-mean-vs-sd.csv", "w") do output
-            #println(output, "mean,sd")
-            #for i in 1:size(qx_bias, 1)
-                #println(output, qx_bias[i], ",", qx_scale[i])
-            #end
-        #end
-
-        # # Made up dataset for testing purposes
-        # num_samples = 12
-        # n = 2
-        # sample_scales = ones(Float32, (num_samples, 1))
-        # x0_log = zeros(Float32, (num_samples, n))
-
-        # x0_log[1:div(num_samples, 2),1] .= log(1/10000)
-        # x0_log[1:div(num_samples, 2),2] .= log(1.0)
-
-        # x0_log[div(num_samples, 2)+1:num_samples,1] .= log(1.0)
-        # x0_log[div(num_samples, 2)+1:num_samples,2] .= log(1/10000)
-
-        # sample_names = String[string("sample-", i) for i in 1:num_samples]
-        # feature_names = String[string("transcript-", i) for i in 1:n]
-
-        # factor_matrix = zeros(Float32, (num_samples, 2))
-        # factor_matrix[1:div(num_samples, 2),1] .= 1
-        # factor_matrix[div(num_samples, 2)+1:num_samples,2] .= 1
-
-        # qx_loc, qw_loc, qw_scale, qx_bias_loc, qx_scale_loc,
-        #     qu_scale_loc, qu_loc, qv_loc = polee_lda.estimate_transcript_lda(
-        #         loaded_samples.init_feed_dict, loaded_samples.variables,
-        #         x0_log, factor_matrix, k, sample_scales, use_point_estimates,
-        #         niter=2000)
-
-        # exit()
-
-        write_expression_estimates("transcript-expression.csv", ts, qx_loc)
+        # write_expression_estimates("transcript-expression.csv", ts, qx_loc)
     end
-
 
     latent_factor_names = String[
         string("latent_dimension_", i) for i in 1:k]
 
-    # TODO: this doesn't work with lda because coefficients there are
-    # in the latent space
-    # write_regression_effects(
-    #     parsed_args["output"],
-    #     latent_factor_names,
-    #     feature_names_label,
-    #     feature_names,
-    #     transpose(qw_loc),
-    #     transpose(qw_scale),
-    #     parsed_args["lower-credible"],
-    #     parsed_args["upper-credible"],
-    #     parsed_args["effect-size"])
-
+    # TODO: maybe rename these?
     write_latent_factor_space(
         parsed_args["latent-factor-output"],
         latent_factor_names,
         factor_names,
-        qv_loc)
+        w)
 
     write_latent_sample_error(
         parsed_args["latent-sample-error-output"],
         latent_factor_names,
         loaded_samples.sample_names,
-        qx_err_loc)
-
-    # write_latent_factor(
-    #     parsed_args["latent-factor-output"],
-    #     latent_factor_names,
-    #     factor_names,
-    #     qv_loc,
-    #     qu_scale_loc)
-
-    # write_latent_sample(
-    #     parsed_args["latent-sample-error-output"],
-    #     latent_factor_names,
-    #     loaded_samples.sample_names,
-    #     qu_loc)
+        z)
 end
 
 

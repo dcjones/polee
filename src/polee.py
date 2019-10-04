@@ -3,9 +3,8 @@ import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework import ops
-from tensorflow.contrib import distributions
-from tensorflow.contrib import framework
 import tensorflow_probability as tfp
+import tensorflow_probability.python.distributions as tfd
 from tensorflow_probability import edward2 as ed
 
 # models
@@ -22,7 +21,7 @@ from polee_transcript_vae_mixture import *
 An improper prior that just returns a log-probability of 0. (I.e. it's not an
 actualy distribution)
 """
-class ImproperPriorDist(distributions.Distribution):
+class ImproperPriorDist(tfd.Distribution):
     def __init__(self, name="ImproperPrior"):
         parameters = locals()
 
@@ -30,7 +29,7 @@ class ImproperPriorDist(distributions.Distribution):
             dtype=tf.float32,
             validate_args=False,
             allow_nan_stats=False,
-            reparameterization_type=tf.contrib.distributions.FULLY_REPARAMETERIZED,
+            reparameterization_type=tfd.FULLY_REPARAMETERIZED,
             parameters=[],
             graph_parents=[])
 
@@ -53,7 +52,7 @@ class ImproperPrior(ed.RandomVariable, ImproperPriorDist):
 A general-purpose hack for incorporating an approximated likelihood function.
 This is used particularly for approximated splicing likelihoods.
 """
-class ApproximatedLikelihoodDist(distributions.Distribution):
+class ApproximatedLikelihoodDist(tfd.Distribution):
     def __init__(self, dist, x, name="ApproximatedLikelihood"):
         parameters = locals()
         self._dist = dist
@@ -63,7 +62,7 @@ class ApproximatedLikelihoodDist(distributions.Distribution):
             dtype=tf.float32,
             validate_args=False,
             allow_nan_stats=False,
-            reparameterization_type=tf.contrib.distributions.FULLY_REPARAMETERIZED,
+            reparameterization_type=tfd.FULLY_REPARAMETERIZED,
             parameters=[],
             graph_parents=[])
 

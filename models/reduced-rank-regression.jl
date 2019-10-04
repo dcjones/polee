@@ -231,7 +231,7 @@ function main()
             polee_reduced_rank_regression_py.estimate_reduced_rank_regression(
                 loaded_samples.init_feed_dict, loaded_samples.variables,
                 x0_log, factor_matrix, k, sample_scales,
-                use_point_estimates, niter=10000)
+                use_point_estimates, niter=20000)
 
         # write_expression_estimates("transcript-expression.csv", ts, qx_loc)
     end

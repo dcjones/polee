@@ -68,9 +68,9 @@ def reduced_rank_regression_inference(
     # decoder network
     # ---------------
     decoder = tf.keras.Sequential()
-    decoder.add(tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu))
-    decoder.add(tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu))
-    decoder.add(tf.keras.layers.Dense(256, activation=tf.nn.leaky_relu))
+    decoder.add(tf.keras.layers.Dense(20, activation=tf.nn.leaky_relu))
+    decoder.add(tf.keras.layers.Dense(20, activation=tf.nn.leaky_relu))
+    decoder.add(tf.keras.layers.Dense(20, activation=tf.nn.leaky_relu))
     decoder.add(tf.keras.layers.Dense(num_features, activation=tf.identity))
 
     # generative model
@@ -95,7 +95,6 @@ def reduced_rank_regression_inference(
 
         # decoded log-expression space
         x_loc = x_bias + decoder(z) - sample_scales
-        # x_loc = x_bias
 
         x_scale_concentration_c = yield JDCRoot(Independent(tfd.HalfCauchy(
             loc=tf.zeros([scale_spline_degree]), scale=1.0)))
@@ -111,10 +110,9 @@ def reduced_rank_regression_inference(
             df=1.0,
             loc=x_loc,
             scale=x_scale))
-        # tf.print("x: ", x.log_prob(x.sample()))
 
         if not use_point_estimates:
-            rnaseq_reads = yield Independent(make_likelihood(x))
+            rnaseq_reads = yield tfd.Independent(make_likelihood(x))
 
 
     model = tfd.JointDistributionCoroutine(model_fn)
@@ -196,8 +194,7 @@ def reduced_rank_regression_inference(
             qx = yield JDCRoot(Independent(tfd.Normal(
                 loc=qx_loc_var,
                 scale=tf.nn.softplus(qx_softplus_scale_var))))
-
-            qrnaseq_reads = yield JDCRoot(tfd.Deterministic(()))
+            qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
 
     variational_model = tfd.JointDistributionCoroutine(variational_model_fn)
 

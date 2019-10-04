@@ -275,7 +275,6 @@ function main()
             polee_regression_py.estimate_transcript_linear_regression(
                 loaded_samples.init_feed_dict, loaded_samples.variables,
                 x0_log, factor_matrix, sample_scales, parsed_args["point-estimates"])
-                # niter=4000)
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"

@@ -412,8 +412,9 @@ function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing)
         end
 
         # sz = (nothing, size(val)[2:end]...)
-        var_init = tf.placeholder(typ, shape=sz, name=string(name, "-placeholder"))
-        ls.init_feed_dict[var_init] = val
+
+        # var_init = tf.placeholder(typ, shape=sz, name=string(name, "-placeholder"))
+        # ls.init_feed_dict[var_init] = val
 
         # if we are batching, no point in initializing variables
         # the variables only exsit so we can initialize once without
@@ -421,7 +422,7 @@ function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing)
         # if batch_size !== nothing
         #     ls.variables[name] = var_init
         # else
-            var = tf.Variable(var_init, name=name, trainable=false)
+            var = tf.Variable(val, name=name, trainable=false)
             ls.variables[name] = var
         # end
     end

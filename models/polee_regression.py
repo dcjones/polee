@@ -63,6 +63,8 @@ def linear_regression_w_model(num_features, num_factors):
         scale=1.0, name="w_global_scale_noncentered")
     w_global_scale = w_global_scale_noncentered * tf.sqrt(w_global_scale_variance)
 
+    # TODO: this should really be [num_features, num_factors]
+    # No reason one feature should have the same variance across factors.
     w_local_scale_variance = ed.InverseGamma(
         concentration=tf.fill([num_features], 0.5),
         scale=tf.fill([num_features], 0.5),

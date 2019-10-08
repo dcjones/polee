@@ -43,7 +43,7 @@ def kernel_regression_weights(bandwidth, mean, hinges):
     # [num_monte_carlo_samples, num_hinges, num_features]
     diffs = tf.expand_dims(mean, -2) - tf.expand_dims(hinges, -1)
     weights = gaussian_kernel(diffs, bandwidth)
-    weights = tf.clip_by_value(weights, 1e-12, 1.0)
+    weights = tf.clip_by_value(weights, 1e-10, 1.0)
     weights = weights / tf.reduce_sum(weights, axis=-2, keepdims=True)
     return weights
 
@@ -55,10 +55,10 @@ def mean_variance_model(
         weights, concentration_c, mode_c):
 
     concentration = tf.reduce_sum(
-        tf.expand_dims(concentration_c, -1) * weights, axis=0)
+        tf.expand_dims(concentration_c, -1) * weights, axis=-2)
 
     mode = tf.reduce_sum(
-        tf.expand_dims(mode_c, -1) * weights, axis=0)
+        tf.expand_dims(mode_c, -1) * weights, axis=-2)
 
     # Old nonsensical version
     # scale = 1 / (tf.math.exp(mode) * (concentration + 1))

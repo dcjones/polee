@@ -27,13 +27,6 @@ def linear_regression_inference(
     # ----------------
 
     def model_fn():
-
-        # argmax
-        # idx = 174826
-
-        # argmin
-        idx = 97748
-
         # Horseshoe prior on coefficients
         # Weird parameterization is from tfp.sts.SparseLinearRegression This
         # works because a standard cauchy is a t distribution with df=1, and a
@@ -56,20 +49,12 @@ def linear_regression_inference(
             loc=tf.zeros([num_factors, num_features]),
             scale=w_global_scale * w_local_scale))
 
-        tf.print("w values", w[0,:,idx])
-
         x_bias = yield JDCRoot(Independent(tfd.Normal(
             loc=tf.fill([num_features], np.float32(x_bias_loc0)),
             scale=np.float32(x_bias_scale0))))
 
-        tf.print("x_bias span", tf.reduce_min(x_bias), tf.reduce_max(x_bias))
-        tf.print("x_bias span indexes", tf.math.argmin(x_bias, 1), tf.math.argmax(x_bias, 1))
-        tf.print("x_bias values", x_bias[0,idx])
-
         weights = kernel_regression_weights(
             kernel_regression_bandwidth, x_bias, x_scale_hinges)
-
-        tf.print("weights values", weights[0,:,idx])
 
         # Kernel regression correction.
         # This can be thought of as encoding the prior that similarly expression
@@ -91,8 +76,6 @@ def linear_regression_inference(
         # the actual regression part
         x_loc = tf.matmul(F, w + w_distortion) + x_bias
 
-        tf.print("x_loc values", x_loc[0,0,:,idx])
-
         # Kernel regression mean-variance model
         # Biological variance is InverseGamma distributed with the mode
         # determined by kernel regression against the mean expression.
@@ -103,22 +86,16 @@ def linear_regression_inference(
         x_scale_mode_c = yield JDCRoot(Independent(tfd.HalfCauchy(
             loc=tf.zeros([kernel_regression_degree]), scale=1.0)))
 
-        # x_scale = yield Independent(mean_variance_model(
-            # weights, x_scale_concentration_c, x_scale_mode_c))
+        x_scale = yield Independent(mean_variance_model(
+            weights, x_scale_concentration_c, x_scale_mode_c))
 
-        x_scale = yield Independent(tfd.InverseGamma(
-            tf.fill([num_features], 0.1), 0.1))
-
-        tf.print("x_scale values", x_scale[0,idx])
+        # x_scale = yield Independent(tfd.InverseGamma(
+        #     tf.fill([num_features], 0.1), 0.1))
 
         x = yield Independent(tfd.Normal(
             loc=x_loc - sample_scales,
-            # scale=0.2))
             scale=x_scale))
 
-        tf.print("x values", x[0,:,idx])
-
-        # tf.print("x span", tf.reduce_min(x), tf.reduce_max(x))
         # tf.print("x scale", tf.reduce_sum(tf.math.exp(x), axis=-1))
 
         if not use_point_estimates:

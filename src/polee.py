@@ -4,79 +4,78 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework import ops
 import tensorflow_probability as tfp
-import tensorflow_probability.python.distributions as tfd
-from tensorflow_probability import edward2 as ed
+from tensorflow_probability import distributions as tfd
 
-# models
-from polee_transcript_expression import *
 from polee_gene_expression import *
 from polee_splicing import *
-from polee_dropout import *
-from polee_transcript_mixture import *
-from polee_transcript_vae_mixture import *
 
+
+# Handly alias
+JDCRoot = tfd.JointDistributionCoroutine.Root
+
+"""
+Independent distribution that reinterprets all batch dimensions.
+"""
+def Independent(dist):
+    return tfd.Independent(
+        dist,
+        reinterpreted_batch_ndims=len(dist.batch_shape))
 
 
 """
-An improper prior that just returns a log-probability of 0. (I.e. it's not an
-actualy distribution)
+Useful for variational approximations. A bit more numerically stable than
+LogNormal approximations.
 """
-class ImproperPriorDist(tfd.Distribution):
-    def __init__(self, name="ImproperPrior"):
-        parameters = locals()
-
-        super(ImproperPriorDist, self).__init__(
-            dtype=tf.float32,
-            validate_args=False,
-            allow_nan_stats=False,
-            reparameterization_type=tfd.FULLY_REPARAMETERIZED,
-            parameters=[],
-            graph_parents=[])
-
-    def _get_event_shape(self):
-        return tf.TensorShape([self._value.get_shape()[-1]])
-
-    def _get_batch_shape(self):
-        return self._value.get_shape()[:-1]
-
-    def _log_prob(self, _):
-        return tf.zeros([int(self._get_batch_shape()[0])])
+def SoftplusNormal(loc, scale, name="SoftplusNormal"):
+    return tfd.TransformedDistribution(
+        distribution=tfd.Normal(
+            loc=loc,
+            scale=scale),
+        bijector=tfp.bijectors.Softplus(),
+        name=name)
 
 
-class ImproperPrior(ed.RandomVariable, ImproperPriorDist):
-    def __init__(self, *args, **kwargs):
-        super(ImproperPrior, self).__init__(*args, **kwargs)
+def gaussian_kernel(u, bandwidth):
+    return tf.exp(-tf.square(u/bandwidth))
+
+
+def kernel_regression_weights(bandwidth, mean, hinges):
+    # [num_monte_carlo_samples, num_hinges, num_features]
+    diffs = tf.expand_dims(mean, -2) - tf.expand_dims(hinges, -1)
+    weights = gaussian_kernel(diffs, bandwidth)
+    weights = tf.clip_by_value(weights, 1e-12, 1.0)
+    weights = weights / tf.reduce_sum(weights, axis=-2, keepdims=True)
+    return weights
 
 
 """
-A general-purpose hack for incorporating an approximated likelihood function.
-This is used particularly for approximated splicing likelihoods.
+Modeling mean-variance relationship using kernel regression.
 """
-class ApproximatedLikelihoodDist(tfd.Distribution):
-    def __init__(self, dist, x, name="ApproximatedLikelihood"):
-        parameters = locals()
-        self._dist = dist
-        self._x = x
+def mean_variance_model(
+        weights, concentration_c, mode_c):
 
-        super(ApproximatedLikelihoodDist, self).__init__(
-            dtype=tf.float32,
-            validate_args=False,
-            allow_nan_stats=False,
-            reparameterization_type=tfd.FULLY_REPARAMETERIZED,
-            parameters=[],
-            graph_parents=[])
+    concentration = tf.reduce_sum(
+        tf.expand_dims(concentration_c, -1) * weights, axis=0)
 
-    def _get_event_shape(self):
-        return tf.TensorShape([0])
+    mode = tf.reduce_sum(
+        tf.expand_dims(mode_c, -1) * weights, axis=0)
 
-    def _get_batch_shape(self):
-        return self._x.get_shape()[:-1]
+    # Old nonsensical version
+    # scale = 1 / (tf.math.exp(mode) * (concentration + 1))
 
-    def _log_prob(self, _):
-        return self._dist._log_prob(self._x)
+    scale = (concentration + 1) * mode
+
+    return tfd.InverseGamma(
+        concentration=concentration,
+        scale=scale)
 
 
-class ApproximatedLikelihood(ed.RandomVariable, ApproximatedLikelihoodDist):
-    def __init__(self, dist, x, *args, **kwargs):
-        kwargs["value"] = tf.zeros([x.get_shape()[0], 0])
-        super(ApproximatedLikelihood, self).__init__(dist, x, *args, **kwargs)
+"""
+Choose evenly spaced knots for kernel regression.
+"""
+def choose_knots(low, high, kernel_regression_degree):
+    x_scale_hinges = []
+    d = (high - low) / (kernel_regression_degree+1)
+    for i in range(kernel_regression_degree):
+        x_scale_hinges.append(low + (i+1)*d)
+    return x_scale_hinges

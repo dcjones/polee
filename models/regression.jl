@@ -156,31 +156,25 @@ function main()
         feature_names = gene_ids
         feature_names_label = "gene_id"
 
-        sess = tf.Session()
-
         if parsed_args["point-estimates"] === nothing
             qx_gene_loc, qx_gene_scale = polee_py.approximate_feature_likelihood(
                 loaded_samples.init_feed_dict,
                 loaded_samples.variables,
                 num_samples, num_features, n,
-                gene_idxs .- 1, transcript_idxs .- 1,
-                sess)
+                gene_idxs .- 1, transcript_idxs .- 1)
         else
-            qx_gene_loc = log.(sess.run(polee_py.transcript_expression_to_feature_expression(
+            qx_gene_loc = log.(polee_py.transcript_expression_to_feature_expression(
                 num_features, n, gene_idxs .- 1, transcript_idxs .- 1,
-                loaded_samples.x0_values)))
+                loaded_samples.x0_values).numpy())
             qx_gene_scale = similar(qx_gene_loc)
             fill!(qx_gene_scale, 0.0)
         end
 
         sample_scales = estimate_sample_scales(qx_gene_loc)
 
-        tf.reset_default_graph()
-        sess.close()
-
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
             polee_regression_py.estimate_feature_linear_regression(
-                loaded_samples.init_feed_dict, qx_gene_loc, qx_gene_scale,
+                qx_gene_loc, qx_gene_scale,
                 gene_sizes, x0_log, factor_matrix, sample_scales,
                 parsed_args["point-estimates"] !== nothing)
 
@@ -271,21 +265,23 @@ function main()
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)
 
+        @show extrema(x0_log)
+
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
             polee_regression_py.estimate_transcript_linear_regression(
-                loaded_samples.init_feed_dict, loaded_samples.variables,
-                x0_log, factor_matrix, sample_scales, parsed_args["point-estimates"])
+                loaded_samples.variables,
+                x0_log, factor_matrix, sample_scales, parsed_args["point-estimates"] !== nothing)
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"
 
         # dump stuff for debugging
-        # open("transcript-mean-vs-sd.csv", "w") do output
-        #     println(output, "mean,sd")
-        #     for i in 1:size(qx_bias, 1)
-        #         println(output, qx_bias[i], ",", qx_scale[i])
-        #     end
-        # end
+        open("transcript-mean-vs-sd.csv", "w") do output
+            println(output, "mean,sd")
+            for i in 1:size(qx_bias, 1)
+                println(output, qx_bias[i], ",", qx_scale[i])
+            end
+        end
 
         # open("transcript-expression.csv", "w") do output
         #     println(output, "transcript_id,sample,expression")
@@ -386,7 +382,7 @@ function write_regression_effects(
         qw_loc, qw_scale, q0, q1, effect_size)
 
     @assert size(qw_loc) == size(qw_scale)
-    num_features, num_factors = size(qw_loc)
+    num_factors, num_features = size(qw_loc)
 
     ln2 = log(2f0)
 
@@ -397,7 +393,8 @@ function write_regression_effects(
             effect_size = log(abs(effect_size))
         end
         println(output)
-        for i in 1:num_features, j in 1:num_factors
+        for i in 1:num_factors, j in 1:num_features
+
             # Using t-distribution for what is actually Normal just to avoid
             # 1.0 probabilities.
             dist = TDist(10.0)
@@ -407,7 +404,7 @@ function write_regression_effects(
 
             @printf(
                 output, "%s,%s,%f,%f,%f",
-                factor_names[j], feature_names[i],
+                factor_names[i], feature_names[j],
                 qw_loc[i,j]/ln2, lc/ln2, uc/ln2)
             if effect_size !== nothing
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])

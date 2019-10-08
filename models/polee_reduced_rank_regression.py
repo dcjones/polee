@@ -7,59 +7,20 @@ but in one model.
 
 
 import numpy as np
-from functools import partial
 import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 import sys
-# from tensorflow_probability import edward2 as ed
 from polee_approx_likelihood import *
-from polee_training import *
-
-
-scale_spline_degree = 10
-
-JDCRoot = tfd.JointDistributionCoroutine.Root
-
-def Independent(dist):
-    return tfd.Independent(
-        dist,
-        reinterpreted_batch_ndims=len(dist.batch_shape))
-
-
-def SoftplusNormal(loc, scale, name="SoftplusNormal"):
-    return tfd.TransformedDistribution(
-        distribution=tfd.Normal(
-            loc=loc,
-            scale=scale),
-        bijector=tfp.bijectors.Softplus(),
-        name=name)
-
-
-def mean_variance_model(mean, hinges, concentration_c, mode_c):
-    # relative distance from hinges for each value in mean
-    diffs = tf.square(tf.expand_dims(mean, 0) - tf.expand_dims(hinges, -1))
-    weights = tf.exp(-diffs) # [scale_spline_degree, num_features]
-    weights = tf.clip_by_value(weights, 1e-12, 1.0)
-    weights = weights / tf.reduce_sum(weights, axis=0, keepdims=True)
-
-    concentration = tf.reduce_sum(
-        tf.expand_dims(concentration_c, -1) * weights, axis=0)
-
-    mode = tf.reduce_sum(
-        tf.expand_dims(mode_c, -1) * weights, axis=0)
-
-    scale = (concentration + 1) * mode
-
-    return tfd.InverseGamma(
-        concentration=concentration,
-        scale=scale)
+from polee import *
 
 
 def reduced_rank_regression_inference(
         F, k, x_init, make_likelihood,
         x_bias_loc0, x_bias_scale0, x_scale_hinges, sample_scales,
-        use_point_estimates, niter=100000):
+        use_point_estimates,
+        kernel_regression_degree, kernel_regression_bandwidth,
+        niter=20000):
 
     num_samples = int(F.shape[0])
     num_factors = int(F.shape[1])
@@ -97,13 +58,16 @@ def reduced_rank_regression_inference(
         x_loc = x_bias + decoder(z) - sample_scales
 
         x_scale_concentration_c = yield JDCRoot(Independent(tfd.HalfCauchy(
-            loc=tf.zeros([scale_spline_degree]), scale=1.0)))
+            loc=tf.zeros([kernel_regression_degree]), scale=1.0)))
 
         x_scale_mode_c = yield JDCRoot(Independent(tfd.HalfCauchy(
-            loc=tf.zeros([scale_spline_degree]), scale=1.0)))
+            loc=tf.zeros([kernel_regression_degree]), scale=1.0)))
+
+        weights = kernel_regression_weights(
+            kernel_regression_bandwidth, x_bias, x_scale_hinges)
 
         x_scale = yield Independent(mean_variance_model(
-            x_bias, x_scale_hinges, x_scale_concentration_c, x_scale_mode_c))
+            weights, x_scale_concentration_c, x_scale_mode_c))
 
         # log expression distribution
         x = yield Independent(tfd.StudentT(
@@ -113,7 +77,6 @@ def reduced_rank_regression_inference(
 
         if not use_point_estimates:
             rnaseq_reads = yield tfd.Independent(make_likelihood(x))
-
 
     model = tfd.JointDistributionCoroutine(model_fn)
 
@@ -141,10 +104,10 @@ def reduced_rank_regression_inference(
         tf.fill([num_features], -1.0))
 
     qx_scale_concentration_c_loc_var = tf.Variable(
-        tf.zeros([scale_spline_degree]))
+        tf.zeros([kernel_regression_degree]))
 
     qx_scale_mode_c_loc_var = tf.Variable(
-        tf.zeros([scale_spline_degree]))
+        tf.zeros([kernel_regression_degree]))
 
     qx_scale_loc_var = tf.Variable(
         tf.fill([num_features], 0.0))
@@ -156,7 +119,6 @@ def reduced_rank_regression_inference(
         trainable=not use_point_estimates)
     qx_softplus_scale_var = tf.Variable(
         tf.fill([num_samples, num_features], 0.0))
-
 
     def variational_model_fn():
         qw = yield JDCRoot(Independent(tfd.Normal(
@@ -223,27 +185,20 @@ def reduced_rank_regression_inference(
         qz_loc_var.numpy() )
 
 
-def choose_spline_hinges(low, high):
-    x_scale_hinges = []
-    d = (high - low) / (scale_spline_degree+1)
-    for i in range(scale_spline_degree):
-        x_scale_hinges.append(low + (i+1)*d)
-    return x_scale_hinges
-
-
 """
 Run variational inference on transcript expression linear regression.
 """
 def estimate_reduced_rank_regression(
-        init_feed_dict, vars, x_init, F_arr, k,
-        sample_scales, use_point_estimates, sess=None, niter=30000):
+        vars, x_init, F_arr, k,
+        sample_scales, use_point_estimates,
+        niter=30000, kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
 
     F = tf.constant(F_arr, dtype=tf.float32)
     num_features = x_init.shape[1]
 
     x_init_mean = np.mean(x_init, axis=0)
     x_scale_hinges = tf.constant(
-        choose_spline_hinges(np.min(x_init_mean), np.max(x_init_mean)),
+        choose_knots(np.min(x_init_mean), np.max(x_init_mean), kernel_regression_degree),
         dtype=tf.float32)
 
     x_bias_mu0 = np.log(1/num_features)
@@ -257,6 +212,7 @@ def estimate_reduced_rank_regression(
     return reduced_rank_regression_inference(
         F, k, x_init, make_likelihood,
         x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
-        use_point_estimates, niter)
+        use_point_estimates,
+        kernel_regression_degree, kernel_regression_bandwidth, niter)
 
 

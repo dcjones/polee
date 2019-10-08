@@ -23,7 +23,7 @@ def transcript_expression_to_feature_expression(
         values=tf.ones(indices.shape[0], tf.float32),
         dense_shape=[num_features, n])
 
-    return tf.transpose(tf.sparse_tensor_dense_matmul(
+    return tf.transpose(tf.sparse.sparse_dense_matmul(
         feature_matrix, x, adjoint_b=True, name="x_feature"))
 
 
@@ -38,6 +38,19 @@ def noninformative_gene_prior(x_gene, gene_sizes):
     return tf.reduce_sum(-(gene_sizes-1) * x_gene)
 
 
+@tf.function
+def sample_feature_expression(
+        num_samples, num_features, n, vars, feature_idxs, transcripts_idxs):
+    x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
+
+    x_feature_exp = transcript_expression_to_feature_expression(
+        num_features, n, feature_idxs, transcript_idxs, x)
+
+    x_feature = tf.math.log(x_feature_exp)
+
+    return x_feature
+
+
 """
 Approximate likelihood function for features (typically gene), where a
 "feature" is a set of transcripts. Approximated using a normal distribution
@@ -48,35 +61,42 @@ This is very similar to what we do with splicing likelihood.
 """
 def approximate_feature_likelihood(
         init_feed_dict, vars, num_samples, num_features, n,
-        feature_idxs, transcript_idxs, sess=None):
+        feature_idxs, transcript_idxs):
 
-    x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
+    num_mean_est_samples = 1000
+    qx_feature_loc = tf.Variable(tf.zeros(num_samples, num_features))
+    for i in range(num_mean_est_samples):
+        qx_feature_loc += sample_feature_expression(
+            num_samples, num_features, n, vars, feature_idxs, transcripts_idxs)
+    qx_feature_loc /= num_mean_est_samples
 
-    x_feature_exp = transcript_expression_to_feature_expression(
-        num_features, n, feature_idxs, transcript_idxs, x)
+    num_var_est_samples = 1000
+    qx_feature_scale = tf.Variable(tf.zeros(num_samples, num_features))
+    for i in range(num_mean_est_samples):
+        qx_feature_loc += tf.square(qx_feature_loc - sample_feature_expression(
+            num_samples, num_features, n, vars, feature_idxs, transcripts_idxs))
+    qx_feature_scale.assign(tf.sqrt(qx_feature_scale / num_var_est_samples))
 
-    x_feature = tf.log(x_feature_exp)
+    return (
+        qx_feature_loc.numpy(),
+        qx_feature_scale.numpy() )
 
-    qx_feature_loc = tf.Variable(
-        x_feature,
-        name="qx_feature_loc")
+    # qx_feature_scale = tf.nn.softplus(tf.Variable(
+    #     tf.fill([num_samples, num_features], np.float32(-2.0)),
+    #     name="qx_feature_scale_softminus"))
 
-    qx_feature_scale = tf.nn.softplus(tf.Variable(
-        tf.fill([num_samples, num_features], np.float32(-2.0)),
-        name="qx_feature_scale_softminus"))
+    # qx_feature = tfd.Normal(
+    #     loc=qx_feature_loc,
+    #     scale=qx_feature_scale)
 
-    qx_feature = tfd.Normal(
-        loc=qx_feature_loc,
-        scale=qx_feature_scale)
+    # log_prob = tf.reduce_sum(qx_feature.log_prob(x_feature))
 
-    log_prob = tf.reduce_sum(qx_feature.log_prob(x_feature))
+    # if sess is None:
+    #     sess = tf.Session()
 
-    if sess is None:
-        sess = tf.Session()
+    # train(sess, -log_prob, init_feed_dict, 2000, 1e-1, decay_rate=0.97)
 
-    train(sess, -log_prob, init_feed_dict, 2000, 1e-1, decay_rate=0.97)
-
-    return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
+    # return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
 
 
 """

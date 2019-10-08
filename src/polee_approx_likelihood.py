@@ -5,7 +5,6 @@ import tensorflow as tf
 from tensorflow.python.framework import ops
 from tensorflow.python import framework
 import tensorflow_probability as tfp
-# from tensorflow_probability import edward2 as ed
 
 
 # Load tensorflow extension for computing stick breaking transformation
@@ -30,10 +29,10 @@ Random expression vector samples in proportion to the approximated likelihood
 function.
 """
 def rnaseq_approx_likelihood_sampler(
-        z0_mu, efflens, mu, sigma, alpha, left_index, right_index, leaf_index):
+        num_samples, n, efflens, mu, sigma, alpha, left_index, right_index, leaf_index):
+
     # sampling from likelihood distribution
-    # z0 = ed.Normal(loc=tf.zeros(mu.get_shape()), scale=[1.0])
-    z0 = ed.Normal(loc=z0_mu, scale=[1.0])
+    z0 = tf.random.normal([num_samples, n-1])
 
     # sinh-asinh transform
     z = tf.sinh(tf.asinh(z0) + alpha)
@@ -58,7 +57,7 @@ def rnaseq_approx_likelihood_sampler(
 
 def rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars):
     return rnaseq_approx_likelihood_sampler(
-        z0_mu=tf.zeros([num_samples, n-1]),
+        num_samples, n,
         efflens=vars["efflen"],
         mu=vars["la_mu"],
         sigma=vars["la_sigma"],
@@ -117,24 +116,21 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
         sigma = self.sigma
         alpha = self.alpha
 
-        x = tf.nn.softmax(self.x)
+        # tf.print("x span", tf.reduce_min(self.x), tf.reduce_max(self.x))
+
+        x = tf.nn.softmax(self.x, axis=-1)
 
         # effective length transform
         # --------------------------
 
         efflens = self.efflens
+
         x_scaled = x * efflens
-        x_scaled_sum = tf.reduce_sum(x_scaled, axis=1, keepdims=True)
+        x_scaled_sum = tf.reduce_sum(x_scaled, axis=-1, keepdims=True)
         x_efflen = x_scaled / x_scaled_sum
 
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
-
-        # This conditional doesn't work. Let's just always have a leading
-        # sample shape I guess.
-
-        # if tf.rank(x_efflen) > 2:
-        #     print("SHAPE")
 
         y_logit_tensors = []
         for x_efflen_batch in tf.unstack(x_efflen):
@@ -142,10 +138,6 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
                 inverse_hsb_op_module.inv_hsb(
                     x_efflen_batch, self.left_index, self.right_index, self.leaf_index))
         y_logit = tf.stack(y_logit_tensors)
-
-        # else:
-        #     y_logit = inverse_hsb_op_module.inv_hsb(
-        #         x_efflen, self.left_index, self.right_index, self.leaf_index)
 
         # normal standardization transform
         # --------------------------------
@@ -161,7 +153,7 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
         # standand normal log-probability
         # -------------------------------
 
-        lp = tf.reduce_sum((-np.log(2.0*np.pi) -  tf.square(z)) / 2.0, axis=-1)
+        lp = (-np.log(2.0*np.pi) -  tf.reduce_sum(tf.square(z), axis=-1)) / 2.0
 
         return lp
 

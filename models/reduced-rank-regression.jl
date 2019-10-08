@@ -147,13 +147,6 @@ function main()
     factor_matrix, factor_names = build_factor_matrix(
         loaded_samples, factors, parsed_args["nonredundant"])
 
-    # TODO: make this optional behavior
-    #for idx in eachindex(factor_matrix)
-        #if factor_matrix[idx] == 0
-            #factor_matrix[idx] = -1
-        #end
-    #end
-
     k = parsed_args["latent-dimensionality"]
 
     if feature == "gene"
@@ -229,7 +222,7 @@ function main()
 
         w, z =
             polee_reduced_rank_regression_py.estimate_reduced_rank_regression(
-                loaded_samples.init_feed_dict, loaded_samples.variables,
+                loaded_samples.variables,
                 x0_log, factor_matrix, k, sample_scales,
                 use_point_estimates, niter=20000)
 

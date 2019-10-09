@@ -13,6 +13,8 @@ using StatsFuns
 using Random
 using DecisionTree
 using DelimitedFiles
+using SparseArrays
+using LinearAlgebra: I
 
 
 const arg_settings = ArgParseSettings()
@@ -24,6 +26,9 @@ arg_settings.prog = "polee model classify"
             instead of approximated likelihood."""
         default = nothing
         arg_type = String
+    "--genes"
+        help = "Use gene expression rather than transcript expression."
+        action = :store_true
     "--pseudocount"
         metavar = "C"
         help = "If specified with --point-estimates, add C tpm to each value."
@@ -88,7 +93,15 @@ function main()
             parsed_args, experiment_arg="training-experiment")
     end
     n = length(ts)
-    feature_names = String[t.metadata.name for t in ts]
+
+    features = I
+    num_features = n
+    if parsed_args["genes"]
+        num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
+            Polee.gene_feature_matrix(ts, ts_metadata)
+        features = sparse(
+            transcript_idxs, gene_idxs, ones(Float32, n), n, num_features)
+    end
 
     training_spec = YAML.load_file(parsed_args["training-experiment"])
     testing_spec = YAML.load_file(parsed_args["testing-experiment"])
@@ -104,12 +117,12 @@ function main()
             testing_spec, ts, ts_metadata, parsed_args["point-estimates"])
 
         if parsed_args["pseudocount"] !== nothing
-            training_loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
-            testing_loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
+            training_loaded_samples.x0_values .+= parsed_args["pseudocount"] ./ 1f6
+            testing_loaded_samples.x0_values .+= parsed_args["pseudocount"] ./ 1f6
         end
 
-        x_training = log.(training_loaded_samples.x0_values)
-        x_testing = log.(testing_loaded_samples.x0_values)
+        x_training = log.(training_loaded_samples.x0_values * features)
+        x_testing = log.(testing_loaded_samples.x0_values * features)
 
         training_sample_names = training_loaded_samples.sample_names
         training_sample_factors = training_loaded_samples.sample_factors
@@ -157,23 +170,26 @@ function main()
         # Build an enlarged training set by drawing samples from the
         # approximated likelihood
         println("training...")
-        features = Array{Float32}(undef,
+        x_training = Array{Float32}(undef,
             (num_training_samples * parsed_args["training-samples"], n))
-        features_row = Array{Float32}(undef, n)
-        draw_samples!(x_samplers_training, training_efflens, features)
-        labels = repeat(y_true_training, parsed_args["training-samples"])
+        draw_samples!(x_samplers_training, training_efflens, x_training)
+        x_training *= features
+        y_true_training_expanded = repeat(y_true_training, parsed_args["training-samples"])
 
         forest = build_forest(
-            labels, features, nsubfeatures, ntrees, parsed_args["partial-sampling"])
+            y_true_training_expanded, x_training, nsubfeatures,
+            ntrees, parsed_args["partial-sampling"])
 
         # Evaluate by drawing samples and averaging the result
         println("testing...")
-        xs = similar(testing_efflens)
+        x_test = similar(testing_efflens)
+        x_test_features = Array{Float32}(undef, (size(x_test, 1), num_features))
         y_predicted = zeros(Float64, (num_testing_samples, num_factors))
         for i in 1:parsed_args["testing-samples"]
-            draw_samples!(x_samplers_testing, testing_efflens, xs)
+            draw_samples!(x_samplers_testing, testing_efflens, x_test)
+            x_test_features .= x_test * features
             y_predicted .+= apply_forest_proba(
-                forest, xs, collect(1:num_factors))
+                forest, x_test_features, collect(1:num_factors))
         end
         y_predicted ./= parsed_args["testing-samples"]
     end

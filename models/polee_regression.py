@@ -10,6 +10,7 @@ from tensorflow_probability import distributions as tfd
 import sys
 import polee
 from polee_approx_likelihood import *
+from polee_gene_expression import *
 from polee import *
 
 
@@ -270,20 +271,11 @@ def estimate_feature_linear_regression(
     num_samples = feature_loc.shape[0]
     num_features = feature_scale.shape[1]
 
-    feature_likelihood = tfd.Normal(
-        loc=feature_loc,
-        scale=feature_scale,
-        name="feature_likelihood")
-
-    def full_likelihood(qx):
-        x_gene = tf.math.log(tf.nn.softmax(qx, axis=1))
-        return tf.reduce_sum(feature_likelihood.log_prob(x_gene)) + \
-            polee.noninformative_gene_prior(x_gene, feature_sizes)
-
     if use_point_estimates:
         make_likelihood = lambda qx: None
     else:
-        make_likelihood = full_likelihood
+        make_likelihood = lambda qx: RNASeqFeatureApproxLikelihoodDist(
+            feature_loc, feature_scale, feature_sizes, qx)
 
     F = tf.constant(F_arr, dtype=tf.float32)
 

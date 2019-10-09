@@ -8,6 +8,44 @@ from polee_transcript_expression import *
 
 
 """
+Fake distribution for approximated feature likelihood.
+"""
+class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
+    def __init__(self, loc, scale, feature_sizes, x, name="RNASeqFeatureApproxLikelihoodDist"):
+        self.loc = loc
+        self.scale = scale
+        self.feature_sizes = feature_sizes
+        self.x = x
+
+        parameters = dict(locals())
+
+        super(RNASeqFeatureApproxLikelihoodDist, self).__init__(
+              dtype=self.x.dtype,
+              reparameterization_type=tfp.distributions.FULLY_REPARAMETERIZED,
+              validate_args=False,
+              allow_nan_stats=False,
+              parameters=parameters,
+              name=name)
+
+    def _event_shape(self):
+        return tf.TensorShape([self.x.get_shape()[-1]])
+
+    def _batch_shape(self):
+        return self.x.get_shape()[:-1]
+
+    @tf.function
+    def log_prob(self, __ignored__):
+        x_gene = tf.math.log(tf.nn.softmax(self.x, axis=-1))
+
+        feature_likelihood = tfp.distributions.Normal(
+            loc=self.loc,
+            scale=self.scale)
+
+        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + \
+            noninformative_gene_prior(x_gene, self.feature_sizes)
+
+
+"""
 Compute gene expression from transcript expression (x).
 
 `feature_idxs` and `transcript_idxs` are two vectors of equal length assigning
@@ -38,9 +76,9 @@ def noninformative_gene_prior(x_gene, gene_sizes):
     return tf.reduce_sum(-(gene_sizes-1) * x_gene)
 
 
-@tf.function
+# @tf.function
 def sample_feature_expression(
-        num_samples, num_features, n, vars, feature_idxs, transcripts_idxs):
+        num_samples, num_features, n, vars, feature_idxs, transcript_idxs):
     x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
 
     x_feature_exp = transcript_expression_to_feature_expression(
@@ -64,17 +102,18 @@ def approximate_feature_likelihood(
         feature_idxs, transcript_idxs):
 
     num_mean_est_samples = 1000
-    qx_feature_loc = tf.Variable(tf.zeros(num_samples, num_features))
+    qx_feature_loc = tf.Variable(tf.zeros([num_samples, num_features]))
+
     for i in range(num_mean_est_samples):
-        qx_feature_loc += sample_feature_expression(
-            num_samples, num_features, n, vars, feature_idxs, transcripts_idxs)
-    qx_feature_loc /= num_mean_est_samples
+        qx_feature_loc.assign_add(sample_feature_expression(
+            num_samples, num_features, n, vars, feature_idxs, transcript_idxs))
+    qx_feature_loc.assign(qx_feature_loc / num_mean_est_samples)
 
     num_var_est_samples = 1000
-    qx_feature_scale = tf.Variable(tf.zeros(num_samples, num_features))
+    qx_feature_scale = tf.Variable(tf.zeros([num_samples, num_features]))
     for i in range(num_mean_est_samples):
-        qx_feature_loc += tf.square(qx_feature_loc - sample_feature_expression(
-            num_samples, num_features, n, vars, feature_idxs, transcripts_idxs))
+        qx_feature_scale.assign_add(tf.square(qx_feature_loc - sample_feature_expression(
+            num_samples, num_features, n, vars, feature_idxs, transcript_idxs)))
     qx_feature_scale.assign(tf.sqrt(qx_feature_scale / num_var_est_samples))
 
     return (

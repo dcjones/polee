@@ -83,20 +83,12 @@ def linear_regression_inference(
         x_scale_concentration_c = yield JDCRoot(Independent(tfd.HalfCauchy(
             loc=tf.zeros([kernel_regression_degree]), scale=1.0)))
 
-        x_scale_mode_c = yield JDCRoot(Independent(tfd.HalfCauchy(
-            loc=tf.zeros([kernel_regression_degree]), scale=1.0)))
-
         x_scale = yield Independent(mean_variance_model(
-            weights, x_scale_concentration_c, x_scale_mode_c))
-
-        # x_scale = yield Independent(tfd.InverseGamma(
-        #     tf.fill([num_features], 0.1), 0.1))
+            weights, x_scale_concentration_c, scale=1.0))
 
         x = yield Independent(tfd.Normal(
             loc=x_loc - sample_scales,
             scale=x_scale))
-
-        # tf.print("x scale", tf.reduce_sum(tf.math.exp(x), axis=-1))
 
         if not use_point_estimates:
             # penalty for scale drift
@@ -143,9 +135,6 @@ def linear_regression_inference(
     qx_scale_concentration_c_loc_var = tf.Variable(
         tf.fill([kernel_regression_degree], 1.0))
 
-    qx_scale_mode_c_loc_var = tf.Variable(
-        tf.fill([kernel_regression_degree], 0.0))
-
     qx_scale_loc_var = tf.Variable(
         tf.fill([num_features], -0.5))
     qx_scale_softplus_scale_var = tf.Variable(
@@ -187,9 +176,6 @@ def linear_regression_inference(
 
         qx_scale_concentration_c = yield JDCRoot(Independent(tfd.Deterministic(
             loc=tf.nn.softplus(qx_scale_concentration_c_loc_var))))
-
-        qx_scale_mode_c = yield JDCRoot(Independent(tfd.Deterministic(
-            loc=tf.nn.softplus(qx_scale_mode_c_loc_var))))
 
         qx_scale = yield JDCRoot(Independent(SoftplusNormal(
             loc=qx_scale_loc_var,

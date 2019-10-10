@@ -15,6 +15,7 @@ using DecisionTree
 using DelimitedFiles
 using SparseArrays
 using LinearAlgebra: I
+using HDF5
 
 
 const arg_settings = ArgParseSettings()
@@ -26,6 +27,19 @@ arg_settings.prog = "polee model classify"
             instead of approximated likelihood."""
         default = nothing
         arg_type = String
+    "--kallisto-bootstrap"
+        help = """
+            Use kallisto bootstrap samples. The sample specifications should
+            have a `kallisto` key pointing to the h5 file.
+            """
+        action = :store_true
+    "--kallisto"
+        help = """
+            Use kallisto maximum likelihood estimates. The sample
+            specifications should have a `kallisto` key pointing to the h5
+            file.
+            """
+        action = :store_true
     "--genes"
         help = "Use gene expression rather than transcript expression."
         action = :store_true
@@ -83,6 +97,54 @@ arg_settings.prog = "polee model classify"
 end
 
 
+function counts_to_feature_log_props!(xs, efflens, pseudocount, features)
+    xs ./= efflens
+    xs ./= sum(xs)
+    xs = reshape(xs, (1,length(xs)))
+    xs *= features
+    xs .+= pseudocount / 1f6
+    map!(log, xs, xs)
+    return xs
+end
+
+
+function read_kallisto_estimates(spec, pseudocount, features)
+    filenames = [entry["kallisto"] for entry in spec["samples"]]
+    xss = Array{Float32, 2}[]
+    for filename in filenames
+        h5open(filename) do input
+            efflens = read(input["aux"]["eff_lengths"])
+            xs = Vector{Float32}(read(input["est_counts"]))
+            xs = counts_to_feature_log_props!(xs, efflens, pseudocount, features)
+            push!(xss, xs)
+        end
+    end
+
+    return vcat(xss...)
+end
+
+
+function read_kallisto_bootstrap_samples(spec, pseudocount, features)
+    filenames = [entry["kallisto"] for entry in spec["samples"]]
+    bootstraps = Array{Float32, 2}[]
+
+    for filename in filenames
+        xss = Array{Float32, 2}[]
+        h5open(filename) do input
+            efflens = read(input["aux"]["eff_lengths"])
+            for dataset in input["bootstrap"]
+                xs = Vector{Float32}(read(dataset))
+                xs = counts_to_feature_log_props!(xs, efflens, pseudocount, features)
+                push!(xss, xs)
+            end
+        end
+        push!(bootstraps, vcat(xss...))
+    end
+
+    return bootstraps
+end
+
+
 function main()
     parsed_args = parse_args(arg_settings)
 
@@ -96,6 +158,7 @@ function main()
 
     features = I
     num_features = n
+
     if parsed_args["genes"]
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
@@ -109,8 +172,39 @@ function main()
     Random.seed!(parsed_args["seed"])
 
     use_point_estimates = parsed_args["point-estimates"] !== nothing
+    pseudocount = parsed_args["pseudocount"] === nothing ? 0.0 : parsed_args["pseudocount"]
 
-    if use_point_estimates
+    if parsed_args["kallisto"] && parsed_args["kallisto-bootstrap"]
+        error("Only one of '--kallisto' and '--kallisto-bootstrap' can be used.")
+    end
+
+    if (parsed_args["kallisto"] || parsed_args["kallisto-bootstrap"])
+        if use_point_estimates
+            error("'--use-point-estimates' in not compatible with '--kallisto' or '--kallisto-bootstrap'")
+        end
+
+        if parsed_args["genes"]
+            error("'--genes' in not compatible with '--kallisto' or '--kallisto-bootstrap'")
+        end
+
+        _, training_sample_names, training_sample_factors =
+            PoleeModel.read_specification(training_spec)
+        _, testing_sample_names, testing_sample_factors =
+            PoleeModel.read_specification(testing_spec)
+    end
+
+    if parsed_args["kallisto"]
+        x_training = read_kallisto_estimates(training_spec, pseudocount, features)
+        x_testing = read_kallisto_estimates(testing_spec, pseudocount, features)
+        num_features = size(x_training, 2)
+        use_point_estimates = true
+
+    elseif parsed_args["kallisto-bootstrap"]
+        x_training_bootstraps = read_kallisto_bootstrap_samples(training_spec, pseudocount, features)
+        x_testing_bootstraps = read_kallisto_bootstrap_samples(testing_spec, pseudocount, features)
+        num_features = size(x_training_bootstraps[1], 2)
+
+    elseif use_point_estimates
         training_loaded_samples = load_point_estimates_from_specification(
             training_spec, ts, ts_metadata, parsed_args["point-estimates"])
         testing_loaded_samples = load_point_estimates_from_specification(
@@ -137,8 +231,8 @@ function main()
                 load_samplers_from_specification(testing_spec, ts, ts_metadata)
     end
 
-    num_training_samples = length(training_sample_names)
-    num_testing_samples = length(testing_sample_names)
+    num_training_samples = length(training_spec["samples"])
+    num_testing_samples = length(testing_spec["samples"])
 
     y_true_onehot_training, factor_idx = build_factor_matrix(
         num_training_samples, training_sample_factors, parsed_args["factor"])
@@ -157,7 +251,36 @@ function main()
     ntrees = parsed_args["ntrees"]
     nsubfeatures = min(n, round(Int, parsed_args["nsubfeatures"] * sqrt(n)))
 
-    if use_point_estimates
+    if parsed_args["kallisto-bootstrap"]
+        println("training...")
+        x_training = vcat(x_training_bootstraps...)
+        y_true_training_expanded = Int[]
+        for (i, bootstrap) in enumerate(x_training_bootstraps)
+            append!(y_true_training_expanded, repeat([y_true_training[i]], size(bootstrap, 1)))
+        end
+        forest = build_forest(
+            y_true_training_expanded, x_training, nsubfeatures, ntrees,
+            parsed_args["partial-sampling"])
+
+        println("testing...")
+        bootstrap_counts = [size(bootstrap, 1) for bootstrap in x_testing_bootstraps]
+        max_bootstrap_count = maximum(bootstrap_counts)
+
+        x_test_features = Array{Float32}(undef, (num_testing_samples, num_features))
+        y_predicted = zeros(Float64, (num_testing_samples, num_factors))
+
+        for i in 1:max_bootstrap_count
+            for (j, bootstrap) in enumerate(x_testing_bootstraps)
+                k = mod1(i, size(bootstrap, 1))
+                x_test_features[j,:] = bootstrap[k,:]
+            end
+
+            y_predicted .+= apply_forest_proba(
+                forest, x_test_features, collect(1:num_factors))
+        end
+        y_predicted ./= max_bootstrap_count
+
+    elseif use_point_estimates
         println("training...")
         forest = build_forest(
             y_true_training, x_training, nsubfeatures, ntrees,

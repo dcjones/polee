@@ -166,6 +166,7 @@ function main()
             qx_gene_loc = log.(polee_py.transcript_expression_to_feature_expression(
                 num_features, n, gene_idxs .- 1, transcript_idxs .- 1,
                 loaded_samples.x0_values).numpy())
+
             qx_gene_scale = similar(qx_gene_loc)
             fill!(qx_gene_scale, 0.0)
         end
@@ -175,7 +176,7 @@ function main()
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
             polee_regression_py.estimate_feature_linear_regression(
                 qx_gene_loc, qx_gene_scale,
-                gene_sizes, x0_log, factor_matrix, sample_scales,
+                gene_sizes, factor_matrix, sample_scales,
                 parsed_args["point-estimates"] !== nothing)
 
 
@@ -303,6 +304,7 @@ function main()
         factor_names,
         feature_names_label,
         feature_names,
+        qx_bias,
         qw_loc, qw_scale,
         parsed_args["lower-credible"],
         parsed_args["upper-credible"],
@@ -379,7 +381,7 @@ end
 function write_regression_effects(
         output_filename,
         factor_names, feature_names_label, feature_names,
-        qw_loc, qw_scale, q0, q1, effect_size)
+        qx_bias, qw_loc, qw_scale, q0, q1, effect_size)
 
     @assert size(qw_loc) == size(qw_scale)
     num_factors, num_features = size(qw_loc)
@@ -387,7 +389,7 @@ function write_regression_effects(
     ln2 = log(2f0)
 
     open(output_filename, "w") do output
-        print(output, "factor,", feature_names_label, ",post_mean_effect,lower_credible,upper_credible")
+        print(output, "factor,", feature_names_label, ",post_mean_bias,post_mean_effect,lower_credible,upper_credible")
         if effect_size !== nothing
             print(output, ",prob_de,prob_down_de,prob_up_de")
             effect_size = log(abs(effect_size))
@@ -403,8 +405,9 @@ function write_regression_effects(
             uc = quantile(dist, q1) * qw_scale[i,j] + qw_loc[i,j]
 
             @printf(
-                output, "%s,%s,%f,%f,%f",
+                output, "%s,%s,%f,%f,%f,%f",
                 factor_names[i], feature_names[j],
+                qx_bias[j],
                 qw_loc[i,j]/ln2, lc/ln2, uc/ln2)
             if effect_size !== nothing
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
@@ -412,7 +415,7 @@ function write_regression_effects(
 
                 # max(prob_up, prob_down) sometimes does better than the more
                 # standard prob_up + prob_down. It's particularly useful because it
-                # let's us specific a minimum effect size of 0.
+                # let's us specify a minimum effect size of 0.
                 @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
                 # @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
             end

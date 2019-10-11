@@ -73,7 +73,7 @@ expression. This corrects for that by computing the log determinant of the
 Jacobian for the transcript expression to gene expression bijection.
 """
 def noninformative_gene_prior(x_gene, gene_sizes):
-    return tf.reduce_sum(-(gene_sizes-1) * x_gene)
+    return tf.reduce_sum(-(gene_sizes-1) * x_gene, axis=-1)
 
 
 # @tf.function

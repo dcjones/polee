@@ -52,10 +52,13 @@ def kernel_regression_weights(bandwidth, mean, hinges):
 Modeling mean-variance relationship using kernel regression.
 """
 def mean_variance_model(
-        weights, concentration_c, scale):
+        weights, concentration_c, scale_c):
 
     concentration = tf.reduce_sum(
         tf.expand_dims(concentration_c, -1) * weights, axis=-2)
+
+    scale = tf.reduce_sum(
+        tf.expand_dims(scale_c, -1) * weights, axis=-2)
 
     return tfd.InverseGamma(
         concentration=concentration,

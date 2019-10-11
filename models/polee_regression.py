@@ -82,10 +82,13 @@ def linear_regression_inference(
         # determined by kernel regression against the mean expression.
 
         x_scale_concentration_c = yield JDCRoot(Independent(tfd.HalfCauchy(
-            loc=tf.zeros([kernel_regression_degree]), scale=1.0)))
+            loc=tf.zeros([kernel_regression_degree]), scale=10.0)))
+
+        x_scale_scale_c = yield JDCRoot(Independent(tfd.HalfCauchy(
+            loc=tf.zeros([kernel_regression_degree]), scale=10.0)))
 
         x_scale = yield Independent(mean_variance_model(
-            weights, x_scale_concentration_c, scale=1.0))
+            weights, x_scale_concentration_c, x_scale_scale_c))
 
         x = yield Independent(tfd.Normal(
             loc=x_loc - sample_scales,
@@ -136,6 +139,9 @@ def linear_regression_inference(
     qx_scale_concentration_c_loc_var = tf.Variable(
         tf.fill([kernel_regression_degree], 1.0))
 
+    qx_scale_scale_c_loc_var = tf.Variable(
+        tf.fill([kernel_regression_degree], 1.0))
+
     qx_scale_loc_var = tf.Variable(
         tf.fill([num_features], -0.5))
     qx_scale_softplus_scale_var = tf.Variable(
@@ -177,6 +183,9 @@ def linear_regression_inference(
 
         qx_scale_concentration_c = yield JDCRoot(Independent(tfd.Deterministic(
             loc=tf.nn.softplus(qx_scale_concentration_c_loc_var))))
+
+        qx_scale_scale_c = yield JDCRoot(Independent(tfd.Deterministic(
+            loc=tf.nn.softplus(qx_scale_scale_c_loc_var))))
 
         qx_scale = yield JDCRoot(Independent(SoftplusNormal(
             loc=qx_scale_loc_var,
@@ -263,7 +272,7 @@ def estimate_transcript_linear_regression(
 Run variational inference on feature log-ratio linear regression.
 """
 def estimate_feature_linear_regression(
-        feature_loc, feature_scale, feature_sizes, x0_log,
+        feature_loc, feature_scale, feature_sizes,
         F_arr, sample_scales, use_point_estimates,
         kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
         niter=6000):

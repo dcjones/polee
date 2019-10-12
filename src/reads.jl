@@ -257,7 +257,7 @@ function Reads(reader::BAM.Reader, prog::Progress, from_file::Bool,
     while i <= length(alignments)
         j = i
         while j + 1 <= length(alignments) &&
-              alignments[i].refidx == alignments[j].refidx
+              alignments[i].refidx == alignments[j+1].refidx
              j += 1
         end
 

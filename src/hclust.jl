@@ -102,7 +102,7 @@ end
 """
 Delete and return the entry at index i.
 """
-function Base.delete!(queue::MutableBinaryHeap, i::Int)
+function heap_delete!(queue::MutableBinaryHeap, i::Int)
     nodes = queue.nodes
     nodemap = queue.node_map
 
@@ -217,7 +217,7 @@ function hclust(X::SparseMatrixCSC)
                 end
                 # delete old edge
                 u1, u2 = min((l, ja), (ja, l))
-                old_edge = delete!(queue, queue_idxs[(u1, u2)])
+                old_edge = heap_delete!(queue, queue_idxs[(u1, u2)])
                 delete!(queue_idxs, (u1, u2))
 
                 # already added this edge

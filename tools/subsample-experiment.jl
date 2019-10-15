@@ -66,9 +66,10 @@ function main()
 
     experiment_filename = ARGS[1]
     factor = ARGS[2]
-    Random.seed!(parse(Int, ARGS[3]))
+    seed = parse(Int, ARGS[3])
     train_count = parse(Int, ARGS[4])
     test_count = parse(Int, ARGS[5])
+    Random.seed!(hash((seed, train_count, test_count)))
     train_filename = ARGS[6]
     test_filename = ARGS[7]
 

@@ -79,7 +79,7 @@ function load_transcripts_from_args(
         parsed_args, excluded_transcripts=Set{String}();
         experiment_arg="experiment")
     spec = YAML.load_file(parsed_args[experiment_arg])
-    prep_file_suffix = get(spec, "prep_file_suffix", ".likelihood.h5")
+    prep_file_suffix = get(spec, "prep_file_suffix", ".prep.h5")
 
     transcripts_filename = nothing
     sequences_filename = nothing
@@ -89,7 +89,8 @@ function load_transcripts_from_args(
         sample_filename = nothing
         if haskey(first_sample, "file")
             sample_filename = first_sample["file"]
-        elseif haskey(first_sample, "name")
+        elseif haskey(first_sample, "name") &&
+                isfile(string(first_sample["name"], prep_file_suffix))
             sample_filename = string(first_sample["name"], prep_file_suffix)
         else
             error("Sample in specification has no filename.")

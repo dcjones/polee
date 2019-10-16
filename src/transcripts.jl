@@ -1030,6 +1030,12 @@ function gene_feature_matrix(
         names[gene_num] = get(ts_metadata.gene_name, gene_id, "")
     end
 
+    # SparseTensor insists it be sorted this way and can silently
+    # fuck up when it isn't.
+    p = sortperm(I)
+    I = I[p]
+    J = J[p]
+
     return (m, I, J, ids, names)
 end
 

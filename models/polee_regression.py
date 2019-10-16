@@ -8,6 +8,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 import sys
+import datetime
 import polee
 from polee_approx_likelihood import *
 from polee_gene_expression import *
@@ -15,7 +16,7 @@ from polee import *
 
 
 def linear_regression_inference(
-        F, x_init, make_likelihood,
+        F, x_init, likelihood_model, surrogate_likelihood_model,
         x_bias_loc0, x_bias_scale0, x_scale_hinges, sample_scales,
         use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth,
         niter):
@@ -100,7 +101,7 @@ def linear_regression_inference(
                 loc=tf.zeros([num_samples]),
                 scale=5e-4))
 
-            rnaseq_reads = yield tfd.Independent(make_likelihood(x))
+        yield from likelihood_model(x)
 
     model = tfd.JointDistributionCoroutine(model_fn)
 
@@ -202,7 +203,7 @@ def linear_regression_inference(
             qx_sample_scale = yield Independent(tfd.Deterministic(
                 loc=tf.math.log(tf.reduce_sum(tf.math.exp(qx_loc_var), axis=-1))))
 
-            qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+        yield from surrogate_likelihood_model(qx)
 
     variational_model = tfd.JointDistributionCoroutine(variational_model_fn)
 
@@ -218,6 +219,10 @@ def linear_regression_inference(
         step_num.assign(step_num + 1)
         return loss
 
+    logdir="logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    writer = tf.summary.create_file_writer(logdir)
+    tf.summary.trace_on(graph=True, profiler=True)
+
     trace = tfp.vi.fit_surrogate_posterior(
         target_log_prob_fn=lambda *args: model.log_prob(args),
         surrogate_posterior=variational_model,
@@ -225,6 +230,9 @@ def linear_regression_inference(
         sample_size=1,
         num_steps=niter,
         trace_fn=trace_fn)
+
+    with writer.as_default():
+        tf.summary.trace_export(name="model_trace", step=0, profiler_outdir=logdir)
 
     return (
         qx_loc_var.numpy(),
@@ -245,6 +253,7 @@ def estimate_transcript_linear_regression(
 
     print(F_arr)
     F = tf.constant(F_arr, dtype=tf.float32)
+    num_samples = x_init.shape[0]
     num_features = x_init.shape[1]
 
     x_init_mean = np.mean(x_init, axis=0)
@@ -255,13 +264,16 @@ def estimate_transcript_linear_regression(
     x_bias_mu0 = np.log(1/num_features)
     x_bias_sigma0 = 12.0
 
-    if use_point_estimates:
-        make_likelihood = None
-    else:
-        make_likelihood = lambda qx: rnaseq_approx_likelihood_from_vars(vars, qx)
+    def likelihood_model(x):
+        if not use_point_estimates:
+            likelihood = yield tfd.Independent(rnaseq_approx_likelihood_from_vars(vars, x))
+
+    def surrogate_likelihood_model(qx):
+        if not use_point_estimates:
+            qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
 
     return linear_regression_inference(
-        F, x_init, make_likelihood,
+        F, x_init, likelihood_model, surrogate_likelihood_model,
         x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
         use_point_estimates,
         kernel_regression_degree, kernel_regression_bandwidth,
@@ -272,67 +284,56 @@ def estimate_transcript_linear_regression(
 Run variational inference on feature log-ratio linear regression.
 """
 def estimate_feature_linear_regression(
-        feature_loc, feature_scale, feature_sizes,
+        vars,
+        feature_idxs, transcript_idxs,
+        x_gene_init, x_isoform_init,
+        feature_sizes,
         F_arr, sample_scales, use_point_estimates,
         kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
-        niter=6000):
+        # niter=10000):
+        niter=10):
 
-    num_samples = feature_loc.shape[0]
-    num_features = feature_scale.shape[1]
-
-    if use_point_estimates:
-        make_likelihood = lambda qx: None
-    else:
-        make_likelihood = lambda qx: RNASeqFeatureApproxLikelihoodDist(
-            feature_loc, feature_scale, feature_sizes, qx)
+    num_samples = x_gene_init.shape[0]
+    num_features = x_gene_init.shape[1]
+    n = np.max(transcript_idxs)
 
     F = tf.constant(F_arr, dtype=tf.float32)
 
-    x_init = tf.math.log(tf.nn.softmax(feature_loc, axis=1))
+    x_gene_init_mean = np.mean(x_gene_init, axis=0)
+    x_gene_scale_hinges = tf.constant(
+        choose_knots(
+            np.min(x_gene_init_mean), np.max(x_gene_init_mean), kernel_regression_degree),
+        dtype=tf.float32)
 
-    x_init_mean = np.mean(x_init.numpy(), axis=0)
-    x_scale_hinges = choose_knots(np.min(x_init_mean), np.max(x_init_mean), kernel_regression_degree)
+    x_gene_bias_mu0 = np.log(1./num_features)
+    x_gene_bias_sigma0 = 12.0
 
-    x_bias_mu0 = np.log(1./num_features)
-    x_bias_sigma0 = 12.0
+    def likelihood_model(x_gene):
+        x_isoform = yield JDCRoot(Independent(tfd.Normal(
+            loc=tf.zeros([num_samples, n]),
+            scale=tf.fill([num_samples, n], 6.0))))
+
+        if not use_point_estimates:
+            likelihood = yield tfd.Independent(RNASeqGeneApproxLikelihoodDist(
+                vars, feature_idxs, transcript_idxs, feature_sizes, x_gene, x_isoform))
+
+    qx_isoform_loc_var = tf.Variable(x_isoform_init)
+    qx_isoform_softplus_scale_var = tf.Variable(tf.fill([num_samples, n], -1.0))
+
+    def surrogate_likelihood_model(qx_gene):
+        if use_point_estimates:
+            qx_isoform = yield JDCRoot(Independent(
+                tfd.Deterministic(loc=qx_isoform_loc_var)))
+        else:
+            qx_isoform = yield JDCRoot(Independent(
+                tfd.Normal(
+                    loc=qx_isoform_loc_var,
+                    scale=tf.nn.softplus(qx_isoform_softplus_scale_var))))
+
+            qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
 
     return linear_regression_inference(
-        F, x_init, make_likelihood,
-        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
+        F, x_gene_init, likelihood_model, surrogate_likelihood_model,
+        x_gene_bias_mu0, x_gene_bias_sigma0, x_gene_scale_hinges, sample_scales,
         use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth,
         niter)
-
-
-"""
-Run variational inference on splicing log-ratio linear regression.
-"""
-def estimate_splicing_linear_regression(
-        init_feed_dict, splice_lr_loc, splice_lr_scale, x0_log, X_arr, sess=None):
-
-    # don't need this since we already used the transcript expression
-    # likelihood approximation to approximate splicing likelihood.
-    init_feed_dict.clear()
-
-    num_samples = splice_lr_loc.shape[0]
-    num_features = splice_lr_scale.shape[1]
-
-    splice_lr = tfd.Normal(
-        loc=splice_lr_loc,
-        scale=splice_lr_scale,
-        name="splice_lr")
-
-    make_likelihood = lambda qx: tf.reduce_sum(splice_lr.log_prob(qx))
-
-    X = tf.constant(X_arr, dtype=tf.float32)
-
-    # TODO: might try to find a better initialization
-    x_init = np.zeros((num_samples, num_features), np.float32)
-
-    w_mu0 = 0.0
-    w_sigma0 = 10.0
-    w_bias_mu0 = 0.0
-    w_bias_sigma0 = 20.0
-
-    return linear_regression_inference(
-        init_feed_dict, X, x_init, make_likelihood,
-        w_mu0, w_sigma0, w_bias_mu0, w_bias_sigma0)

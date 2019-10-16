@@ -139,7 +139,7 @@ function main()
         end
     end
 
-    if feature == "gene"
+    if false && feature == "gene"
         # approximate genes expression likelihood
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
@@ -199,7 +199,6 @@ function main()
 
     # This is the full likelihood version of gene regression, which is much
     # slower and doesn't seem to be any better than the version above
-    #=
     elseif feature == "gene"
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
@@ -211,7 +210,12 @@ function main()
         feature_names = gene_ids
         feature_names_label = "gene_id"
 
-        # # figure out some reasonable initial values
+        gene_sizes = zeros(Float32, num_features)
+        for i in gene_idxs
+            gene_sizes[i] += 1
+        end
+
+        # figure out some reasonable initial values
         x_gene_init    = zeros(Float32, (num_samples, num_features))
         x_isoform_init = zeros(Float32, (num_samples, n))
         for i in 1:num_samples
@@ -233,18 +237,14 @@ function main()
         sample_scales = estimate_sample_scales(log.(loaded_samples.x0_values), upper_quantile=0.95)
         @show sample_scales
 
-        polee_gene_regression_py = pyimport("polee_gene_regression")
-
-        sess = tf.Session()
-
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
-            polee_gene_regression_py.estimate_gene_linear_regression(
-                loaded_samples.init_feed_dict, loaded_samples.variables,
-                n, num_features, gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
-                factor_matrix, sample_scales,
-                parsed_args["point-estimates"] !== nothing, sess)
+            polee_regression_py.estimate_feature_linear_regression(
+                loaded_samples.variables,
+                gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
+                gene_sizes, factor_matrix, sample_scales,
+                parsed_args["point-estimates"] !== nothing)
 
-        qx_mean = mean(qx_loc, dims=1)
+        # qx_mean = mean(qx_loc, dims=1)
 
         # dump stuff for debugging
         # open("gene-mean-vs-sd.csv", "w") do output
@@ -261,7 +261,6 @@ function main()
         #         println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
         #     end
         # end
-    =#
 
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)

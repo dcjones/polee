@@ -8,6 +8,69 @@ from polee_transcript_expression import *
 
 
 """
+Fake distribution for evaluating gene expression given an approximate transcript
+expression likelihood function.
+"""
+class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
+    def __init__(self, vars, feature_idxs, transcript_idxs, feature_sizes,
+            x_gene, x_isoform, name="RNASeqGeneApproxLikelihoodDist"):
+
+        n = np.max(transcript_idxs)
+        num_features = np.max(feature_idxs)
+
+        x_isoform_indices = np.empty([n, 2], dtype=np.int)
+        for (k, (i, j)) in enumerate(zip(feature_idxs, transcript_idxs)):
+            x_isoform_indices[k, 0] = i - 1
+            x_isoform_indices[k, 1] = j - 1
+
+        # TODO: we are assuming the leading dimension is 1. This is not true
+        # when the VI inference is using multiple samples, so might be a good
+        # idea to fix this.
+
+        xs = []
+        for (x_gene_i, x_isoform_i) in zip(
+                tf.unstack(tf.squeeze(x_gene)), tf.unstack(tf.squeeze(x_isoform))):
+            x_isoform_matrix = tf.SparseTensor(
+                indices=x_isoform_indices,
+                values=x_isoform_i,
+                dense_shape=[num_features, n])
+            x_isoform_matrix_softmax = tf.sparse.softmax(x_isoform_matrix)
+            x_i_exp = tf.sparse.sparse_dense_matmul(
+                x_isoform_matrix_softmax,
+                tf.expand_dims(tf.math.exp(x_gene_i), -1),
+                adjoint_a=True)
+            x_i_exp = tf.clip_by_value(x_i_exp, 1e-16, np.inf)
+            x_i = tf.math.log(x_i_exp)
+            xs.append(x_i)
+        x = tf.expand_dims(tf.squeeze(tf.stack(xs), axis=-1), 0)
+
+        self.x_gene = x_gene
+        self.transcript_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)
+        self.feature_sizes = feature_sizes
+
+        parameters = dict(locals())
+
+        super(RNASeqGeneApproxLikelihoodDist, self).__init__(
+              dtype=self.x_gene.dtype,
+              reparameterization_type=tfp.distributions.FULLY_REPARAMETERIZED,
+              validate_args=False,
+              allow_nan_stats=False,
+              parameters=parameters,
+              name=name)
+
+    def _event_shape(self):
+        return tf.TensorShape([self.x_gene.get_shape()[-1]])
+
+    def _batch_shape(self):
+        return self.x_gene.get_shape()[:-1]
+
+    @tf.function
+    def log_prob(self, __ignored__):
+        return self.transcript_likelihood.log_prob(__ignored__) + \
+            noninformative_gene_prior(self.x_gene, self.feature_sizes)
+
+
+"""
 Fake distribution for approximated feature likelihood.
 """
 class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
@@ -119,23 +182,6 @@ def approximate_feature_likelihood(
     return (
         qx_feature_loc.numpy(),
         qx_feature_scale.numpy() )
-
-    # qx_feature_scale = tf.nn.softplus(tf.Variable(
-    #     tf.fill([num_samples, num_features], np.float32(-2.0)),
-    #     name="qx_feature_scale_softminus"))
-
-    # qx_feature = tfd.Normal(
-    #     loc=qx_feature_loc,
-    #     scale=qx_feature_scale)
-
-    # log_prob = tf.reduce_sum(qx_feature.log_prob(x_feature))
-
-    # if sess is None:
-    #     sess = tf.Session()
-
-    # train(sess, -log_prob, init_feed_dict, 2000, 1e-1, decay_rate=0.97)
-
-    # return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
 
 
 """

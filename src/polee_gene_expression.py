@@ -15,7 +15,6 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
     def __init__(self, vars, feature_idxs, transcript_idxs, feature_sizes,
             x_gene, x_isoform, name="RNASeqGeneApproxLikelihoodDist"):
 
-
         # expected shapes
         #   * x_gene: [1, num_samples, num_features]
         #   * x_isoform: [1, num_samples, n]

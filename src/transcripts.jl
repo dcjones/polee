@@ -1032,7 +1032,7 @@ function gene_feature_matrix(
 
     # SparseTensor insists it be sorted this way and can silently
     # fuck up when it isn't.
-    p = sortperm(I)
+    p = sortperm(J)
     I = I[p]
     J = J[p]
 

@@ -219,9 +219,9 @@ def linear_regression_inference(
         step_num.assign(step_num + 1)
         return loss
 
-    logdir="logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    writer = tf.summary.create_file_writer(logdir)
-    tf.summary.trace_on(graph=True, profiler=True)
+    # logdir="logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    # writer = tf.summary.create_file_writer(logdir)
+    # tf.summary.trace_on(graph=True, profiler=True)
 
     trace = tfp.vi.fit_surrogate_posterior(
         target_log_prob_fn=lambda *args: model.log_prob(args),
@@ -231,8 +231,8 @@ def linear_regression_inference(
         num_steps=niter,
         trace_fn=trace_fn)
 
-    with writer.as_default():
-        tf.summary.trace_export(name="model_trace", step=0, profiler_outdir=logdir)
+    # with writer.as_default():
+    #     tf.summary.trace_export(name="model_trace", step=0, profiler_outdir=logdir)
 
     return (
         qx_loc_var.numpy(),
@@ -290,8 +290,8 @@ def estimate_feature_linear_regression(
         feature_sizes,
         F_arr, sample_scales, use_point_estimates,
         kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
-        # niter=10000):
-        niter=10):
+        niter=10000):
+        # niter=100):
 
     num_samples = x_gene_init.shape[0]
     num_features = x_gene_init.shape[1]
@@ -311,14 +311,14 @@ def estimate_feature_linear_regression(
     def likelihood_model(x_gene):
         x_isoform = yield JDCRoot(Independent(tfd.Normal(
             loc=tf.zeros([num_samples, n]),
-            scale=tf.fill([num_samples, n], 6.0))))
+            scale=tf.fill([num_samples, n], 2.0))))
 
         if not use_point_estimates:
             likelihood = yield tfd.Independent(RNASeqGeneApproxLikelihoodDist(
                 vars, feature_idxs, transcript_idxs, feature_sizes, x_gene, x_isoform))
 
-    qx_isoform_loc_var = tf.Variable(x_isoform_init)
-    qx_isoform_softplus_scale_var = tf.Variable(tf.fill([num_samples, n], -1.0))
+    qx_isoform_loc_var = tf.Variable(x_isoform_init, trainable=not use_point_estimates)
+    qx_isoform_softplus_scale_var = tf.Variable(tf.fill([num_samples, n], -2.0))
 
     def surrogate_likelihood_model(qx_gene):
         if use_point_estimates:
@@ -330,7 +330,7 @@ def estimate_feature_linear_regression(
                     loc=qx_isoform_loc_var,
                     scale=tf.nn.softplus(qx_isoform_softplus_scale_var))))
 
-            qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+        qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
 
     return linear_regression_inference(
         F, x_gene_init, likelihood_model, surrogate_likelihood_model,

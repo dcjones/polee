@@ -15,34 +15,47 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
     def __init__(self, vars, feature_idxs, transcript_idxs, feature_sizes,
             x_gene, x_isoform, name="RNASeqGeneApproxLikelihoodDist"):
 
+
+        # expected shapes
+        #   * x_gene: [1, num_samples, num_features]
+        #   * x_isoform: [1, num_samples, n]
+
         n = np.max(transcript_idxs)
         num_features = np.max(feature_idxs)
+        num_samples = int(x_gene.shape[1])
 
-        x_isoform_indices = np.empty([n, 2], dtype=np.int)
-        for (k, (i, j)) in enumerate(zip(feature_idxs, transcript_idxs)):
-            x_isoform_indices[k, 0] = i - 1
-            x_isoform_indices[k, 1] = j - 1
+        # SparseTensor operations don't support batching. We get around that
+        # here by flattening the input and using one big blockwise matrix.
 
-        # TODO: we are assuming the leading dimension is 1. This is not true
-        # when the VI inference is using multiple samples, so might be a good
-        # idea to fix this.
+        x_gene_flat = tf.reshape(x_gene, [num_features*num_samples, 1])
+        x_gene_flat_exp = tf.math.exp(x_gene_flat)
 
-        xs = []
-        for (x_gene_i, x_isoform_i) in zip(
-                tf.unstack(tf.squeeze(x_gene)), tf.unstack(tf.squeeze(x_isoform))):
-            x_isoform_matrix = tf.SparseTensor(
-                indices=x_isoform_indices,
-                values=x_isoform_i,
-                dense_shape=[num_features, n])
-            x_isoform_matrix_softmax = tf.sparse.softmax(x_isoform_matrix)
-            x_i_exp = tf.sparse.sparse_dense_matmul(
-                x_isoform_matrix_softmax,
-                tf.expand_dims(tf.math.exp(x_gene_i), -1),
+        x_isoform_flat = tf.reshape(x_isoform, [n*num_samples])
+        x_isoform_flat_exp = tf.math.exp(x_isoform_flat)
+        x_isoform_indices = np.empty([n*num_samples, 2], dtype=np.int)
+        k = 0
+        for l in range(num_samples):
+            for (i, j) in zip(transcript_idxs, feature_idxs):
+                x_isoform_indices[k, 0] = (i - 1) + (l * n)
+                x_isoform_indices[k, 1] = (j - 1) + (l * num_features)
+                k += 1
+
+        x_isoform_matrix_exp = tf.SparseTensor(
+            indices=x_isoform_indices,
+            values=x_isoform_flat_exp,
+            dense_shape=[num_samples*n, num_samples*num_features])
+
+        x_flat_normalizer = tf.sparse.sparse_dense_matmul(
+                x_isoform_matrix_exp,
+                tf.ones([n*num_samples, 1]),
                 adjoint_a=True)
-            x_i_exp = tf.clip_by_value(x_i_exp, 1e-16, np.inf)
-            x_i = tf.math.log(x_i_exp)
-            xs.append(x_i)
-        x = tf.expand_dims(tf.squeeze(tf.stack(xs), axis=-1), 0)
+
+        x_flat_exp = tf.sparse.sparse_dense_matmul(
+                x_isoform_matrix_exp,
+                x_gene_flat_exp / x_flat_normalizer)
+        x_flat = tf.math.log(x_flat_exp)
+
+        x = tf.reshape(x_flat, [1, num_samples, n])
 
         self.x_gene = x_gene
         self.transcript_likelihood = rnaseq_approx_likelihood_from_vars(vars, x)

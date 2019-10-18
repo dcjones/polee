@@ -12,7 +12,8 @@ export
     approximate_splicing_likelihood,
     write_transcripts,
     create_tensorflow_variables!,
-    estimate_sample_scales
+    estimate_sample_scales,
+    gene_initial_values
 
 import Polee
 using Polee: HSBTransform, Transcripts, TranscriptsMetadata, LoadedSamples
@@ -128,6 +129,35 @@ function load_transcripts_from_args(
         return Transcripts(
             transcripts_filename, excluded_transcripts)
     end
+end
+
+
+"""
+Figure out reasonable inital values for gene/isoform parameterization.
+"""
+function gene_initial_values(
+        gene_idxs, transcript_idxs,
+        x_init, num_samples, num_features, n)
+    # figure out some reasonable initial values
+    x_gene_init    = zeros(Float32, (num_samples, num_features))
+    x_isoform_init = zeros(Float32, (num_samples, n))
+    for i in 1:num_samples
+        for (j, k) in zip(gene_idxs, transcript_idxs)
+            x_gene_init[i, j] += x_init[i, k]
+            x_isoform_init[i, k] = x_init[i, k]
+        end
+
+        for (j, k) in zip(gene_idxs, transcript_idxs)
+            x_isoform_init[i, k] /= x_gene_init[i, j]
+            x_isoform_init[i, k] = log.(x_isoform_init[i, k])
+        end
+
+        for j in 1:num_features
+            x_gene_init[i, j] = log(x_gene_init[i, j])
+        end
+    end
+
+    return (x_gene_init, x_isoform_init)
 end
 
 

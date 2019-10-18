@@ -264,116 +264,253 @@ class RNASeqLinearRegression:
             self.qx_bias_loc_var.numpy(),
             tf.nn.softplus(self.qx_scale_loc_var).numpy())
 
-    def evaluate_classification(self):
-        pass
+    def classify(self, x_init, likelihood_model, surrogate_likelihood_model,
+            sample_scales, use_point_estimates, niter, extra_training_vars=[]):
 
+        num_testing_samples = len(sample_scales)
 
-"""
-Run variational inference on transcript expression linear regression.
-"""
-def estimate_transcript_linear_regression(
-        vars, x_init, F_arr,
-        sample_scales, use_point_estimates,
-        kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
-        niter=6000):
+        def design_matrix_model():
+            F = yield JDCRoot(Independent(tfd.OneHotCategorical(
+                logits=tf.zeros([num_testing_samples, self.num_factors]))))
+            return F
 
-    print(F_arr)
-    F = tf.constant(F_arr, dtype=tf.float32)
-    num_samples = x_init.shape[0]
-    num_features = x_init.shape[1]
+        model = tfd.JointDistributionCoroutine(
+            lambda: self.model_fn(
+                design_matrix_model,
+                likelihood_model,
+                sample_scales))
 
-    x_init_mean = np.mean(x_init, axis=0)
-    x_scale_hinges = tf.constant(
-        choose_knots(np.min(x_init_mean), np.max(x_init_mean), kernel_regression_degree),
-        dtype=tf.float32)
+        qF_logits_var = tf.Variable(tf.zeros([num_testing_samples, self.num_factors]))
+        init_temp = 5.0
+        qF_temperature_var = tf.Variable(init_temp)
 
-    x_bias_mu0 = np.log(1/num_features)
-    x_bias_sigma0 = 12.0
+        qx_testing_loc_var = tf.Variable(x_init)
+        qx_testing_softplus_scale_var = tf.Variable(
+            tf.fill([num_testing_samples, self.num_features], -1.0))
 
-    def likelihood_model(x):
+        # swap out testing qx vars
+        qx_training_loc_var = self.qx_loc_var
+        qx_training_softplus_scale_var = self.qx_softplus_scale_var
+        self.qx_loc_var = qx_testing_loc_var
+        self.qx_softplus_scale_var = qx_testing_softplus_scale_var
+
+        def surrogate_design_matrix_model():
+            qF = yield JDCRoot(Independent(tfd.RelaxedOneHotCategorical(
+                temperature=qF_temperature_var,
+                logits=qF_logits_var)))
+
+        variational_model = tfd.JointDistributionCoroutine(
+            lambda: self.variational_model_fn(
+                surrogate_design_matrix_model,
+                surrogate_likelihood_model))
+
+        step_num = tf.Variable(1, trainable=False)
+
+        @tf.function
+        def trace_fn(loss, grad, vars):
+            if tf.math.mod(step_num, 200) == 0:
+                tf.print("[", step_num, "/", niter, "]  loss: ", loss, sep='')
+            step_num.assign(step_num + 1)
+            #  anneal temperature
+            qF_temperature_var.assign(
+                    init_temp * 0.05 ** tf.cast(step_num/niter, tf.float32))
+            return loss
+
+        trainable_variables = [qF_logits_var]
         if not use_point_estimates:
-            likelihood = yield tfd.Independent(rnaseq_approx_likelihood_from_vars(vars, x))
+            trainable_variables.append(qx_testing_loc_var)
+            trainable_variables.append(qx_testing_softplus_scale_var)
+        trainable_variables.extend(extra_training_vars)
 
-    def surrogate_likelihood_model(qx):
-        if not use_point_estimates:
-            qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+        trace = tfp.vi.fit_surrogate_posterior(
+            target_log_prob_fn=lambda *args: model.log_prob(args),
+            surrogate_posterior=variational_model,
+            optimizer=tf.optimizers.Adam(learning_rate=1e-3),
+            sample_size=1,
+            num_steps=niter,
+            trace_fn=trace_fn,
+            trainable_variables=trainable_variables)
 
-    regression_model = RNASeqLinearRegression(
-        F, x_init, likelihood_model, surrogate_likelihood_model,
-        x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
-        use_point_estimates,
-        kernel_regression_degree, kernel_regression_bandwidth)
+        class_probs = tf.nn.softmax(qF_logits_var, axis=1).numpy()
 
-    return regression_model.fit(niter)
+        # swap back qx vars
+        self.qx_loc_var = qx_training_loc_var
+        self.qx_softplus_scale_var = qx_training_softplus_scale_var
+
+        return class_probs
 
 
 
 """
-Run variational inference on feature log-ratio linear regression.
+Variational inference on transcript expression linear regression.
 """
-def estimate_feature_linear_regression(
-        vars,
+class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
+    def __init__(
+            self, vars, x_init, F_arr,
+            sample_scales, use_point_estimates,
+            kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
+            niter=6000):
+
+        F = tf.constant(F_arr, dtype=tf.float32)
+        num_samples = x_init.shape[0]
+        num_features = x_init.shape[1]
+
+        x_init_mean = np.mean(x_init, axis=0)
+        x_scale_hinges = tf.constant(
+            choose_knots(np.min(x_init_mean), np.max(x_init_mean), kernel_regression_degree),
+            dtype=tf.float32)
+
+        x_bias_mu0 = np.log(1/num_features)
+        x_bias_sigma0 = 12.0
+
+        def likelihood_model(x):
+            if not use_point_estimates:
+                likelihood = yield tfd.Independent(rnaseq_approx_likelihood_from_vars(vars, x))
+
+        def surrogate_likelihood_model(qx):
+            if not use_point_estimates:
+                qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+
+        super(RNASeqTranscriptLinearRegression, self).__init__(
+            F, x_init, likelihood_model, surrogate_likelihood_model,
+            x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
+            use_point_estimates,
+            kernel_regression_degree, kernel_regression_bandwidth)
+
+    def classify(self, vars, x_init, sample_scales, use_point_estimates, niter):
+        x_init_mean = np.mean(x_init, axis=0)
+
+        num_samples = len(sample_scales)
+
+        def likelihood_model(x):
+            if not use_point_estimates:
+                likelihood = yield tfd.Independent(rnaseq_approx_likelihood_from_vars(vars, x))
+
+        def surrogate_likelihood_model(qx):
+            if not use_point_estimates:
+                qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+
+        return super(RNASeqTranscriptLinearRegression, self).classify(
+            x_init, likelihood_model, surrogate_likelihood_model,
+            sample_scales, use_point_estimates, niter)
+
+
+"""
+Variational inference on feature (i.e. gene) log-ratio linear regression.
+"""
+class RNASeqGeneLinearRegression(RNASeqLinearRegression):
+    def __init__(
+        self, vars,
         feature_idxs, transcript_idxs,
         x_gene_init, x_isoform_init,
         feature_sizes,
         F_arr, sample_scales, use_point_estimates,
-        kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
-        niter=10000):
+        kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
 
-    num_samples = x_gene_init.shape[0]
-    num_features = x_gene_init.shape[1]
-    n = np.max(transcript_idxs)
+        num_samples = x_gene_init.shape[0]
+        num_features = x_gene_init.shape[1]
+        n = np.max(transcript_idxs)
 
-    F = tf.constant(F_arr, dtype=tf.float32)
+        F = tf.constant(F_arr, dtype=tf.float32)
 
-    x_gene_init_mean = np.mean(x_gene_init, axis=0)
-    x_gene_scale_hinges = tf.constant(
-        choose_knots(
-            np.min(x_gene_init_mean), np.max(x_gene_init_mean), kernel_regression_degree),
-        dtype=tf.float32)
+        x_gene_init_mean = np.mean(x_gene_init, axis=0)
+        x_gene_scale_hinges = tf.constant(
+            choose_knots(
+                np.min(x_gene_init_mean), np.max(x_gene_init_mean), kernel_regression_degree),
+            dtype=tf.float32)
 
-    x_gene_bias_mu0 = np.log(1./num_features)
-    x_gene_bias_sigma0 = 12.0
+        x_gene_bias_mu0 = np.log(1./num_features)
+        x_gene_bias_sigma0 = 12.0
 
-    def likelihood_model(x_gene):
-        x_isoform_mean = yield JDCRoot(Independent(tfd.Normal(
-            loc=tf.zeros([1,n]),
-            scale=2.0)))
+        def likelihood_model(x_gene):
+            x_isoform_mean = yield JDCRoot(Independent(tfd.Normal(
+                loc=tf.zeros([1,n]),
+                scale=2.0)))
 
-        x_isoform = yield JDCRoot(Independent(tfd.Normal(
-            loc=x_isoform_mean,
-            scale=tf.fill([num_samples, n], 1.0))))
+            x_isoform = yield JDCRoot(Independent(tfd.Normal(
+                loc=x_isoform_mean,
+                scale=tf.fill([num_samples, n], 1.0))))
 
-        if not use_point_estimates:
-            likelihood = yield tfd.Independent(RNASeqGeneApproxLikelihoodDist(
-                vars, feature_idxs, transcript_idxs, feature_sizes, x_gene, x_isoform))
+            if not use_point_estimates:
+                likelihood = yield tfd.Independent(RNASeqGeneApproxLikelihoodDist(
+                    vars, feature_idxs, transcript_idxs, feature_sizes, x_gene, x_isoform))
 
-    qx_isoform_mean_loc_var = tf.Variable(np.mean(x_isoform_init, axis=0, keepdims=True))
-    qx_isoform_mean_softplus_scale_var = tf.Variable(tf.fill([1, n], -2.0))
+        self.qx_isoform_mean_loc_var = tf.Variable(np.mean(x_isoform_init, axis=0, keepdims=True))
+        self.qx_isoform_mean_softplus_scale_var = tf.Variable(tf.fill([1, n], -2.0))
 
-    qx_isoform_loc_var = tf.Variable(x_isoform_init, trainable=not use_point_estimates)
-    qx_isoform_softplus_scale_var = tf.Variable(tf.fill([num_samples, n], -2.0))
+        qx_isoform_loc_var = tf.Variable(x_isoform_init, trainable=not use_point_estimates)
+        qx_isoform_softplus_scale_var = tf.Variable(tf.fill([num_samples, n], -2.0))
 
-    def surrogate_likelihood_model(qx_gene):
-        qx_isoform_mean = yield JDCRoot(Independent(
-            tfd.Normal(
-                loc=qx_isoform_mean_loc_var,
-                scale=tf.nn.softplus(qx_isoform_mean_softplus_scale_var))))
-
-        if use_point_estimates:
-            qx_isoform = yield JDCRoot(Independent(
-                tfd.Deterministic(loc=qx_isoform_loc_var)))
-        else:
-            qx_isoform = yield JDCRoot(Independent(
+        def surrogate_likelihood_model(qx_gene):
+            qx_isoform_mean = yield JDCRoot(Independent(
                 tfd.Normal(
-                    loc=qx_isoform_loc_var,
-                    scale=tf.nn.softplus(qx_isoform_softplus_scale_var))))
+                    loc=self.qx_isoform_mean_loc_var,
+                    scale=tf.nn.softplus(self.qx_isoform_mean_softplus_scale_var))))
 
-        qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+            if use_point_estimates:
+                qx_isoform = yield JDCRoot(Independent(
+                    tfd.Deterministic(loc=qx_isoform_loc_var)))
+            else:
+                qx_isoform = yield JDCRoot(Independent(
+                    tfd.Normal(
+                        loc=qx_isoform_loc_var,
+                        scale=tf.nn.softplus(qx_isoform_softplus_scale_var))))
 
-    regression_model = RNASeqLinearRegression(
-        F, x_gene_init, likelihood_model, surrogate_likelihood_model,
-        x_gene_bias_mu0, x_gene_bias_sigma0, x_gene_scale_hinges, sample_scales,
-        use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth)
+                qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
 
-    return regression_model.fit(niter)
+        super(RNASeqGeneLinearRegression, self).__init__(
+            F, x_gene_init, likelihood_model, surrogate_likelihood_model,
+            x_gene_bias_mu0, x_gene_bias_sigma0, x_gene_scale_hinges, sample_scales,
+            use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth)
+
+    def classify(
+            self, vars, feature_idxs, transcript_idxs,
+            x_gene_init, x_isoform_init, feature_sizes,
+            sample_scales, use_point_estimates, niter):
+
+        num_samples = x_gene_init.shape[0]
+        num_features = x_gene_init.shape[1]
+        n = np.max(transcript_idxs)
+
+        def likelihood_model(x_gene):
+            x_isoform_mean = yield JDCRoot(Independent(tfd.Normal(
+                loc=tf.zeros([1,n]),
+                scale=2.0)))
+
+            x_isoform = yield JDCRoot(Independent(tfd.Normal(
+                loc=x_isoform_mean,
+                scale=tf.fill([num_samples, n], 1.0))))
+
+            if not use_point_estimates:
+                likelihood = yield tfd.Independent(RNASeqGeneApproxLikelihoodDist(
+                    vars, feature_idxs, transcript_idxs, feature_sizes, x_gene, x_isoform))
+
+        qx_isoform_loc_var = tf.Variable(x_isoform_init)
+        qx_isoform_softplus_scale_var = tf.Variable(tf.fill([num_samples, n], -2.0))
+
+        def surrogate_likelihood_model(qx_gene):
+            qx_isoform_mean = yield JDCRoot(Independent(
+                tfd.Normal(
+                    loc=self.qx_isoform_mean_loc_var,
+                    scale=tf.nn.softplus(self.qx_isoform_mean_softplus_scale_var))))
+
+            if use_point_estimates:
+                qx_isoform = yield JDCRoot(Independent(
+                    tfd.Deterministic(loc=qx_isoform_loc_var)))
+            else:
+                qx_isoform = yield JDCRoot(Independent(
+                    tfd.Normal(
+                        loc=qx_isoform_loc_var,
+                        scale=tf.nn.softplus(qx_isoform_softplus_scale_var))))
+
+                qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+
+        extra_training_vars = [] if use_point_estimates else [qx_isoform_loc_var, qx_isoform_softplus_scale_var]
+
+        predictions = super(RNASeqGeneLinearRegression, self).classify(
+            x_gene_init, likelihood_model, surrogate_likelihood_model,
+            sample_scales, use_point_estimates, niter,
+            extra_training_vars=extra_training_vars)
+
+        return predictions
+

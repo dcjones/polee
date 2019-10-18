@@ -139,71 +139,11 @@ function main()
         end
     end
 
-    if false && feature == "gene"
-        # approximate genes expression likelihood
+    if feature == "gene"
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
 
-        gene_sizes = zeros(Float32, num_features)
-        for i in gene_idxs
-            gene_sizes[i] += 1
-        end
-
-        p = sortperm(gene_idxs)
-        permute!(gene_idxs, p)
-        permute!(transcript_idxs, p)
-
-        feature_names = gene_ids
-        feature_names_label = "gene_id"
-
-        if parsed_args["point-estimates"] === nothing
-            qx_gene_loc, qx_gene_scale = polee_py.approximate_feature_likelihood(
-                loaded_samples.init_feed_dict,
-                loaded_samples.variables,
-                num_samples, num_features, n,
-                gene_idxs .- 1, transcript_idxs .- 1)
-        else
-            qx_gene_loc = log.(polee_py.transcript_expression_to_feature_expression(
-                num_features, n, gene_idxs .- 1, transcript_idxs .- 1,
-                loaded_samples.x0_values).numpy())
-
-            qx_gene_scale = similar(qx_gene_loc)
-            fill!(qx_gene_scale, 0.0)
-        end
-
-        sample_scales = estimate_sample_scales(qx_gene_loc)
-
-        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
-            polee_regression_py.estimate_feature_linear_regression(
-                qx_gene_loc, qx_gene_scale,
-                gene_sizes, factor_matrix, sample_scales,
-                parsed_args["point-estimates"] !== nothing)
-
-
-        # dumping stuff to help debug
-        # open("gene-mean-vs-sd.csv", "w") do output
-        #     qx_mean = mean(qx_loc, dims=1)
-        #     println(output, "gene_id,mean,sd")
-        #     for i in 1:size(qx_bias, 1)
-        #         # println(output, feature_names[i], ",", qx_bias[i], ",", qx_scale[i])
-        #         println(output, feature_names[i], ",", qx_mean[i], ",", qx_scale[i])
-        #     end
-        # end
-
-        # open("gene-expression.csv", "w") do output
-        #     println(output, "gene_id,sample,expression")
-        #     for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
-        #         println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
-        #     end
-        # end
-
-    # This is the full likelihood version of gene regression, which is much
-    # slower and doesn't seem to be any better than the version above
-    elseif feature == "gene"
-        num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
-            Polee.gene_feature_matrix(ts, ts_metadata)
-
-        p = sortperm(gene_idxs)
+        p = sortperm(transcript_idxs)
         permute!(gene_idxs, p)
         permute!(transcript_idxs, p)
 
@@ -215,34 +155,19 @@ function main()
             gene_sizes[i] += 1
         end
 
-        # figure out some reasonable initial values
-        x_gene_init    = zeros(Float32, (num_samples, num_features))
-        x_isoform_init = zeros(Float32, (num_samples, n))
-        for i in 1:num_samples
-            for (j, k) in zip(gene_idxs, transcript_idxs)
-                x_gene_init[i, j] += loaded_samples.x0_values[i, k]
-                x_isoform_init[i, k] = loaded_samples.x0_values[i, k]
-            end
-
-            for (j, k) in zip(gene_idxs, transcript_idxs)
-                x_isoform_init[i, k] /= x_gene_init[i, j]
-                x_isoform_init[i, k] = log.(x_isoform_init[i, k])
-            end
-
-            for j in 1:num_features
-                x_gene_init[i, j] = log(x_gene_init[i, j])
-            end
-        end
+        x_gene_init, x_isoform_init = gene_initial_values(
+            gene_idxs, transcript_idxs,
+            loaded_samples.x0_values, num_samples, num_features, n)
 
         sample_scales = estimate_sample_scales(log.(loaded_samples.x0_values), upper_quantile=0.95)
-        @show sample_scales
 
-        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
-            polee_regression_py.estimate_feature_linear_regression(
+        regression = polee_regression_py.RNASeqGeneApproxLikelihoodDist(
                 loaded_samples.variables,
                 gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
                 gene_sizes, factor_matrix, sample_scales,
-                parsed_args["point-estimates"] !== nothing)
+                use_point_estimates)
+
+        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(10000)
 
         # qx_mean = mean(qx_loc, dims=1)
 
@@ -265,23 +190,22 @@ function main()
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)
 
-        @show extrema(x0_log)
-
-        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, =
-            polee_regression_py.estimate_transcript_linear_regression(
+        regression = polee_regression_py.RNASeqTranscriptLinearRegression(
                 loaded_samples.variables,
-                x0_log, factor_matrix, sample_scales, parsed_args["point-estimates"] !== nothing)
+                x0_log, factor_matrix, sample_scales, use_point_estimates)
+
+        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit()
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"
 
         # dump stuff for debugging
-        open("transcript-mean-vs-sd.csv", "w") do output
-            println(output, "mean,sd")
-            for i in 1:size(qx_bias, 1)
-                println(output, qx_bias[i], ",", qx_scale[i])
-            end
-        end
+        #open("transcript-mean-vs-sd.csv", "w") do output
+            #println(output, "mean,sd")
+            #for i in 1:size(qx_bias, 1)
+                #println(output, qx_bias[i], ",", qx_scale[i])
+            #end
+        #end
 
         # open("transcript-expression.csv", "w") do output
         #     println(output, "transcript_id,sample,expression")

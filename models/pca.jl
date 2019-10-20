@@ -25,9 +25,16 @@ arg_settings.prog = "polee model pca"
         help = "Number of PCA components"
         default = 2
         arg_type = Int
-    "--posterior-mean"
-        help = "Use posterior mean point estimate instead of the full model"
-        action = :store_true
+    "--point-estimates"
+        help = """
+            Use point estimates read from a file specified in the experiment
+            instead of approximated likelihood."""
+        default = nothing
+        arg_type = String
+    "--pseudocount"
+        metavar = "C"
+        help = "If specified with --point-estimates, add C tpm to each value."
+        arg_type = Float64
     "--output-z"
         metavar = "filename"
         help = "Output file for PCA projection"
@@ -36,17 +43,12 @@ arg_settings.prog = "polee model pca"
         metavar = "filename"
         help = "Output file for PCA transcript weights"
         default = nothing
-    "--neural-network"
-        help = """
-        Use a neural network in place of the linear transformation.
-        (i.e. Probabalistic decoder instead of PCA)
-        """
-        action = :store_true
-    "--max-num-samples"
-        metavar = "N"
-        help = "Only run the model on a randomly selected subset of N samples"
-        default = nothing
-        arg_type = Int
+    # "--neural-network"
+    #     help = """
+    #     Use a neural network in place of the linear transformation.
+    #     (i.e. Probabalistic decoder instead of PCA)
+    #     """
+    #     action = :store_true
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification"
@@ -56,97 +58,45 @@ end
 function main()
     parsed_args = parse_args(arg_settings)
 
-    feature = parsed_args["feature"]
-
-    if feature ∉ ["transcript", "gene", "splicing"]
-        error(string(parsed_args["feature"], " is not a supported feature."))
-    end
-
-    if feature ∈ ["gene"]
-        error(string(parsed_args["feature"], " feature is not yet implemented."))
-    end
 
     ts, ts_metadata = load_transcripts_from_args(parsed_args)
+    n = length(ts)
 
     init_python_modules()
+    use_point_estimates = parsed_args["point-estimates"] !== nothing
+    spec = YAML.load_file(parsed_args["experiment"])
     polee_pca_py = pyimport("polee_pca")
-    tf = pyimport("tensorflow")
 
-    # so we get the same subset when max-num-samples is used
-    Random.seed!(1234)
+    if parsed_args["point-estimates"] !== nothing
+        loaded_samples = load_point_estimates_from_specification(
+            spec, ts, ts_metadata, parsed_args["point-estimates"])
 
-    loaded_samples = load_samples_from_specification(
-        YAML.load_file(parsed_args["experiment"]),
-        ts, ts_metadata,
-        max_num_samples=parsed_args["max-num-samples"])
+        if parsed_args["pseudocount"] !== nothing
+            loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
+        end
+    else
+        loaded_samples = load_samples_from_specification(
+            spec, ts, ts_metadata)
+
+        if parsed_args["pseudocount"] !== nothing
+            error("--pseudocount argument only valid with --point-estimates")
+        end
+    end
 
     num_samples, n = size(loaded_samples.x0_values)
     num_pca_components = Int(get(parsed_args, "num-components", 2))
 
     x0_log = log.(loaded_samples.x0_values)
 
-    # try finding the actual posterior mean
-    # (x0 is approximately the mean)
-    if parsed_args["posterior-mean"]
-        x0_log = log.(Polee.posterior_mean(loaded_samples))
-    end
+    sample_scales = estimate_sample_scales(x0_log, upper_quantile=0.9)
 
-    gene_db = write_transcripts("genes.db", ts, ts_metadata)
+    pca = polee_pca_py.RNASeqPCA(
+        loaded_samples.variables, x0_log, sample_scales, use_point_estimates)
 
-    if feature == "transcript"
-        sample_scales = estimate_sample_scales(x0_log, upper_quantile=0.9)
+    z, w = pca.fit(6000)
 
-        z, w = polee_pca_py.estimate_transcript_pca(
-            loaded_samples.init_feed_dict, num_samples, n,
-            loaded_samples.variables, x0_log, sample_scales, num_pca_components,
-            parsed_args["posterior-mean"],
-            parsed_args["neural-network"])
-
-        if parsed_args["output-w"] !== nothing
-            write_pca_w(parsed_args["output-w"], ts, w)
-        end
-    elseif feature == "splicing"
-        sess = tf.Session()
-        qx_loc, qx_scale = approximate_splicing_likelihood(
-            loaded_samples, ts, ts_metadata, gene_db, sess)
-
-        # free up some memory
-        tf.reset_default_graph()
-        sess.close()
-        # create_tensorflow_variables!(loaded_samples)
-        num_features = size(qx_loc, 2)
-
-        # open("splicing-estimates-for-pca.csv", "w") do output
-        #     for (j, sample_name) in enumerate(loaded_samples.sample_names)
-        #         if j > 1
-        #             print(output, ",")
-        #         end
-        #         print(output, sample_name)
-        #     end
-        #     println(output)
-
-        #     for i in 1:num_features
-        #         for j in 1:num_samples
-        #             if j > 1
-        #                 print(output, ",")
-        #             end
-        #             print(output, qx_loc[j, i])
-        #         end
-        #         println(output)
-        #     end
-        # end
-        # exit()
-
-        z, w = polee_pca_py.estimate_feature_pca(
-            qx_loc, qx_scale, num_samples, num_features, num_pca_components,
-            parsed_args["posterior-mean"],
-            parsed_args["neural-network"])
-
-        if parsed_args["output-w"] !== nothing
-            write_pca_w(
-                parsed_args["output-w"], "splicing_event",
-                String[string(i) for i in 1:num_features], w)
-        end
+    if parsed_args["output-w"] !== nothing
+        write_pca_w(parsed_args["output-w"], ts, w)
     end
 
     if parsed_args["output-z"] !== nothing

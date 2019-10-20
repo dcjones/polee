@@ -348,8 +348,7 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
     def __init__(
             self, vars, x_init, F_arr,
             sample_scales, use_point_estimates,
-            kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
-            niter=6000):
+            kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
 
         F = tf.constant(F_arr, dtype=tf.float32)
         num_samples = x_init.shape[0]

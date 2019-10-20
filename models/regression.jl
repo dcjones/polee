@@ -50,11 +50,6 @@ arg_settings.prog = "polee model regression"
         help = "Output the posterior probability of abs log2 fold-change greater than S"
         default = nothing
         arg_type = Float64
-    "--max-num-samples"
-        metavar = "N"
-        help = "Only run the model on a randomly selected subset of N samples"
-        default = nothing
-        arg_type = Int
     "--factors"
         help = """
             Comma-separated list of factors to regress on. (Default: use all factors)
@@ -93,26 +88,20 @@ function main()
 
     init_python_modules()
     polee_regression_py = pyimport("polee_regression")
-    polee_py = pyimport("polee")
-    tf = pyimport("tensorflow")
-
-    # so we get the same subset when max-num-samples is used
-    Random.seed!(1234)
 
     spec = YAML.load_file(parsed_args["experiment"])
+    use_point_estimates = parsed_args["point-estimates"] !== nothing
 
     if parsed_args["point-estimates"] !== nothing
         loaded_samples = load_point_estimates_from_specification(
-            spec, ts, ts_metadata, parsed_args["point-estimates"],
-            max_num_samples=parsed_args["max-num-samples"])
+            spec, ts, ts_metadata, parsed_args["point-estimates"])
 
         if parsed_args["pseudocount"] !== nothing
             loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
         end
     else
         loaded_samples = load_samples_from_specification(
-            spec, ts, ts_metadata,
-            max_num_samples=parsed_args["max-num-samples"])
+            spec, ts, ts_metadata)
 
         if parsed_args["pseudocount"] !== nothing
             error("--pseudocount argument only valid with --point-estimates")
@@ -161,7 +150,7 @@ function main()
 
         sample_scales = estimate_sample_scales(log.(loaded_samples.x0_values), upper_quantile=0.95)
 
-        regression = polee_regression_py.RNASeqGeneApproxLikelihoodDist(
+        regression = polee_regression_py.RNASeqGeneLinearRegression(
                 loaded_samples.variables,
                 gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
                 gene_sizes, factor_matrix, sample_scales,
@@ -194,7 +183,7 @@ function main()
                 loaded_samples.variables,
                 x0_log, factor_matrix, sample_scales, use_point_estimates)
 
-        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit()
+        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(6000)
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"

@@ -93,7 +93,7 @@ function main()
     pca = polee_pca_py.RNASeqPCA(
         loaded_samples.variables, x0_log, sample_scales, use_point_estimates)
 
-    z, w = pca.fit(6000)
+    z, w = pca.fit(12000)
 
     if parsed_args["output-w"] !== nothing
         write_pca_w(parsed_args["output-w"], ts, w)
@@ -106,7 +106,7 @@ end
 
 
 function write_pca_w(output_filename, feature_type, feature_names, w)
-    n, num_components = size(w)
+    num_components, n = size(w)
     open(output_filename, "w") do output
         print(output, feature_type)
         for j in 1:num_components
@@ -114,9 +114,9 @@ function write_pca_w(output_filename, feature_type, feature_names, w)
         end
         println(output)
 
-        for (i, feature_name) in enumerate(feature_names)
+        for (j, feature_name) in enumerate(feature_names)
             print(output, feature_name)
-            for j in 1:num_components
+            for i in 1:num_components
                 print(output, ",", w[i, j])
             end
             println(output)

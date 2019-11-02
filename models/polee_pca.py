@@ -31,7 +31,7 @@ class RNASeqPCA(polee_regression.RNASeqLinearRegression):
         x_bias_mu0 = np.log(1/num_features)
         x_bias_sigma0 = 12.0
 
-        self.qz_loc_var = tf.Variable(tf.random.normal([num_samples, latent_dimensionality]))
+        self.qz_loc_var = tf.Variable(tf.zeros([num_samples, latent_dimensionality]))
         self.qz_softplus_scale_var = tf.Variable(tf.fill([num_samples, latent_dimensionality], -1.0))
 
         def likelihood_model(x):
@@ -48,6 +48,7 @@ class RNASeqPCA(polee_regression.RNASeqLinearRegression):
             use_point_estimates,
             kernel_regression_degree, kernel_regression_bandwidth)
 
+        self.qw_loc_var.assign(0.01 * tf.random.normal([self.num_factors, self.num_features]))
 
     def latent_space_model_fn(self):
         z = yield JDCRoot(Independent(tfd.Normal(

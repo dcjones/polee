@@ -18,9 +18,16 @@ from polee import *
 class RNASeqLinearRegression:
     def __init__(self, F, x_init, likelihood_model, surrogate_likelihood_model,
             x_bias_loc0, x_bias_scale0, x_scale_hinges, sample_scales,
-            use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth):
-        self.num_samples = int(F.shape[0])
-        self.num_factors = int(F.shape[1])
+            use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth,
+            num_samples=None, num_factors=None):
+        if num_samples is None:
+            num_samples = int(F.shape[0])
+        self.num_samples = num_samples
+
+        if num_factors is None:
+            num_factors = int(F.shape[1])
+        self.num_factors = num_factors
+
         self.num_features = int(x_init.shape[1])
 
         # TODO: I think my plan here is to pass in
@@ -79,6 +86,8 @@ class RNASeqLinearRegression:
         self.qx_scale_softplus_scale_var = tf.Variable(
             tf.fill([self.num_features], -1.0))
 
+        self.qx_inv_df_softplus_loc_var = tf.Variable(-1.5)
+
         self.qx_loc_var = tf.Variable(
             x_init,
             trainable=not use_point_estimates)
@@ -106,7 +115,7 @@ class RNASeqLinearRegression:
 
         w = yield Independent(tfd.Normal(
             loc=tf.zeros([self.num_factors, self.num_features]),
-            scale=w_global_scale * w_local_scale))
+            scale=5.0))
 
         x_bias = yield JDCRoot(Independent(tfd.Normal(
             loc=tf.fill([self.num_features], np.float32(self.x_bias_loc0)),
@@ -157,6 +166,7 @@ class RNASeqLinearRegression:
         if not self.use_point_estimates:
             # penalty for scale drift
             num_samples = len(sample_scales)
+
             x_sample_scale = yield Independent(tfd.Normal(
                 loc=tf.zeros(num_samples),
                 scale=5e-4))
@@ -348,10 +358,12 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
     def __init__(
             self, vars, x_init, F_arr,
             sample_scales, use_point_estimates,
-            kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
+            kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
+            num_samples=None, num_factors=None):
 
         F = tf.constant(F_arr, dtype=tf.float32)
-        num_samples = x_init.shape[0]
+        if num_samples is None:
+            num_samples = x_init.shape[0]
         num_features = x_init.shape[1]
 
         x_init_mean = np.mean(x_init, axis=0)
@@ -374,7 +386,8 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
             F, x_init, likelihood_model, surrogate_likelihood_model,
             x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
             use_point_estimates,
-            kernel_regression_degree, kernel_regression_bandwidth)
+            kernel_regression_degree, kernel_regression_bandwidth,
+            num_samples=num_samples, num_factors=num_factors)
 
     def classify(self, vars, x_init, sample_scales, use_point_estimates, niter):
         x_init_mean = np.mean(x_init, axis=0)

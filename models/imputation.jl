@@ -134,15 +134,97 @@ function main()
         x_init = log.(loaded_samples.x0_values)
         sample_scales = estimate_sample_scales(x_init)
 
+        tnames = [t.metadata.name for t in ts]
+
+        open("x_init.csv", "w") do output
+            print(output, "transcript_id")
+            for i in 1:size(x_init, 1)
+                print(output, ",sample", i)
+            end
+            println(output)
+            for j in 1:size(x_init, 2)
+                print(output, tnames[j])
+                for i in 1:size(x_init, 1)
+                print(output, ",", x_init[i, j])
+                end
+                println(output)
+            end
+        end
+
         regression = polee_imputation_py.RNASeqImputedTranscriptLinearRegression(
                 loaded_samples.variables,
                 x_init,
                 y_true_onehot_training,
+                # 0, # confounders
                 confounders,
                 sample_scales,
                 use_point_estimates)
-        # y_predicted = regression.fit(5000 + 25*num_samples)
-        y_predicted = regression.fit(6000)
+        # y_predicted = regression.fit(500 + 25*num_samples)
+        y_predicted, qw_loc_var, x_loc, qx_scale_loc_var, qx_loc_var = regression.fit(1000)
+
+        open("x.csv", "w") do output
+            print(output, "transcript_id")
+            for i in 1:size(qx_loc_var, 1)
+                print(output, ",sample", i)
+            end
+            println(output)
+            for j in 1:size(qx_loc_var, 2)
+                print(output, tnames[j])
+                for i in 1:size(qx_loc_var, 1)
+                print(output, ",", qx_loc_var[i, j])
+                end
+                println(output)
+            end
+        end
+
+        # open("qw_loc.csv", "w") do output
+        #     print(output, "transcript_id")
+        #     for j in 1:length(factor_names)
+        #         print(output, ",", factor_names[j])
+        #     end
+        #     for j in length(factor_names)+1:size(qw_loc_var, 1)
+        #         print(output, ",", "extra", j-length(factor_names))
+        #     end
+        #     println(output)
+        #     for i in 1:size(qw_loc_var, 2)
+        #         print(output, tnames[i])
+        #         for j in 1:size(qw_loc_var, 1)
+        #             print(output, ",", qw_loc_var[j, i])
+        #         end
+        #         println(output)
+        #     end
+        # end
+
+        open("x_loc.csv", "w") do output
+            print(output, "transcript_id")
+            for j in 1:length(factor_names)
+                print(output, ",", factor_names[j])
+            end
+            for j in length(factor_names)+1:size(x_loc, 1)
+                print(output, ",", "extra", j-length(factor_names))
+            end
+            println(output)
+            for i in 1:size(x_loc, 2)
+                print(output, tnames[i])
+                for j in 1:size(x_loc, 1)
+                    print(output, ",", x_loc[j, i])
+                end
+                println(output)
+            end
+        end
+
+        open("qx_scale_loc.csv", "w") do output
+            println(output, "transcript_id,scale")
+            for i in 1:length(tnames)
+                println(output, tnames[i], ",", qx_scale_loc_var[i])
+            end
+        end
+
+        # p = sortperm(abs.(qw_loc_var[end,:]), rev=true)
+        # for i in 1:10
+        #     println(tnames[p[i]])
+        #     @show x_init[:,p[i]]
+        # end
     end
 
     write_classification_probs(

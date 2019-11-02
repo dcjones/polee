@@ -241,8 +241,11 @@ function main()
         num_testing_samples, testing_sample_factors, parsed_args["factor"],
         factor_idx)
 
-    factor_names = collect(keys(factor_idx))
     num_factors = length(factor_idx)
+    factor_names = Vector{String}(undef, num_factors)
+    for (k, v) in factor_idx
+        factor_names[v] = k
+    end
 
     decode_onehot(y) = Int[idx[2] for idx in argmax(y, dims=2)[:,1]]
     y_true_training = decode_onehot(y_true_onehot_training)

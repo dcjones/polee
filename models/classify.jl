@@ -13,7 +13,10 @@ using Distributions
 using StatsFuns
 using Random
 using DecisionTree
+using LinearAlgebra: I
+using HDF5
 
+include("kallisto.jl")
 
 const arg_settings = ArgParseSettings()
 arg_settings.prog = "polee model classify"
@@ -29,6 +32,19 @@ arg_settings.prog = "polee model classify"
             instead of approximated likelihood."""
         default = nothing
         arg_type = String
+    "--kallisto-bootstrap"
+        help = """
+            Use kallisto bootstrap samples. The sample specifications should
+            have a `kallisto` key pointing to the h5 file.
+            """
+        action = :store_true
+    "--kallisto"
+        help = """
+            Use kallisto maximum likelihood estimates. The sample
+            specifications should have a `kallisto` key pointing to the h5
+            file.
+            """
+        action = :store_true
     "--pseudocount"
         metavar = "C"
         help = "If specified with --point-estimates, add C tpm to each value."
@@ -70,7 +86,7 @@ function main()
     n = length(ts)
 
     init_python_modules()
-    polee_regression_py = pyimport("polee_regression")
+    polee_classify_py = pyimport("polee_classify")
     polee_py = pyimport("polee")
     tf = pyimport("tensorflow")
 
@@ -80,109 +96,114 @@ function main()
     use_point_estimates = parsed_args["point-estimates"] !== nothing
     pseudocount = parsed_args["pseudocount"] === nothing ? 0.0 : parsed_args["pseudocount"]
 
-    if use_point_estimates
+    if parsed_args["kallisto"] && parsed_args["kallisto-bootstrap"]
+        error("Only one of '--kallisto' and '--kallisto-bootstrap' can be used.")
+    end
+
+    if (parsed_args["kallisto"] || parsed_args["kallisto-bootstrap"])
+        if use_point_estimates
+            error("'--use-point-estimates' in not compatible with '--kallisto' or '--kallisto-bootstrap'")
+        end
+
+        _, training_sample_names, training_sample_factors =
+            PoleeModel.read_specification(training_spec)
+        _, testing_sample_names, testing_sample_factors =
+            PoleeModel.read_specification(testing_spec)
+    end
+
+    features = I
+
+    if parsed_args["kallisto"]
+        x_training = read_kallisto_estimates(training_spec, pseudocount, features)
+        x_testing = read_kallisto_estimates(testing_spec, pseudocount, features)
+        num_features = size(x_training, 2)
+        use_point_estimates = true
+
+    elseif parsed_args["kallisto-bootstrap"]
+        x_training_bootstraps = read_kallisto_bootstrap_samples(training_spec, pseudocount, features)
+        x_testing_bootstraps = read_kallisto_bootstrap_samples(testing_spec, pseudocount, features)
+        num_features = size(x_training_bootstraps[1], 2)
+
+    elseif use_point_estimates
         training_loaded_samples = load_point_estimates_from_specification(
              training_spec, ts, ts_metadata, parsed_args["point-estimates"])
         testing_loaded_samples = load_point_estimates_from_specification(
-             training_spec, ts, ts_metadata, parsed_args["point-estimates"])
+             testing_spec, ts, ts_metadata, parsed_args["point-estimates"])
 
         if parsed_args["pseudocount"] !== nothing
-            loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
+            training_loaded_samples.x0_values .+= parsed_args["pseudocount"] ./ 1f6
+            testing_loaded_samples.x0_values .+= parsed_args["pseudocount"] ./ 1f6
         end
+
+        x_training = log.(training_loaded_samples.x0_values)
+        x_testing = log.(testing_loaded_samples.x0_values)
+
+        training_sample_names = training_loaded_samples.sample_names
+        training_sample_factors = training_loaded_samples.sample_factors
+
+        testing_sample_names = testing_loaded_samples.sample_names
+        testing_sample_factors = testing_loaded_samples.sample_factors
     else
         training_loaded_samples = load_samples_from_specification(
             training_spec, ts, ts_metadata)
         testing_loaded_samples = load_samples_from_specification(
-            training_spec, ts, ts_metadata)
+            testing_spec, ts, ts_metadata)
+
+        training_sample_names = training_loaded_samples.sample_names
+        training_sample_factors = training_loaded_samples.sample_factors
+
+        testing_sample_names = testing_loaded_samples.sample_names
+        testing_sample_factors = testing_loaded_samples.sample_factors
 
         if parsed_args["pseudocount"] !== nothing
             error("--pseudocount argument only valid with --point-estimates")
         end
     end
 
-    num_training_samples = length(training_loaded_samples.sample_factors)
-    num_testing_samples = length(testing_loaded_samples.sample_factors)
+    num_training_samples = length(training_spec["samples"])
+    num_testing_samples = length(testing_spec["samples"])
 
     y_true_onehot_training, factor_idx = build_factor_matrix(
-        num_training_samples, training_loaded_samples.sample_factors, parsed_args["factor"])
+        num_training_samples, training_sample_factors, parsed_args["factor"])
 
     y_true_onehot_testing, _ = build_factor_matrix(
-        num_testing_samples, testing_loaded_samples.sample_factors, parsed_args["factor"],
+        num_testing_samples, testing_sample_factors, parsed_args["factor"],
         factor_idx)
 
-    factor_names = collect(keys(factor_idx))
     num_factors = length(factor_idx)
+    factor_names = Vector{String}(undef, num_factors)
+    for (k, v) in factor_idx
+        factor_names[v] = k
+    end
 
     decode_onehot(y) = Int[idx[2] for idx in argmax(y, dims=2)[:,1]]
     y_true_training = decode_onehot(y_true_onehot_training)
     y_true_testing = decode_onehot(y_true_onehot_testing)
 
     if feature == "gene"
-        num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
-            Polee.gene_feature_matrix(ts, ts_metadata)
-
-        p = sortperm(transcript_idxs)
-        permute!(gene_idxs, p)
-        permute!(transcript_idxs, p)
-
-        gene_sizes = zeros(Float32, num_features)
-        for i in gene_idxs
-            gene_sizes[i] += 1
-        end
-
-        training_num_samples = length(training_loaded_samples.sample_factors)
-        training_x_gene_init, training_x_isoform_init = gene_initial_values(
-            gene_idxs, transcript_idxs,
-            training_loaded_samples.x0_values, training_num_samples, num_features, n)
-
-        training_sample_scales = estimate_sample_scales(
-            log.(training_loaded_samples.x0_values), upper_quantile=0.95)
-
-        regression = polee_regression_py.RNASeqGeneLinearRegression(
-            training_loaded_samples.variables,
-            gene_idxs, transcript_idxs,
-            training_x_gene_init, training_x_isoform_init,
-            gene_sizes,
-            y_true_onehot_training,
-            training_sample_scales,
-            use_point_estimates)
-        regression.fit(10000)
-
-        testing_num_samples = length(training_loaded_samples.sample_factors)
-        testing_x_gene_init, testing_x_isoform_init = gene_initial_values(
-            gene_idxs, transcript_idxs,
-            testing_loaded_samples.x0_values, testing_num_samples, num_features, n)
-
-        testing_sample_scales = estimate_sample_scales(
-            log.(testing_loaded_samples.x0_values), upper_quantile=0.95)
-
-        y_predicted = regression.classify(
-            testing_loaded_samples.variables,
-            gene_idxs, transcript_idxs,
-            testing_x_gene_init, testing_x_isoform_init,
-            gene_sizes, testing_sample_scales, use_point_estimates,
-            5000)
+        error("Error gene classification not implemented.")
     else
-        training_x_init = log.(training_loaded_samples.x0_values)
-        training_sample_scales = estimate_sample_scales(training_x_init)
-        regression = polee_regression_py.RNASeqTranscriptLinearRegression(
-                training_loaded_samples.variables,
-                training_x_init,
-                y_true_onehot_training,
-                training_sample_scales,
-                use_point_estimates)
-        regression.fit(6000)
+        # TODO: handle kallisto-bootstrap
 
-        testing_x_init = log.(testing_loaded_samples.x0_values)
-        testing_sample_scales = estimate_sample_scales(testing_x_init)
+        if use_point_estimates
+            n = size(x_training, 2)
+            classifier = polee_classify_py.RNASeqLogisticRegression(num_factors, n)
 
-        y_predicted = regression.classify(
-            testing_loaded_samples.variables,
-            testing_x_init,
-            testing_sample_scales,
-            use_point_estimates,
-            3000)
-        @show y_predicted
+            classifier.fit(
+                x_training,
+                y_true_onehot_training, 5000)
+
+            y_predicted = classifier.predict(x_testing)
+        else
+            classifier = polee_classify_py.RNASeqLogisticRegression(num_factors, n)
+
+            classifier.fit_sample(
+                num_training_samples, n, training_loaded_samples.variables,
+                y_true_onehot_training, 5000)
+
+            y_predicted = classifier.predict_sample(
+                num_testing_samples, n, testing_loaded_samples.variables, 100)
+        end
     end
 
     write_classification_probs(

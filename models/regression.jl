@@ -90,6 +90,11 @@ function main()
     n = length(ts)
 
     init_python_modules()
+
+    tf_py = pyimport("tensorflow")
+    tf_py.config.threading.set_inter_op_parallelism_threads(Threads.nthreads())
+    tf_py.config.threading.set_intra_op_parallelism_threads(Threads.nthreads())
+
     polee_regression_py = pyimport("polee_regression")
 
     spec = YAML.load_file(parsed_args["experiment"])
@@ -136,7 +141,7 @@ function main()
             Polee.gene_feature_matrix(ts, ts_metadata)
 
         p = sortperm(transcript_idxs)
-        permute!(gene_idxs, p)
+        # permute!(gene_idxs, p)
         permute!(transcript_idxs, p)
 
         feature_names = gene_ids

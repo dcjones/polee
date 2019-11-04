@@ -30,10 +30,6 @@ class RNASeqLinearRegression:
 
         self.num_features = int(x_init.shape[1])
 
-        # TODO: I think my plan here is to pass in
-        # likelihood_model and surrogate_likelihood_model, then create
-        # sub-classes for transcript regression and so on.
-
         self.F = F
         self.likelihood_model = likelihood_model
         self.surrogate_likelihood_model = surrogate_likelihood_model
@@ -86,8 +82,6 @@ class RNASeqLinearRegression:
         self.qx_scale_softplus_scale_var = tf.Variable(
             tf.fill([self.num_features], -1.0))
 
-        self.qx_inv_df_softplus_loc_var = tf.Variable(-1.5)
-
         self.qx_loc_var = tf.Variable(
             x_init,
             trainable=not use_point_estimates)
@@ -115,7 +109,7 @@ class RNASeqLinearRegression:
 
         w = yield Independent(tfd.Normal(
             loc=tf.zeros([self.num_factors, self.num_features]),
-            scale=5.0))
+            scale=w_local_scale * w_global_scale))
 
         x_bias = yield JDCRoot(Independent(tfd.Normal(
             loc=tf.fill([self.num_features], np.float32(self.x_bias_loc0)),
@@ -323,7 +317,7 @@ class RNASeqLinearRegression:
             step_num.assign(step_num + 1)
             #  anneal temperature
             qF_temperature_var.assign(
-                    init_temp * 0.05 ** tf.cast(step_num/niter, tf.float32))
+                    init_temp * 0.1 ** tf.cast(step_num/niter, tf.float32))
             return loss
 
         trainable_variables = [qF_logits_var]
@@ -391,6 +385,17 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
 
     def classify(self, vars, x_init, sample_scales, use_point_estimates, niter):
         x_init_mean = np.mean(x_init, axis=0)
+
+        qw_loc_var = self.qw_loc_var.numpy()
+        qw_softplus_scale_var = self.qw_softplus_scale_var.numpy()
+        idx = np.abs(qw_loc_var) < 1.0
+        print("NUM COEFS")
+        print(np.sum(idx))
+        qw_loc_var[idx] = 0.0
+        qw_softplus_scale_var[idx] = -5.0
+
+        self.qw_loc_var.assign(qw_loc_var)
+        self.qw_softplus_scale_var.assign(qw_softplus_scale_var)
 
         num_samples = len(sample_scales)
 

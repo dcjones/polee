@@ -45,6 +45,9 @@ arg_settings.prog = "polee model regression"
         metavar = "U"
         default = 0.975
         arg_type = Float64
+    "--write-variational-posterior-params"
+        action = :store_true
+        default = false
     "--effect-size"
         metavar = "S"
         help = "Output the posterior probability of abs log2 fold-change greater than S"
@@ -220,7 +223,8 @@ function main()
         qw_loc, qw_scale,
         parsed_args["lower-credible"],
         parsed_args["upper-credible"],
-        parsed_args["effect-size"])
+        parsed_args["effect-size"],
+        parsed_args["write-variational-posterior-params"])
 end
 
 
@@ -293,7 +297,8 @@ end
 function write_regression_effects(
         output_filename,
         factor_names, feature_names_label, feature_names,
-        qx_bias, qw_loc, qw_scale, q0, q1, effect_size)
+        qx_bias, qw_loc, qw_scale, q0, q1, effect_size,
+        write_variational_posterior_params)
 
     @assert size(qw_loc) == size(qw_scale)
     num_factors, num_features = size(qw_loc)
@@ -305,6 +310,9 @@ function write_regression_effects(
         if effect_size !== nothing
             print(output, ",prob_de,prob_down_de,prob_up_de")
             effect_size = log(abs(effect_size))
+        end
+        if write_variational_posterior_params
+            print(output, ",qw_loc,qw_scale")
         end
         println(output)
         for i in 1:num_factors, j in 1:num_features
@@ -330,6 +338,9 @@ function write_regression_effects(
                 # let's us specify a minimum effect size of 0.
                 @printf(output, ",%f,%f,%f", max(prob_down, prob_up), prob_down, prob_up)
                 # @printf(output, ",%f,%f,%f", prob_down + prob_up, prob_down, prob_up)
+            end
+            if write_variational_posterior_params
+                @printf(output, ",%f,%f", qw_loc[i,j], qw_scale[i,j])
             end
             println(output)
         end

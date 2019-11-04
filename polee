@@ -31,6 +31,7 @@ while [[ $# -gt 0 ]]; do
         ;;
         -t|--num-threads)
         export JULIA_NUM_THREADS="$2"
+        export OMP_NUM_THREADS="$2"
         shift
         shift
         ;;

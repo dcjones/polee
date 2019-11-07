@@ -88,6 +88,9 @@ class RNASeqLinearRegression:
         self.qx_softplus_scale_var = tf.Variable(
             tf.fill([self.num_samples, self.num_features], -1.0))
 
+    def get_x_posterior_params(self):
+        return (self.qx_loc_var.numpy(), tf.nn.softplus(self.qx_softplus_scale_var).numpy())
+
     def model_fn(self, design_matrix_model, likelihood_model, sample_scales):
         # Horseshoe prior on coefficients
         # Weird parameterization is from tfp.sts.SparseLinearRegression This

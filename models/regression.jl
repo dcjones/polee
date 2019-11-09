@@ -317,7 +317,7 @@ function write_regression_effects(
             effect_size = log(abs(effect_size))
         end
         if write_variational_posterior_params
-            print(output, "qx_bias_loc,qx_scale,qw_loc,qw_scale")
+            print(output, ",qx_bias_loc,qx_scale,qw_loc,qw_scale")
         end
         println(output)
         for i in 1:num_factors, j in 1:num_features
@@ -345,7 +345,7 @@ function write_regression_effects(
             end
             if write_variational_posterior_params
                 @printf(
-                    output, "%f,%f,%f,%f",
+                    output, ",%f,%f,%f,%f",
                     qx_bias[j], qx_scale[j],
                     qw_loc[i,j], qw_scale[i,j])
             end

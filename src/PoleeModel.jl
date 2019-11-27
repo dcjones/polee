@@ -13,10 +13,15 @@ export
     write_transcripts,
     create_tensorflow_variables!,
     estimate_sample_scales,
-    gene_initial_values
+    gene_initial_values,
+    build_factor_matrix,
+    splicing_features,
+    transcript_feature_matrices
 
 import Polee
-using Polee: HSBTransform, Transcripts, TranscriptsMetadata, LoadedSamples
+using Polee:
+    HSBTransform, Transcript, Transcripts, TranscriptsMetadata, LoadedSamples,
+    STRAND_POS, STRAND_NEG
 
 import YAML
 using PyCall
@@ -28,6 +33,8 @@ using ProgressMeter
 using Random: shuffle
 using GenomicFeatures
 using Statistics
+
+include("splice_graph.jl")
 
 const polee_py = PyNULL()
 const tf = PyNULL()
@@ -130,6 +137,77 @@ function load_transcripts_from_args(
             transcripts_filename, excluded_transcripts)
     end
 end
+
+
+"""
+Construct design matrix for regression/factor analysis models.
+"""
+function build_factor_matrix(
+        loaded_samples, factors, nonredundant::Bool=false)
+    # figure out possibilities for each factor
+    if factors === nothing
+        factors_set = Set{String}()
+        for sample_factors in loaded_samples.sample_factors
+            for factor in keys(sample_factors)
+                push!(factors_set, factor)
+            end
+        end
+        factors = collect(String, factors_set)
+    end
+
+    factor_options = Dict{String, Set{Union{Missing, String}}}()
+    for factor in factors
+        factor_options[factor] = Set{Union{Missing, String}}()
+    end
+
+    for sample_factors in loaded_samples.sample_factors
+        for factor in factors
+            push!(
+                factor_options[factor],
+                string(get(sample_factors, factor, missing)))
+        end
+    end
+
+    # remove one factor from each group to make them non-redundant
+    if nonredundant
+        for k in keys(factor_options)
+            if missing ∈ factor_options[k]
+                delete!(factor_options[k], missing)
+            else
+                delete!(factor_options[k], first(factor_options[k]))
+            end
+        end
+    end
+
+    # assign indexes to factors
+    nextidx = 1
+    factor_names = String[]
+    factor_idx = Dict{Tuple{String, String}, Int}()
+    for (factor, options) in factor_options
+        for option in options
+            factor_idx[(factor, option)] = nextidx
+            push!(factor_names, string(factor, ":", option))
+            nextidx += 1
+        end
+    end
+
+    num_samples = length(loaded_samples.sample_names)
+    num_factors = length(factor_idx)
+    F = zeros(Float32, (num_samples, num_factors))
+
+    for (i, sample_factors) in enumerate(loaded_samples.sample_factors)
+        for factor in factors
+            option = get(sample_factors, factor, missing)
+            if haskey(factor_idx, (factor, option))
+                F[i, factor_idx[(factor, option)]] = 1
+            end
+        end
+    end
+
+    return F, factor_names
+end
+
+
 
 
 """

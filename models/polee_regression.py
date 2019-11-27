@@ -534,3 +534,363 @@ class RNASeqGeneLinearRegression(RNASeqLinearRegression):
 
         return predictions
 
+
+class RNASeqJointLinearRegression:
+    def __init__(
+            self, vars,
+            tss_is, tss_js, num_gene_features,
+            feature_is, feature_js, num_splice_features,
+            gene_sizes, # number of transcripts in each gene
+            x_gene_init, x_isoform_init,
+            F_arr, sample_scales, use_point_estimates,
+            kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
+
+        num_samples = x_gene_init.shape[0]
+        n = np.max(tss_is)
+
+        F = tf.constant(F_arr, dtype=tf.float32)
+
+        x_gene_init_mean = np.mean(x_gene_init, axis=0)
+        x_gene_scale_hinges = tf.constant(
+            choose_knots(
+                np.min(x_gene_init_mean), np.max(x_gene_init_mean), kernel_regression_degree),
+            dtype=tf.float32)
+
+        self.x_splice_feature_indices = np.empty([num_samples*len(feature_is), 2], dtype=np.int)
+        k = 0
+        for l in range(num_samples):
+            for (i, j) in zip(feature_is, feature_js):
+                self.x_splice_feature_indices[k, 0] = (i - 1) + (l * n)
+                self.x_splice_feature_indices[k, 1] = (j - 1) + (l * num_splice_features)
+                k += 1
+        assert k == num_samples*len(feature_is)
+
+        self.gene_idxs = tss_js
+        self.gene_transcript_idxs = tss_is
+        self.gene_sizes = gene_sizes
+        self.sample_scales = sample_scales
+
+        self.vars = vars
+        self.use_point_estimates = use_point_estimates
+        self.F = F
+        self.num_samples = num_samples
+        self.num_factors = int(F.shape[1])
+        self.num_gene_features = num_gene_features
+        self.num_splice_features = num_splice_features
+        self.n = n
+
+        self.x_gene_bias_loc0 = np.log(1./num_gene_features)
+        self.x_gene_bias_scale0 = 12.0
+
+        self.kernel_regression_bandwidth = kernel_regression_bandwidth
+        self.kernel_regression_degree = kernel_regression_degree
+        self.x_gene_scale_hinges = x_gene_scale_hinges
+
+        # variational model parameters (gene/tss expression)
+
+        self.qw_gene_global_scale_variance_loc_var = tf.Variable(0.0)
+        self.qw_gene_global_scale_variance_softplus_scale_var = tf.Variable(-1.0)
+
+        self.qw_gene_global_scale_noncentered_loc_var = tf.Variable(0.0)
+        self.qw_gene_global_scale_noncentered_softplus_scale_var = tf.Variable(-1.0)
+
+        self.qw_gene_local_scale_variance_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_gene_features], 0.0))
+        self.qw_gene_local_scale_variance_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_gene_features], -1.0))
+
+        self.qw_gene_local_scale_noncentered_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_gene_features], 0.0))
+        self.qw_gene_local_scale_noncentered_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_gene_features], -1.0))
+
+        self.qw_gene_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_gene_features], 0.0))
+        self.qw_gene_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_gene_features], -2.0))
+
+        self.qx_gene_bias_loc_var = tf.Variable(
+            np.mean(x_gene_init, axis=0))
+        self.qx_gene_bias_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_gene_features], -1.0))
+
+        self.qx_gene_scale_concentration_c_loc_var = tf.Variable(
+            tf.fill([self.kernel_regression_degree], 1.0))
+        self.qx_gene_scale_scale_c_loc_var = tf.Variable(
+            tf.fill([self.kernel_regression_degree], 1.0))
+
+        self.qx_gene_scale_loc_var = tf.Variable(
+            tf.fill([self.num_gene_features], -0.5))
+        self.qx_gene_scale_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_gene_features], -1.0))
+
+        self.qx_gene_loc_var = tf.Variable(
+            x_gene_init, trainable=not use_point_estimates)
+        self.qx_gene_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_samples, self.num_gene_features], -1.0))
+
+        # variational model parameters (splice feature usage)
+        self.qw_splice_global_scale_variance_loc_var = tf.Variable(0.0)
+        self.qw_splice_global_scale_variance_softplus_scale_var = tf.Variable(-1.0)
+
+        self.qw_splice_global_scale_noncentered_loc_var = tf.Variable(0.0)
+        self.qw_splice_global_scale_noncentered_softplus_scale_var = tf.Variable(-1.0)
+
+        self.qw_splice_local_scale_variance_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_splice_features], 0.0))
+        self.qw_splice_local_scale_variance_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_splice_features], -1.0))
+
+        self.qw_splice_local_scale_noncentered_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_splice_features], 0.0))
+        self.qw_splice_local_scale_noncentered_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_splice_features], -1.0))
+
+        self.qw_splice_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_splice_features], 0.0))
+        self.qw_splice_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_splice_features], -2.0))
+
+        self.qx_splice_bias_loc_var = tf.Variable(
+            tf.fill([self.num_splice_features], 0.0))
+        self.qx_splice_bias_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_splice_features], -1.0))
+
+        self.qx_iso_scale_loc_var = tf.Variable(
+            tf.fill([self.n], 3.0))
+        self.qx_iso_scale_softplus_scale_var = tf.Variable(
+            tf.fill([self.n], -1.0))
+
+        self.qx_iso_loc_var = tf.Variable(
+            x_isoform_init, trainable=not use_point_estimates)
+        self.qx_iso_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_samples, self.n], -3.0))
+
+
+    def model_fn(self):
+        # horseshoe prior on gene-level coefficients
+        w_gene_global_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
+            concentration=0.5, scale=0.5)))
+        w_gene_global_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
+            scale=1.0)))
+        w_gene_global_scale = w_gene_global_scale_noncentered * tf.sqrt(w_gene_global_scale_variance)
+
+        w_gene_local_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
+            concentration=tf.fill([self.num_factors, self.num_gene_features], 0.5),
+            scale=tf.fill([self.num_factors, self.num_gene_features], 0.5))))
+        w_gene_local_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
+            scale=tf.ones([self.num_factors, self.num_gene_features]))))
+        w_gene_local_scale = w_gene_local_scale_noncentered * tf.sqrt(w_gene_local_scale_variance)
+
+        # gene-level coefficients
+        w_gene = yield Independent(tfd.Normal(
+            loc=tf.zeros([self.num_factors, self.num_gene_features]),
+            scale=w_gene_local_scale * w_gene_global_scale))
+
+        # gene-leval bias
+        x_gene_bias = yield JDCRoot(Independent(tfd.Normal(
+            loc=tf.fill([self.num_gene_features], np.float32(self.x_gene_bias_loc0)),
+            scale=np.float32(self.x_gene_bias_scale0))))
+
+        # TODO: include distortion trick?
+
+        x_gene_loc = tf.matmul(self.F, w_gene) + x_gene_bias
+
+        weights = kernel_regression_weights(
+            self.kernel_regression_bandwidth, x_gene_bias, self.x_gene_scale_hinges)
+
+        x_scale_concentration_c = yield JDCRoot(Independent(tfd.HalfCauchy(
+            loc=tf.zeros([self.kernel_regression_degree]), scale=10.0)))
+
+        x_scale_scale_c = yield JDCRoot(Independent(tfd.HalfCauchy(
+            loc=tf.zeros([self.kernel_regression_degree]), scale=10.0)))
+
+        x_scale = yield Independent(mean_variance_model(
+            weights, x_scale_concentration_c, x_scale_scale_c))
+
+        x_gene = yield Independent(tfd.Normal(
+            loc=x_gene_loc - self.sample_scales,
+            scale=x_scale))
+
+        if not self.use_point_estimates:
+            # penalty for scale drift
+            num_samples = len(self.sample_scales)
+
+            x_sample_scale = yield Independent(tfd.Normal(
+                loc=tf.zeros(num_samples),
+                scale=5e-4))
+
+        # horseshoe prior on splice coefficients
+        w_splice_global_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
+            concentration=0.5, scale=0.5)))
+        w_splice_global_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
+            scale=1.0)))
+        w_splice_global_scale = w_splice_global_scale_noncentered * tf.sqrt(w_splice_global_scale_variance)
+
+        w_splice_local_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
+            concentration=tf.fill([self.num_factors, self.num_splice_features], 0.5),
+            scale=tf.fill([self.num_factors, self.num_splice_features], 0.5))))
+        w_splice_local_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
+            scale=tf.ones([self.num_factors, self.num_splice_features]))))
+        w_splice_local_scale = w_splice_local_scale_noncentered * tf.sqrt(w_splice_local_scale_variance)
+
+        # splice-level coefficients
+        w_splice = yield Independent(tfd.Normal(
+            loc=tf.zeros([self.num_factors, self.num_splice_features]),
+            scale=w_splice_local_scale * w_splice_global_scale))
+
+        # splice-level bias
+        x_splice_bias = yield JDCRoot(Independent(tfd.Normal(
+            loc=tf.fill([self.num_splice_features], 0.0),
+            scale=10.0)))
+
+        # splice-level bias
+        x_splice_loc = tf.matmul(self.F, w_splice) + x_splice_bias
+
+        # work around lack of SparseTensor batching support by flattening everything
+        x_splice_loc_flat = tf.reshape(
+            x_splice_loc, [self.num_samples * self.num_splice_features, 1])
+
+        x_splice_feature_mat = tf.SparseTensor(
+            indices=self.x_splice_feature_indices,
+            values=tf.ones(len(self.x_splice_feature_indices)),
+            dense_shape=[
+                self.num_samples*self.n,
+                self.num_samples*self.num_splice_features])
+
+        x_iso_loc_flat = tf.sparse.sparse_dense_matmul(
+            x_splice_feature_mat, x_splice_loc_flat)
+
+        x_iso_loc = tf.reshape(x_iso_loc_flat, [1, self.num_samples, self.n])
+
+        x_iso_scale = yield Independent(tfd.HalfCauchy(
+            loc=0.0,
+            scale=tf.fill([self.n], 1.0)))
+
+        x_iso = yield Independent(tfd.Normal(
+            loc=x_iso_loc,
+            scale=x_iso_scale))
+
+        if not self.use_point_estimates:
+            likelihood = yield tfd.Independent(RNASeqGeneApproxLikelihoodDist(
+                self.vars, self.gene_idxs, self.gene_transcript_idxs,
+                self.gene_sizes, x_gene, x_iso))
+
+
+    def variational_model_fn(self):
+        # gene model
+        qw_gene_global_scale_variance = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_gene_global_scale_variance_loc_var,
+            scale=tf.nn.softplus(self.qw_gene_global_scale_variance_softplus_scale_var))))
+
+        qw_gene_global_scale_noncentered = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_gene_global_scale_noncentered_loc_var,
+            scale=tf.nn.softplus(self.qw_gene_global_scale_noncentered_softplus_scale_var))))
+
+        qw_gene_local_scale_variance = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_gene_local_scale_variance_loc_var,
+            scale=tf.nn.softplus(self.qw_gene_local_scale_variance_softplus_scale_var))))
+
+        qw_gene_local_scale_noncentered = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_gene_local_scale_noncentered_loc_var,
+            scale=tf.nn.softplus(self.qw_gene_local_scale_noncentered_softplus_scale_var))))
+
+        qw_gene = yield JDCRoot(Independent(tfd.Normal(
+            loc=self.qw_gene_loc_var,
+            scale=tf.nn.softplus(self.qw_gene_softplus_scale_var))))
+
+        qx_gene_bias = yield JDCRoot(Independent(tfd.Normal(
+            loc=self.qx_gene_bias_loc_var,
+            scale=tf.nn.softplus(self.qx_gene_bias_softplus_scale_var))))
+
+        qx_gene_scale_concentration_c = yield JDCRoot(Independent(tfd.Deterministic(
+            loc=tf.nn.softplus(self.qx_gene_scale_concentration_c_loc_var))))
+
+        qx_gene_scale_scale_c = yield JDCRoot(Independent(tfd.Deterministic(
+            loc=tf.nn.softplus(self.qx_gene_scale_scale_c_loc_var))))
+
+        qx_gene_scale = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qx_gene_scale_loc_var,
+            scale=tf.nn.softplus(self.qx_gene_scale_softplus_scale_var))))
+
+        if self.use_point_estimates:
+            qx_gene = yield JDCRoot(Independent(tfd.Deterministic(
+                loc=self.qx_gene_loc_var)))
+        else:
+            qx_gene = yield JDCRoot(Independent(tfd.Normal(
+                loc=self.qx_gene_loc_var,
+                scale=tf.nn.softplus(self.qx_gene_softplus_scale_var))))
+
+            # scale penality
+            qx_sample_scale = yield Independent(tfd.Deterministic(
+                loc=tf.math.log(tf.reduce_sum(tf.math.exp(self.qx_gene_loc_var), axis=-1))))
+
+        # splice model
+        qw_splice_global_scale_variance = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_splice_global_scale_variance_loc_var,
+            scale=tf.nn.softplus(self.qw_splice_global_scale_variance_softplus_scale_var))))
+
+        qw_splice_global_scale_noncentered = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_splice_global_scale_noncentered_loc_var,
+            scale=tf.nn.softplus(self.qw_splice_global_scale_noncentered_softplus_scale_var))))
+
+        qw_splice_local_scale_variance = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_splice_local_scale_variance_loc_var,
+            scale=tf.nn.softplus(self.qw_splice_local_scale_variance_softplus_scale_var))))
+
+        qw_splice_local_scale_noncentered = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_splice_local_scale_noncentered_loc_var,
+            scale=tf.nn.softplus(self.qw_splice_local_scale_noncentered_softplus_scale_var))))
+
+        qw_splice = yield JDCRoot(Independent(tfd.Normal(
+            loc=self.qw_splice_loc_var,
+            scale=tf.nn.softplus(self.qw_splice_softplus_scale_var))))
+
+        qx_splice_bias = yield JDCRoot(Independent(tfd.Normal(
+            loc=self.qx_splice_bias_loc_var,
+            scale=tf.nn.softplus(self.qx_splice_bias_softplus_scale_var))))
+
+        qx_iso_scale = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qx_iso_scale_loc_var,
+            scale=tf.nn.softplus(self.qx_iso_scale_softplus_scale_var))))
+
+        if self.use_point_estimates:
+            qx_iso = yield JDCRoot(Independent(tfd.Deterministic(
+                loc=self.qx_iso_loc_var)))
+        else:
+            qx_iso = yield JDCRoot(Independent(tfd.Normal(
+                loc=self.qx_iso_loc_var,
+                scale=tf.nn.softplus(self.qx_iso_softplus_scale_var))))
+
+            qrnaseq_reads = yield JDCRoot(Independent(
+                tfd.Deterministic(tf.zeros([self.num_samples]))))
+
+    def fit(self, niter):
+        model = tfd.JointDistributionCoroutine(
+            lambda: self.model_fn())
+
+        variational_model = tfd.JointDistributionCoroutine(
+            lambda: self.variational_model_fn())
+
+        step_num = tf.Variable(1, trainable=False)
+
+        @tf.function
+        def trace_fn(loss, grad, vars):
+            if tf.math.mod(step_num, 200) == 0:
+                tf.print("[", step_num, "/", niter, "]  loss: ", loss, sep='')
+            step_num.assign(step_num + 1)
+            return loss
+
+        trace = tfp.vi.fit_surrogate_posterior(
+            target_log_prob_fn=lambda *args: model.log_prob(args),
+            surrogate_posterior=variational_model,
+            optimizer=tf.optimizers.Adam(learning_rate=1e-3),
+            sample_size=1,
+            num_steps=niter,
+            trace_fn=trace_fn)
+
+        return (
+            self.qw_gene_loc_var.numpy(),
+            tf.nn.softplus(self.qw_gene_softplus_scale_var).numpy(),
+            self.qw_splice_loc_var.numpy(),
+            tf.nn.softplus(self.qw_splice_softplus_scale_var).numpy())

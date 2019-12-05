@@ -22,7 +22,7 @@ arg_settings.prog = "polee model regression"
         metavar = "F"
         action = :store_arg
         default = "transcript"
-        help = "One of transcript, gene, splicing"
+        help = "One of transcript, gene, gene-isoform"
     "--point-estimates"
         help = """
             Use point estimates read from a file specified in the experiment
@@ -37,6 +37,12 @@ arg_settings.prog = "polee model regression"
         metavar = "filename"
         help = "Output file for regression coefficients"
         default = "regression-coefficients.csv"
+    "--isoform-output"
+        metavar = "filename"
+        help = """
+            Output file for isoform regression results when 'gene-isoform'
+            regression is used. """
+        default = "regression-isoform-coefficients.csv"
     "--lower-credible"
         metavar = "L"
         default = 0.025
@@ -78,12 +84,8 @@ function main()
 
     feature = parsed_args["feature"]
 
-    if feature ∉ ["transcript", "gene", "splicing"]
+    if feature ∉ ["transcript", "gene", "gene-isoform"]
         error(string(parsed_args["feature"], " is not a supported feature."))
-    end
-
-    if feature ∈ ["splicing"]
-        error(string(parsed_args["feature"], " feature is not yet implemented."))
     end
 
     ts, ts_metadata = load_transcripts_from_args(parsed_args)
@@ -217,6 +219,56 @@ function main()
         #         println(output, feature_names[j], ",", i, ",", x0_log[i,j])
         #     end
         # end
+    else "gene-isoform"
+        num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
+            Polee.gene_feature_matrix(ts, ts_metadata)
+
+        p = sortperm(transcript_idxs)
+        # permute!(gene_idxs, p)
+        permute!(transcript_idxs, p)
+
+        gene_sizes = zeros(Float32, num_features)
+        for i in gene_idxs
+            gene_sizes[i] += 1
+        end
+
+        x_gene_init, x_isoform_init = gene_initial_values(
+            gene_idxs, transcript_idxs,
+            loaded_samples.x0_values, num_samples, num_features, n)
+
+        # @show x_isoform_init[1:200]
+        # exit()
+
+        sample_scales = estimate_sample_scales(log.(loaded_samples.x0_values), upper_quantile=0.95)
+
+        regression = polee_regression_py.RNASeqGeneIsoformLinearRegression(
+                loaded_samples.variables,
+                gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
+                gene_sizes, factor_matrix, sample_scales,
+                use_point_estimates)
+
+        qw_gene_loc, qw_gene_scale, qw_isoform_loc, qw_isoform_scale,
+            qx_isoform_bias_loc, qx_isoform_bias_scale = regression.fit(10000)
+
+        min_effect_sizes, mean_effect_sizes = estimate_isoform_effect_sizes(
+            gene_idxs, transcript_idxs, qw_isoform_loc, qw_isoform_scale,
+            qx_isoform_bias_loc, qx_isoform_bias_scale)
+
+        transcript_names = String[t.metadata.name for t in ts]
+
+        write_isoform_regression_effects(
+            parsed_args["isoform-output"],
+            gene_idxs, transcript_idxs,
+            factor_names,
+            gene_ids, transcript_names,
+            min_effect_sizes, mean_effect_sizes,
+            qw_isoform_loc, qx_isoform_bias_loc)
+
+        # TODO: also write gene effects. Could use the existing function
+        # but I'm thinking now the existing function should output
+        # minimum effect size.
+
+        return
     end
 
     write_regression_effects(
@@ -230,72 +282,6 @@ function main()
         parsed_args["upper-credible"],
         parsed_args["effect-size"],
         parsed_args["write-variational-posterior-params"])
-end
-
-
-function build_factor_matrix(
-        loaded_samples, factors, nonredundant::Bool=false)
-    # figure out possibilities for each factor
-    if factors === nothing
-        factors_set = Set{String}()
-        for sample_factors in loaded_samples.sample_factors
-            for factor in keys(sample_factors)
-                push!(factors_set, factor)
-            end
-        end
-        factors = collect(String, factors_set)
-    end
-
-    factor_options = Dict{String, Set{Union{Missing, String}}}()
-    for factor in factors
-        factor_options[factor] = Set{Union{Missing, String}}()
-    end
-
-    for sample_factors in loaded_samples.sample_factors
-        for factor in factors
-            push!(
-                factor_options[factor],
-                string(get(sample_factors, factor, missing)))
-        end
-    end
-
-    # remove one factor from each group to make them non-redundant
-    if nonredundant
-        for k in keys(factor_options)
-            if missing ∈ factor_options[k]
-                delete!(factor_options[k], missing)
-            else
-                delete!(factor_options[k], first(factor_options[k]))
-            end
-        end
-    end
-
-    # assign indexes to factors
-    nextidx = 1
-    factor_names = String[]
-    factor_idx = Dict{Tuple{String, String}, Int}()
-    for (factor, options) in factor_options
-        for option in options
-            factor_idx[(factor, option)] = nextidx
-            push!(factor_names, string(factor, ":", option))
-            nextidx += 1
-        end
-    end
-
-    num_samples = length(loaded_samples.sample_names)
-    num_factors = length(factor_idx)
-    F = zeros(Float32, (num_samples, num_factors))
-
-    for (i, sample_factors) in enumerate(loaded_samples.sample_factors)
-        for factor in factors
-            option = get(sample_factors, factor, missing)
-            if haskey(factor_idx, (factor, option))
-                F[i, factor_idx[(factor, option)]] = 1
-            end
-        end
-    end
-
-    return F, factor_names
 end
 
 
@@ -353,5 +339,122 @@ function write_regression_effects(
         end
     end
 end
+
+
+function write_isoform_regression_effects(
+        output_filename,
+        gene_idxs, transcript_idxs,
+        factor_names, gene_ids, transcript_names,
+        min_effect_sizes, mean_effect_sizes,
+        qw_isoform_loc, qx_isoform_bias_loc)
+
+    transcript_gene_idx = Dict{Int, Int}()
+    for (gene_idx, transcript_idx) in zip(gene_idxs, transcript_idxs)
+        transcript_gene_idx[transcript_idx] = gene_idx
+    end
+
+    num_factors, n = size(min_effect_sizes)
+    ln2 = log(2f0)
+
+    # TODO: should we also output prob_de wrt to some effect size?
+
+    open(output_filename, "w") do output
+        println(output, "factor,gene_id,transcript_id,mean_effect_size,min_effect_size,w_mean,x_bias")
+        for i in 1:num_factors, j in 1:n
+            println(
+                output,
+                factor_names[i], ",",
+                gene_ids[transcript_gene_idx[j]], ",",
+                transcript_names[j], ",",
+                mean_effect_sizes[i, j]/ln2, ",",
+                min_effect_sizes[i, j]/ln2, ",",
+                qw_isoform_loc[i,j], ",",
+                qx_isoform_bias_loc[j])
+        end
+    end
+end
+
+function estimate_isoform_effect_sizes(
+        gene_idxs, transcript_idxs,
+        qw_loc, qw_scale, qx_bias_loc, qx_bias_scale;
+        niter=100, target_coverage=0.1)
+
+    gene_transcript_idxs = Dict{Int, Vector{Int}}()
+    for (gene_idx, transcript_idx) in zip(gene_idxs, transcript_idxs)
+        push!(get!(() -> Int[], gene_transcript_idxs, gene_idx), transcript_idx)
+    end
+
+    # index mapping transcript index to an array of every transcript in the
+    # same gene
+    index = Dict{Int, Vector{Int}}()
+    for (gene_idx, transcript_idx) in zip(gene_idxs, transcript_idxs)
+        index[transcript_idx] = gene_transcript_idxs[gene_idx]
+    end
+
+    num_factors, n = size(qw_loc)
+
+    x = zeros(Float64, n)
+    x_proportion = zeros(Float64, n)
+    w = zeros(Float64, (num_factors, n))
+
+    effect_size_samples = zeros(Float32, (num_factors, n, niter))
+
+    for iter in 1:niter
+        # draw sample from x_bias posterior
+        for i in 1:n
+            x[i] = randn() * qx_bias_scale[i] + qx_bias_loc[i]
+        end
+
+        # softmax to gene-relative isoform proportions
+        for (gene_idx, transcript_idxs) in gene_transcript_idxs
+            denom = 0.0
+            for i in transcript_idxs
+                denom += exp(x[i])
+            end
+
+            for i in transcript_idxs
+                x_proportion[i] = exp(x[i]) / denom
+            end
+        end
+
+        # draw sample from w posterior
+        for i in 1:num_factors, j in 1:n
+            w[i, j] = randn() * qw_scale[i,j] + qw_loc[i,j]
+        end
+
+        # compute effect size for each coefficient
+        for i in 1:num_factors, j in 1:n
+            numer = exp(x[j] + w[i,j])
+            denom = numer
+            for k in index[j]
+                if k != j
+                    denom += exp(x[k])
+                end
+            end
+            x_alt_proportion = numer/denom
+
+            # need to compare to baseline proportion now
+            effect_size_samples[i, j, iter] =
+                log(x_alt_proportion) .- log(x_proportion[j])
+        end
+    end
+
+    min_effect_sizes = Array{Float32}(undef, (num_factors, n))
+    for i in 1:num_factors, j in 1:n
+        min_effect_sizes[i,j] = find_minimum_effect_size_from_samples(
+            (@view effect_size_samples[i, j, :]), target_coverage)
+    end
+
+    mean_effect_sizes = mean(effect_size_samples, dims=3)
+
+    return min_effect_sizes, mean_effect_sizes
+end
+
+
+function find_minimum_effect_size_from_samples(xs, target_coverage)
+    xs = sort(abs.(xs))
+    return xs[clamp(round(Int, target_coverage * length(xs)), 1, length(xs))]
+end
+
 
 main()

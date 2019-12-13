@@ -13,6 +13,7 @@ using StatsFuns
 using Distributions
 using Printf: @printf
 import Random
+import SQLite
 
 
 const arg_settings = ArgParseSettings()
@@ -22,7 +23,7 @@ arg_settings.prog = "polee model regression"
         metavar = "F"
         action = :store_arg
         default = "transcript"
-        help = "One of transcript, gene, gene-isoform"
+        help = "One of transcript, gene, gene-isoform, splice-feature"
     "--point-estimates"
         help = """
             Use point estimates read from a file specified in the experiment
@@ -51,9 +52,12 @@ arg_settings.prog = "polee model regression"
         metavar = "U"
         default = 0.975
         arg_type = Float64
+    "--min-effect-size-coverage"
+        metavar = "C"
+        default = 0.1
+        arg_type = Float64
     "--write-variational-posterior-params"
         action = :store_true
-        default = false
     "--effect-size"
         metavar = "S"
         help = "Output the posterior probability of abs log2 fold-change greater than S"
@@ -68,11 +72,14 @@ arg_settings.prog = "polee model regression"
     "--nonredundant"
         help = "Avoid overparameterization by excluding one factor from each group"
         action = :store_true
-        default = false
+    "--redundant-factor"
+        help = "When --nonredundant is specified, exclude this factor"
+        metavar = "factor"
+        default = ""
+        arg_type = String
     "--balanced"
         help = "Instead of factors represented as 0/1 in the design matrix, use -1/1"
         action = :store_true
-        default = false
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification"
@@ -84,7 +91,7 @@ function main()
 
     feature = parsed_args["feature"]
 
-    if feature ∉ ["transcript", "gene", "gene-isoform"]
+    if feature ∉ ["transcript", "gene", "gene-isoform", "splice-feature"]
         error(string(parsed_args["feature"], " is not a supported feature."))
     end
 
@@ -97,6 +104,7 @@ function main()
     tf_py.config.threading.set_inter_op_parallelism_threads(Threads.nthreads())
     tf_py.config.threading.set_intra_op_parallelism_threads(Threads.nthreads())
 
+    polee_py = pyimport("polee")
     polee_regression_py = pyimport("polee_regression")
 
     spec = YAML.load_file(parsed_args["experiment"])
@@ -128,7 +136,10 @@ function main()
         nothing : split(parsed_args["factors"], ',')
 
     factor_matrix, factor_names = build_factor_matrix(
-        loaded_samples, factors, parsed_args["nonredundant"])
+        loaded_samples, factors,
+        parsed_args["nonredundant"] ?
+        parsed_args["redundant-factor"] : nothing)
+
 
     if parsed_args["balanced"]
         for idx in eachindex(factor_matrix)
@@ -179,12 +190,12 @@ function main()
         #     end
         # end
 
-        # open("gene-expression.csv", "w") do output
-        #     println(output, "gene_id,sample,expression")
-        #     for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
-        #         println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
-        #     end
-        # end
+        open(string(parsed_args["output"], ".gene-expression.csv"), "w") do output
+            println(output, "gene_id,sample,expression")
+            for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
+                println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
+            end
+        end
 
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)
@@ -219,13 +230,16 @@ function main()
         #         println(output, feature_names[j], ",", i, ",", x0_log[i,j])
         #     end
         # end
-    else "gene-isoform"
+    elseif feature == "gene-isoform"
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
 
         p = sortperm(transcript_idxs)
         # permute!(gene_idxs, p)
         permute!(transcript_idxs, p)
+
+        @assert length(transcript_idxs) == n
+        @assert transcript_idxs == collect(1:n)
 
         gene_sizes = zeros(Float32, num_features)
         for i in gene_idxs
@@ -248,7 +262,8 @@ function main()
                 use_point_estimates)
 
         qw_gene_loc, qw_gene_scale, qw_isoform_loc, qw_isoform_scale,
-            qx_isoform_bias_loc, qx_isoform_bias_scale = regression.fit(10000)
+            qx_isoform_bias_loc, qx_isoform_bias_scale,
+            qx_gene_bias, qx_gene_scale = regression.fit(10000)
 
         min_effect_sizes, mean_effect_sizes = estimate_isoform_effect_sizes(
             gene_idxs, transcript_idxs, qw_isoform_loc, qw_isoform_scale,
@@ -264,11 +279,77 @@ function main()
             min_effect_sizes, mean_effect_sizes,
             qw_isoform_loc, qx_isoform_bias_loc)
 
-        # TODO: also write gene effects. Could use the existing function
-        # but I'm thinking now the existing function should output
-        # minimum effect size.
+        # TODO: debugging by output point estimates.
+        # open("x-point-estimates.csv", "w") do output
+        #     println(output, "sample,transcript,proportion")
+        #     for i in 1:num_samples, j in 1:n
+        #         println(
+        #             output,
+        #             i, ",",
+        #             transcript_names[j], ",",
+        #             exp.(x_isoform_init[i, j]))
+        #     end
+        # end
 
-        return
+        # set of variables for output
+        feature_names = gene_ids
+        feature_names_label = "gene_id"
+        qw_loc = qw_gene_loc
+        qw_scale = qw_gene_scale
+        qx_bias = qx_gene_bias
+        qx_scale = qx_gene_scale
+
+    elseif feature == "splice-feature"
+        # find splice features
+
+        # temporary database to store feature metadata
+        # TODO: add an option to write this database to a file.
+        gene_db = SQLite.DB()
+
+        num_features, feature_idxs, feature_transcript_idxs,
+           antifeature_idxs, antifeature_transcript_idxs =
+            splicing_features(ts, ts_metadata, gene_db, alt_ends=true)
+
+        # compute initial values
+        x_features_init = zeros(Float32, (num_samples, num_features))
+        for k in 1:num_samples
+            for (i, j) in zip(feature_idxs, feature_transcript_idxs)
+                x_features_init[k, i] += loaded_samples.x0_values[k, j]
+            end
+        end
+
+        x_antifeatures_init = zeros(Float32, (num_samples, num_features))
+        for k in 1:num_samples
+            for (i, j) in zip(antifeature_idxs, antifeature_transcript_idxs)
+                x_antifeatures_init[k, i] += loaded_samples.x0_values[k, j]
+            end
+        end
+
+        x_init = log.(x_features_init) .- log.(x_antifeatures_init)
+        @assert all(isfinite.(x_init))
+
+        println("approximating splice feature likelihood")
+        qx_feature_loc, qx_feature_scale = approximate_splicing_likelihood(
+            loaded_samples, num_features, feature_idxs, feature_transcript_idxs,
+            antifeature_idxs, antifeature_transcript_idxs)
+        println("done")
+
+        regression = polee_regression_py.RNASeqSpliceFeatureLinearRegression(
+            factor_matrix, x_init, qx_feature_loc, qx_feature_scale)
+
+        qw_loc, qw_scale, qx_bias_loc = regression.fit(10000)
+
+        # output results
+        write_splice_feature_regression_effects(
+            parsed_args["output"],
+            factor_names,
+            qw_loc, qw_scale,
+            gene_db,
+            parsed_args["min-effect-size-coverage"],
+            [t.metadata.name for t in ts],
+            ts_metadata, x_init)
+
+        exit()
     end
 
     write_regression_effects(
@@ -281,7 +362,30 @@ function main()
         parsed_args["lower-credible"],
         parsed_args["upper-credible"],
         parsed_args["effect-size"],
+        parsed_args["min-effect-size-coverage"],
         parsed_args["write-variational-posterior-params"])
+end
+
+
+function find_minimum_effect_size(μ, σ, target_coverage)
+    dist = Normal(μ, σ)
+
+    δ_min = 0.0
+    δ_max = 20.0
+    coverage = 1.0
+    while abs(coverage - target_coverage) / target_coverage > 0.001
+        δ = (δ_max + δ_min) / 2
+        coverage = cdf(dist, δ) - cdf(dist, -δ)
+
+        if coverage > target_coverage
+            δ_max = δ
+        else
+            δ_min = δ
+        end
+    end
+
+    δ = (δ_max + δ_min) / 2
+    return δ
 end
 
 
@@ -289,7 +393,7 @@ function write_regression_effects(
         output_filename,
         factor_names, feature_names_label, feature_names,
         qx_bias, qx_scale, qw_loc, qw_scale, q0, q1, effect_size,
-        write_variational_posterior_params)
+        mes_target_coverage, write_variational_posterior_params)
 
     @assert size(qw_loc) == size(qw_scale)
     num_factors, num_features = size(qw_loc)
@@ -297,7 +401,9 @@ function write_regression_effects(
     ln2 = log(2f0)
 
     open(output_filename, "w") do output
-        print(output, "factor,", feature_names_label, ",post_mean_effect,lower_credible,upper_credible")
+        print(
+            output, "factor,", feature_names_label,
+            ",min_effect_size,post_mean_effect,lower_credible,upper_credible")
         if effect_size !== nothing
             print(output, ",prob_de,prob_down_de,prob_up_de")
             effect_size = log(abs(effect_size))
@@ -315,9 +421,13 @@ function write_regression_effects(
             lc = quantile(dist, q0) * qw_scale[i,j] + qw_loc[i,j]
             uc = quantile(dist, q1) * qw_scale[i,j] + qw_loc[i,j]
 
+            min_effect_size = find_minimum_effect_size(
+                qw_loc[i,j], qw_scale[i,j], mes_target_coverage)
+
             @printf(
-                output, "%s,%s,%f,%f,%f",
+                output, "%s,%s,%f,%f,%f,%f",
                 factor_names[i], feature_names[j],
+                min_effect_size/ln2,
                 qw_loc[i,j]/ln2, lc/ln2, uc/ln2)
             if effect_size !== nothing
                 prob_down = cdf(dist, (-effect_size - qw_loc[i,j]) / qw_scale[i,j])
@@ -456,5 +566,101 @@ function find_minimum_effect_size_from_samples(xs, target_coverage)
     return xs[clamp(round(Int, target_coverage * length(xs)), 1, length(xs))]
 end
 
+
+function write_splice_feature_regression_effects(
+        output_filename, factor_names, qw_loc, qw_scale, gene_db,
+        min_effect_size_coverage, transcript_ids, ts_metadata, x_init)
+
+    num_factors, num_features = size(qw_loc)
+    ln2 = log(2f0)
+
+    seen_indexes = fill(false, num_features)
+    feature_types = Vector{String}(undef, num_features)
+    feature_loci = Vector{String}(undef, num_features)
+
+    query = SQLite.Query(
+        gene_db,
+        """
+        select feature_num, type, seqname, included_first,
+            included_last, excluded_first, excluded_last
+        from splicing_features
+        """)
+    for row in query
+        row.feature_num
+        seen_indexes[row.feature_num] = true
+        feature_types[row.feature_num] = row.type
+        feature_loci[row.feature_num] =
+            string(row.seqname, ":",
+                min(row.included_first, row.excluded_first), "-",
+                max(row.included_last, row.excluded_last))
+    end
+    @assert all(seen_indexes)
+
+    feature_gene_id_sets = [Set{String}() for _ in 1:num_features]
+
+    fill!(seen_indexes, false)
+    query = SQLite.Query(
+        gene_db,
+        """
+        select feature_num, transcript_num
+        from splicing_feature_including_transcripts
+        """)
+    for row in query
+        push!(
+            feature_gene_id_sets[row.feature_num],
+            ts_metadata.gene_id[transcript_ids[row.transcript_num]])
+        seen_indexes[row.feature_num] = true
+    end
+    @assert all(seen_indexes)
+
+    fill!(seen_indexes, false)
+    query = SQLite.Query(
+        gene_db,
+        """
+        select feature_num, transcript_num
+        from splicing_feature_excluding_transcripts
+        """)
+    for row in query
+        push!(
+            feature_gene_id_sets[row.feature_num],
+            ts_metadata.gene_id[transcript_ids[row.transcript_num]])
+        seen_indexes[row.feature_num] = true
+    end
+    @assert all(seen_indexes)
+
+    feature_gene_ids = [join(ids, ';') for ids in feature_gene_id_sets]
+
+    open(output_filename, "w") do output
+        println(output, "factor,type,gene_ids,locus,mean_effect_size,min_effect_size")
+        for i in 1:num_factors, j in 1:num_features
+            min_effect_size = find_minimum_effect_size(
+                qw_loc[i,j], qw_scale[i,j], min_effect_size_coverage)
+
+            println(
+                output,
+                factor_names[i], ",",
+                feature_types[j], ",",
+                feature_gene_ids[j], ",",
+                feature_loci[j], ",",
+                qw_loc[i,j] / ln2, ",",
+                min_effect_size / ln2)
+        end
+    end
+
+    # TODO: debug output
+    num_samples = size(x_init, 1)
+    open(string(output_filename, ".post_mean.csv"), "w") do output
+        println(output, "sample,type,gene_ids,locus,post_mean")
+        for i in 1:num_samples, j in 1:num_features
+            println(
+                output,
+                i, ",",
+                feature_types[j], ",",
+                feature_gene_ids[j], ",",
+                feature_loci[j], ",",
+                x_init[i,j])
+        end
+    end
+end
 
 main()

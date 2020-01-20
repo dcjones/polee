@@ -142,7 +142,7 @@ function main()
     end
 
     # do the adjustment
-    parent_pat = r"Parent=([^;]*);"
+    parent_pat = r"Parent=([^;]*);?"
     id_pat = r"ID=([^;]*);"
 
     for line in eachline(filename)

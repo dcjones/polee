@@ -28,9 +28,6 @@ arg_settings.prog = "evaluate-regression-results.jl"
     "--output"
         metavar = "filename"
         default = "regression-evaluation.csv"
-    "--output-binned"
-        metavar = "filename"
-        default = "regression-evaluation-binned.csv"
     "--num-samples"
         metavar = "N"
         help = "Number of samples to draw when evaluating entropy."
@@ -41,8 +38,11 @@ arg_settings.prog = "evaluate-regression-results.jl"
         help = "Output the posterior probability of abs log2 fold-change greater than S"
         default = 1.5
         arg_type = Float64
-    "--prob-bin-size"
-        default = 0.05
+    "--credible-interval"
+        metavar = "C"
+        help = """Size of the 0-centered credible interval to use when estimating
+            minimum effect size."""
+        default = 0.1
         arg_type = Float64
     "factor"
         help = "Factors to regress on."
@@ -53,6 +53,28 @@ arg_settings.prog = "evaluate-regression-results.jl"
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification for testing data."
+end
+
+
+function find_minimum_effect_size(μ, σ, target_coverage)
+    dist = Normal(μ, σ)
+
+    δ_min = 0.0
+    δ_max = 20.0
+    coverage = 1.0
+    while abs(coverage - target_coverage) > 0.001
+        δ = (δ_max + δ_min) / 2
+        coverage = cdf(dist, δ) - cdf(dist, -δ)
+
+        if coverage > target_coverage
+            δ_max = δ
+        else
+            δ_min = δ
+        end
+    end
+
+    δ = (δ_max + δ_min) / 2
+    return δ
 end
 
 
@@ -103,7 +125,6 @@ function main()
         :transcript_id, :factor, :qw_scale)
     sort!(qw_scale_df, :transcript_id)
     qw_scale = Matrix{Float64}(qw_scale_df[:,2:end])
-    # map!(sqrt, qw_scale, qw_scale) # std. dev. to variance
 
     @assert size(qw_loc) == size(qw_scale)
 
@@ -125,44 +146,13 @@ function main()
     end
 
     xs = zeros(Float64, (num_test_samples, n))
-
-    class_probs_row = zeros(Float64, num_classes)
-
     scales = ones(Float64, num_test_samples)
 
-    # TODO: New plan: what we really want to do is to evaluate the cumuluative
-    # accuracy of all the de calls within a probability bin in order to get
-    # a plot that rewards making confident calls.
-
-    # That means we have to do binning in this function.
-
-
-    # compute binned DE probabilities
-    dist = TDist(10.0)
     effect_size = log(abs(parsed_args["effect-size"]))
-    prob_bin_size = parsed_args["prob-bin-size"]
-    de_prob_bins = zeros(Int, (num_classes, n))
-    for i in 1:num_classes, j in 1:n
-        prob_down = cdf(dist, (-effect_size - qw_loc[j,i]) / qw_scale[j,i])
-        prob_up = ccdf(dist, (effect_size - qw_loc[j,i]) / qw_scale[j,i])
-        prob_de = prob_down + prob_up
+    class_probs = zeros(Float64, num_classes)
+    true_label_probs = zeros(Float64, (num_classes, n))
 
-        de_prob_bins[i, j] = round(Int, prob_de / prob_bin_size) + 1
-    end
-    num_prob_bins = round(Int, 1.0 / prob_bin_size) + 1
-    class_probs = zeros(Float64, (num_test_samples, n, num_classes))
-    binned_class_probs = zeros(Float64, (num_prob_bins, num_classes))
-
-    predictions = zeros(Float64, num_prob_bins)
-    bin_counts = zeros(Int, num_prob_bins)
-
-    entropy = zeros(Float64, (num_classes, n))
-    binned_entropy = zeros(Float64, (num_classes, num_prob_bins))
-
-
-    # TODO: maybe I should compute average class probabilities
-    # then compute everything else on that expectation?
-
+    dist = TDist(20.0)
     for t in 1:parsed_args["num-samples"]
         println(t, "/", parsed_args["num-samples"])
         draw_samples!(x_samplers_testing, testing_efflens, xs, x_perm)
@@ -176,96 +166,52 @@ function main()
 
         for i in 1:num_test_samples, j in 1:n
             for k in 1:num_classes
-                # TODO: maybe this underestimates the probability because Int
-                # does not consider x variance.
-                # I wonder if qw_scale should be used at all here...
-
-                # class_probs[i, j, k] = pdf(Normal(
-                #     qx_bias_loc[j] + qw_loc[j, k],
-                #     qx_scale[j]^2),
-                #     xs[i, j])
-
-                class_probs[i, j, k] = pdf(
+                # using TDist to avoid zero probabilities
+                class_probs[k] = pdf(
                     dist,
                     (xs[i, j] - (qx_bias_loc[j] + qw_loc[j, k])) / qx_scale[j])
             end
 
-            class_probs_sum = sum(class_probs[i, j, :])
-            entropy[sample_class_idxs[i], j] +=
+            class_probs_sum = sum(class_probs)
+
+            # true label probability
+            true_label_probs[sample_class_idxs[i], j] +=
                 class_probs_sum == 0.0 ? 1/num_classes :
                 class_probs[sample_class_idxs[i]] / class_probs_sum
-        end
-
-        # TODO: Now I'm thinking we should build a classifier by
-        # doing what we were doing:
-        #   use TDist to avoid zero probs
-        #   compute product (log-sum) of probabilities in each bin for each sample
-        #   take the argmax
-        #   estimate cumulative accuracy
-        #
-        # This is tricky with multi-class, because two tissues may have
-        # nearly the same DE genes, so they can be distinguished from everything
-        # else but not from each other, thus producing low predictive performance.
-        #
-        # Hopefully that averages out or something.
-
-        for i in 1:num_test_samples
-            true_k = sample_class_idxs[i]
-
-            fill!(binned_class_probs, 0.0)
-            for j in 1:n, k in 1:num_classes
-                bin = de_prob_bins[true_k, j]
-                binned_class_probs[bin, k] += log(class_probs[i, j, k])
-            end
-
-            fill!(predictions, 0.0)
-            for bin in 1:num_prob_bins
-                predictions[bin] += argmax(binned_class_probs[bin,:]) == true_k
-            end
-
-            @show (true_k, predictions[1])
-
-            binned_entropy[true_k, :] .+= predictions
         end
     end
 
     # average across sampler draws
-    entropy ./= parsed_args["num-samples"]
-    binned_entropy ./= parsed_args["num-samples"]
+    true_label_probs ./= parsed_args["num-samples"]
 
     # average across number of samples in each class
     class_counts = zeros(Int, num_classes)
     for idx in sample_class_idxs
         class_counts[idx] += 1
     end
-    entropy ./= class_counts
-    binned_entropy ./= class_counts
+    true_label_probs ./= class_counts
 
+    credibility = parsed_args["credible-interval"]
     open(parsed_args["output"], "w") do output
-        println(output, "transcript_id,factor,de_prob,classification_entropy")
+        println(output, "transcript_id,factor,de_prob,min_effect_size,true_label_prob")
         for i in 1:num_classes, j in 1:n
             prob_down = cdf(dist, (-effect_size - qw_loc[j,i]) / qw_scale[j,i])
             prob_up = ccdf(dist, (effect_size - qw_loc[j,i]) / qw_scale[j,i])
             prob_de = prob_down + prob_up
+
+            min_effect_size = find_minimum_effect_size(
+                qw_loc[j,i], qw_scale[j,i], credibility)
+
+            # change to log2 scale
+            min_effect_size / log(2.0)
 
             println(
                 output,
                 tnames[j], ",",
                 factor_names[i], ",",
                 prob_de, ",",
-                entropy[i, j])
-        end
-    end
-
-    open(parsed_args["output-binned"], "w") do output
-        println(output, "transcript_id,factor,classification_entropy")
-        for i in 1:num_classes, j in 1:num_prob_bins
-
-            println(
-                output,
-                factor_names[i], ",",
-                prob_bin_size * (j-1), ",",
-                binned_entropy[i, j])
+                min_effect_size, ",",
+                true_label_probs[i, j])
         end
     end
 end

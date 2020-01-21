@@ -51,12 +51,12 @@ if [[ ${unused_args[0]} == "model" ]]; then
             exit 1
         fi
 
-        $julia $model_file -- ${unused_args[@]:2}
+        $julia $model_file -- "${unused_args[@]:2}"
     else
         echo "Model name must be provided to \"polee model\"" >&2
         exit 1
     fi
 else
     # Otherwise run the regular program
-    $julia -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- ${unused_args[@]}
+    $julia -e "import Pkg; Pkg.activate(\"${polee_dir}\"); import Polee; Polee.main()" -- "${unused_args[@]}"
 fi

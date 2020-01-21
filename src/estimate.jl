@@ -197,7 +197,7 @@ function load_point_estimates(filenames, ts, ts_metadata)
                 row = split(line, ',')
                 if haskey(transcript_idx, row[1])
                     j = transcript_idx[row[1]]
-                    x0_values[i, j] = parse(Float32, row[2])/1f6
+                    x0_values[i, j] = parse(Float64, row[2])/1f6
                 else
                     # @warn "transcript not present in annotations" row[1]
                 end

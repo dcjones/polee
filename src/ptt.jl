@@ -132,6 +132,7 @@ function transform!(
         output_idx = t.index[1, i]
         if output_idx != 0
             xs[output_idx] = t.us[i]
+            xs[output_idx] = max(xs[output_idx], 1e-16)
             continue
         end
 

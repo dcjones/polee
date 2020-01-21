@@ -31,6 +31,7 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
 
         x_isoform_flat = tf.reshape(x_isoform, [n*num_samples])
         x_isoform_flat_exp = tf.math.exp(x_isoform_flat)
+
         x_isoform_indices = np.empty([n*num_samples, 2], dtype=np.int)
         k = 0
         for l in range(num_samples):
@@ -38,6 +39,7 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
                 x_isoform_indices[k, 0] = (i - 1) + (l * n)
                 x_isoform_indices[k, 1] = (j - 1) + (l * num_features)
                 k += 1
+        assert k == n*num_samples
 
         x_isoform_matrix_exp = tf.SparseTensor(
             indices=x_isoform_indices,

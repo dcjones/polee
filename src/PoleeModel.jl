@@ -143,7 +143,7 @@ end
 Construct design matrix for regression/factor analysis models.
 """
 function build_factor_matrix(
-        loaded_samples, factors, nonredundant::Bool=false)
+        loaded_samples, factors, nonredundant=nothing)
     # figure out possibilities for each factor
     if factors === nothing
         factors_set = Set{String}()
@@ -169,9 +169,13 @@ function build_factor_matrix(
     end
 
     # remove one factor from each group to make them non-redundant
-    if nonredundant
+    if nonredundant !== nothing
         for k in keys(factor_options)
-            if missing ∈ factor_options[k]
+            if nonredundant != ""
+                if nonredundant ∈ factor_options[k]
+                    delete!(factor_options[k], nonredundant)
+                end
+            elseif missing ∈ factor_options[k]
                 delete!(factor_options[k], missing)
             else
                 delete!(factor_options[k], first(factor_options[k]))

@@ -15,6 +15,7 @@ using Random
 using DecisionTree
 using LinearAlgebra: I
 using HDF5
+using DelimitedFiles
 
 include("kallisto.jl")
 
@@ -58,6 +59,14 @@ arg_settings.prog = "polee model classify"
     "--output-truth"
         help = "Output true sample values for testing data"
         default = "y-true.csv"
+    "--training-samples"
+        help = "Expand training data by sampling this many times from each sampler."
+        default = 20
+        arg_type = Int
+    "--testing-samples"
+        help = "Classify by averaging over this many samples."
+        default = 20
+        arg_type = Int
     "training-experiment"
         metavar = "training.yml"
         help = "Training experiment specification"
@@ -70,7 +79,6 @@ arg_settings.prog = "polee model classify"
         help = "Factors to regress on."
         arg_type = String
 end
-
 
 
 function main()
@@ -155,6 +163,12 @@ function main()
         testing_sample_names = testing_loaded_samples.sample_names
         testing_sample_factors = testing_loaded_samples.sample_factors
 
+        # x_samplers_training, training_efflens, training_sample_names, training_sample_factors =
+        #         load_samplers_from_specification(training_spec, ts, ts_metadata)
+
+        # x_samplers_testing, testing_efflens, testing_sample_names, testing_sample_factors =
+        #         load_samplers_from_specification(testing_spec, ts, ts_metadata)
+
         if parsed_args["pseudocount"] !== nothing
             error("--pseudocount argument only valid with --point-estimates")
         end
@@ -180,30 +194,56 @@ function main()
     y_true_training = decode_onehot(y_true_onehot_training)
     y_true_testing = decode_onehot(y_true_onehot_testing)
 
-    if feature == "gene"
-        error("Error gene classification not implemented.")
-    else
-        # TODO: handle kallisto-bootstrap
+    # TODO: handle kallisto-bootstrap
 
-        if use_point_estimates
-            n = size(x_training, 2)
-            classifier = polee_classify_py.RNASeqLogisticRegression(num_factors, n)
+    if use_point_estimates
+        n = size(x_training, 2)
+        classifier = polee_classify_py.RNASeqLogisticRegression(num_factors, n)
 
-            classifier.fit(
-                x_training,
-                y_true_onehot_training, 5000)
+        w = classifier.fit(
+            x_training,
+            y_true_onehot_training, 5000)
 
-            y_predicted = classifier.predict(x_testing)
-        else
-            classifier = polee_classify_py.RNASeqLogisticRegression(num_factors, n)
+        y_predicted = classifier.predict(x_testing)
 
-            classifier.fit_sample(
-                num_training_samples, n, training_loaded_samples.variables,
-                y_true_onehot_training, 5000)
-
-            y_predicted = classifier.predict_sample(
-                num_testing_samples, n, testing_loaded_samples.variables, 100)
+        open("x.csv", "w") do output
+            writedlm(output, x_training)
         end
+    else
+        classifier = polee_classify_py.RNASeqLogisticRegression(num_factors, n)
+
+        # x_training = Array{Float32}(undef,
+        #     (num_training_samples * parsed_args["training-samples"], n))
+        # draw_samples!(x_samplers_training, training_efflens, x_training)
+
+        # y_true_training_expanded = repeat(y_true_onehot_training, parsed_args["training-samples"])
+
+        # classifier.fit(
+        #     x_training, y_true_training_expanded,
+        #     5000, 1/parsed_args["training-samples"])
+
+
+        # x_test = similar(testing_efflens)
+        # x_test_features = Array{Float32}(undef, size(x_test))
+        # y_predicted = zeros(Float64, (num_testing_samples, num_factors))
+        # for i in 1:parsed_args["testing-samples"]
+        #     draw_samples!(x_samplers_testing, testing_efflens, x_test)
+        #     x_test_features .= x_test
+        #     y_predicted .+= classifier.predict(x_test_features)
+        # end
+        # y_predicted ./= parsed_args["testing-samples"]
+
+
+        w = classifier.fit_sample(
+            num_training_samples, n, training_loaded_samples.variables,
+            y_true_onehot_training, 5000)
+
+        y_predicted = classifier.predict_sample(
+            num_testing_samples, n, testing_loaded_samples.variables, 100)
+    end
+
+    open("w.csv", "w") do output
+        writedlm(output, w)
     end
 
     write_classification_probs(
@@ -212,6 +252,26 @@ function main()
         parsed_args["output-truth"],
         y_predicted,
         y_true_onehot_testing)
+end
+
+
+"""
+Draw sample from approximated likelihood, adjust for effective length and log
+transform.
+"""
+function draw_samples!(samplers, efflens, xs)
+    num_samples = length(samplers)
+    # conceivably this could draw from the same sampler twice in different threads
+    # which would break things. Sampling isn't a big bottleneck anyway.
+    # Threads.@threads for i in 1:size(xs, 1)
+    for i in 1:size(xs, 1)
+        xs_row = @view xs[i,:]
+        k = mod1(i, num_samples)
+        rand!(samplers[k], xs_row)
+        xs_row ./= @view efflens[k,:]
+        xs_row ./= sum(xs_row)
+        map!(log, xs_row, xs_row)
+    end
 end
 
 

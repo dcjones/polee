@@ -27,17 +27,19 @@ arg_settings.prog = "polee model regression"
         metavar = "C"
         help = "If specified with --point-estimates, add C tpm to each value."
         arg_type = Float64
-    "--output"
+    "--gene-output"
         metavar = "filename"
         help = "Output file for regression coefficients"
-        default = "regression-coefficients.csv"
-    "--lower-credible"
-        metavar = "L"
-        default = 0.025
-        arg_type = Float64
-    "--upper-credible"
-        metavar = "U"
-        default = 0.975
+        default = "gene-regression-coefficients.csv"
+    "--splice-output"
+        metavar = "filename"
+        help = "Output file for regression coefficients"
+        default = "splice-regression-coefficients.csv"
+    "--credible-interval"
+        metavar = "C"
+        help = """Size of the 0-centered credible interval to use when estimating
+            minimum effect size."""
+        default = 0.1
         arg_type = Float64
     "--write-variational-posterior-params"
         action = :store_true
@@ -153,9 +155,110 @@ function main()
         x_gene_init, x_isoform_init,
         factor_matrix, sample_scales, use_point_estimates)
 
-    regression.fit(10000)
+    qw_gene_loc, qw_gene_scale, w_splice_samples = regression.fit(50)
 
-    # TODO: write regression results
+    write_gene_regression_results(
+        parsed_args["gene-output"], ts, tss_metadata, w_gene_loc, w_gene_scale)
+
+    write_splice_regression_results(
+        parsed_args["splice-output"], w_splice_samples)
+end
+
+
+function write_gene_regression_results(
+        output_filename, factor_names,
+        ts, tss_metadata, qw_gene_loc, qw_gene_scale,
+        min_effect_size_confidence)
+
+    @assert size(qw_gene_loc) == size(qw_gene_scale)
+    num_factors, num_features = size(qw_gene_loc)
+    ln2 = log(2f0)
+
+    tss_names = String[
+        string(m.seqname, ":", m.position,
+            "[", (m.strand == STRAND_POS ? "+" : "-"), "]") for m in tss_metadata]
+
+    open(open(output_filename), "w") do output
+        println(output, "factor,tss,mean_effect_size,min_effect_size")
+        for i in 1:num_factors, j in 1:num_features
+
+            min_effect_size = find_minimum_effect_size(
+                qw_gene_loc[i,j], qw_gene_scale[i,j], min_effect_size_confidence)
+            min_effect_size /= ln2
+
+            println(
+                output, factor_names[i], ",", tss_names[j], ",",
+                qw_gene_loc[i,j] / ln2, ",", min_effect_size)
+        end
+    end
+end
+
+
+function splice_feature_description(metadata::FeatureMetadata)
+    return string(
+        metadata.seqname, ":",
+        metadata.first "-", metadata.last,
+        "[", (metadata.strand == STRAND_POS ? "+" : "-"), "]")
+end
+
+
+function write_splice_regression_results(
+        output_filename, factor_names, feature_metadata, w_splice_samples,
+        min_effect_size_confidence)
+
+    num_factors, num_features, num_reps = size(w_splice_samples)
+
+    splice_feature_descriptions = map(
+        splice_feature_description, feature_metadata)
+
+    splice_feature_types = [m.type for m in feature_metadata]
+
+    open(output_filename, "w") do output
+        println(
+            output,
+            "factor,feature,feature_type,mean_effect_size,min_effect_size")
+        for i in 1:num_factors, j in 1:num_features
+            min_effect_size = find_minimum_effect_size_from_samples(
+                @view w_splice_samples[i, j, :], min_effect_size_confidence)
+            mean_effect_size = mean(@view w_splice_samples[i, j, :])
+
+            println(
+                output,
+                factor_names[i], ",",
+                splice_feature_descriptions[j], ",",
+                splice_feature_types[j], ",",
+                mean_effect_size, ",",
+                min_effect_size)
+        end
+    end
+end
+
+
+function find_minimum_effect_size(μ, σ, target_coverage)
+    dist = Normal(μ, σ)
+
+    δ_min = 0.0
+    δ_max = 20.0
+    coverage = 1.0
+    while abs(coverage - target_coverage) > 0.001
+        δ = (δ_max + δ_min) / 2
+        coverage = cdf(dist, δ) - cdf(dist, -δ)
+
+        if coverage > target_coverage
+            δ_max = δ
+        else
+            δ_min = δ
+        end
+    end
+
+    δ = (δ_max + δ_min) / 2
+    return δ
+end
+
+
+function find_minimum_effect_size_from_samples(xs, target_coverage)
+    xs = sort(abs.(xs))
+    return xs[clamp(round(Int, target_coverage * length(xs)), 1, length(xs))]
 end
 
 

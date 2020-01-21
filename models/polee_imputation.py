@@ -58,6 +58,10 @@ class RNASeqImputedTranscriptLinearRegression(polee_regression.RNASeqTranscriptL
         self.num_testing_samples = num_samples - self.num_training_samples
         self.confounders = confounders
 
+        F_mask = np.identity(num_factors, dtype=np.float32)
+        F_mask[0,0] = 0.0
+        self.F_mask = tf.constant(F_mask)
+
         super(RNASeqImputedTranscriptLinearRegression, self).__init__(
             vars, x_init, F_arr,
             sample_scales, use_point_estimates,
@@ -79,6 +83,8 @@ class RNASeqImputedTranscriptLinearRegression(polee_regression.RNASeqTranscriptL
 
         if self.confounders is not None:
             F_full = tf.concat([F_full, tf.expand_dims(self.confounders, 0)], axis=-1)
+
+        F_full = tf.matmul(F_full, self.F_mask)
 
         return F_full
 
@@ -126,7 +132,7 @@ class RNASeqImputedTranscriptLinearRegression(polee_regression.RNASeqTranscriptL
             step_num.assign(step_num + 1)
             #  anneal temperature
             qF_temperature_var.assign(
-                    init_temp * 0.5 ** tf.cast(step_num/niter, tf.float32))
+                    init_temp * 0.1 ** tf.cast(step_num/niter, tf.float32))
             return loss
 
         trace = tfp.vi.fit_surrogate_posterior(

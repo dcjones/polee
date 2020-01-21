@@ -13,29 +13,46 @@ If x is a tensor giving transcript expression, return a tensor giving
 the corresponding splicing log-ratios.
 """
 def transcript_expression_to_splicing_log_ratios(
-        num_features, n, feature_indices, antifeature_indices, x):
+        num_samples, num_features, n,
+        feature_indices_stacked, antifeature_indices_stacked, x):
 
     feature_matrix = tf.SparseTensor(
-        indices=feature_indices,
-        values=tf.ones(np.shape(feature_indices)[0]),
-        dense_shape=[num_features, n])
+        indices=feature_indices_stacked,
+        values=tf.ones(np.shape(feature_indices_stacked)[0]),
+        dense_shape=[num_samples*num_features, num_samples*n])
 
     antifeature_matrix = tf.SparseTensor(
-        indices=antifeature_indices,
-        values=tf.ones(np.shape(antifeature_indices)[0]),
-        dense_shape=[num_features, n])
+        indices=antifeature_indices_stacked,
+        values=tf.ones(np.shape(antifeature_indices_stacked)[0]),
+        dense_shape=[num_samples*num_features, num_samples*n])
 
-    splice_lrs = []
-    for x_i_ in tf.unstack(x):
-        x_i = tf.expand_dims(x_i_, -1)
+    # batch matmul by forming X into a blockwise sparse matrix
+    x_flat = tf.reshape(x, [num_samples * n, 1])
 
-        feature_expr     = tf.sparse_tensor_dense_matmul(feature_matrix, x_i)
-        antifeature_expr = tf.sparse_tensor_dense_matmul(antifeature_matrix, x_i)
+    feature_expr_flat = tf.sparse.sparse_dense_matmul(
+        feature_matrix, x_flat)
 
-        log_ratio = tf.log(feature_expr) - tf.log(antifeature_expr)
-        splice_lrs.append(log_ratio)
+    antifeature_expr_flat = tf.sparse.sparse_dense_matmul(
+        antifeature_matrix, x_flat)
 
-    return tf.squeeze(tf.stack(splice_lrs), axis=-1)
+    x_log_ratio_flat = \
+        tf.math.log(feature_expr_flat) - tf.math.log(antifeature_expr_flat)
+
+    x_log_ratio = tf.reshape(x_log_ratio_flat, [num_samples, num_features])
+
+    return x_log_ratio
+
+
+# @tf.function
+def sample_splice_feature_log_ratios(
+        vars, num_samples, num_features, n,
+        feature_idxs_stacked, antifeature_indices_stacked):
+
+    x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
+
+    return transcript_expression_to_splicing_log_ratios(
+        num_samples, num_features, n,
+        feature_idxs_stacked, antifeature_indices_stacked, x)
 
 
 """
@@ -43,34 +60,56 @@ Approximate likelihood function for splicing ratios using a normal distribution
 by minimizing KL(p||q) (not KL(q||p), which is more typical in VI).
 """
 def approximate_splicing_likelihood(
-        init_feed_dict, vars, num_samples, num_features, n,
-        feature_indices, antifeature_indices, sess=None):
+        vars, num_samples, num_features, n,
+        feature_indices, antifeature_indices):
 
+    # expand indices into blockwise matrices
+    num_entries = feature_indices.shape[0]
+    feature_indices_stacked = np.empty(
+        [num_samples * num_entries, 2], dtype=np.int)
+    for k in range(num_samples):
+        for i in range(num_entries):
+            feature_indices_stacked[k*num_entries+i,0] = k*num_features+feature_indices[i,0]
+            feature_indices_stacked[k*num_entries+i,1] = k*n + feature_indices[i,1]
+
+    num_entries = antifeature_indices.shape[0]
+    antifeature_indices_stacked = np.empty(
+        [num_samples * num_entries, 2], dtype=np.int)
+    for k in range(num_samples):
+        for i in range(num_entries):
+            antifeature_indices_stacked[k*num_entries+i,0] = k*num_features + antifeature_indices[i,0]
+            antifeature_indices_stacked[k*num_entries+i,1] = k*n + antifeature_indices[i,1]
+
+    num_mean_est_samples = 1000
     qx_feature_loc = tf.Variable(
-        tf.zeros([num_samples, num_features]),
-        name="qx_feature_loc")
+        tf.zeros([num_samples, num_features]))
 
-    qx_feature_scale = tf.nn.softplus(tf.Variable(
-        # tf.zeros([num_samples, num_features]),
-        tf.fill([num_samples, num_features], -2.0),
-        name="qx_feature_scale_softminus"))
+    # estimate mean
+    for i in range(num_mean_est_samples):
+        qx_feature_loc.assign_add(
+            sample_splice_feature_log_ratios(
+                vars, num_samples, num_features, n,
+                feature_indices_stacked,
+                antifeature_indices_stacked))
+    qx_feature_loc.assign(qx_feature_loc / num_mean_est_samples)
 
-    qx_feature = tfd.Normal(
-        loc=qx_feature_loc,
-        scale=qx_feature_scale)
+    # estimate std. dev.
+    num_var_est_samples = 1000
+    qx_feature_scale = tf.Variable(tf.zeros([num_samples, num_features]))
+    for i in range(num_mean_est_samples):
+        qx_feature_scale.assign_add(
+            tf.square(
+                qx_feature_loc - sample_splice_feature_log_ratios(
+                    vars, num_samples, num_features, n,
+                    feature_indices_stacked,
+                    antifeature_indices_stacked)))
+    qx_feature_scale.assign(tf.sqrt(qx_feature_scale / num_var_est_samples))
 
-    x = rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars)
-    x_feature = transcript_expression_to_splicing_log_ratios(
-        num_features, n, feature_indices, antifeature_indices, x)
+    print("done")
 
-    log_prob = tf.reduce_sum(qx_feature.log_prob(x_feature))
-
-    if sess is None:
-        sess = tf.Session()
-
-    train(sess, -log_prob, init_feed_dict, 2500, 1e-1)
-
-    return (sess.run(qx_feature_loc), sess.run(qx_feature_scale))
+    return (
+        qx_feature_loc.numpy(),
+        qx_feature_scale.numpy() )
 
 
 def estimate_splicing_log_ratios(

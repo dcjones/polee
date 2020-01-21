@@ -60,26 +60,25 @@ So all we have to do is optimize q's parameters using stochastic gradient descen
 against samples drawn from p.
 """
 function approximate_splicing_likelihood(
-        loaded_samples::LoadedSamples, ts, ts_metadata, gene_db, sess)
-    num_samples, n = size(loaded_samples.x0_values)
+        loaded_samples::LoadedSamples, num_features,
+        feature_idxs, feature_transcript_idxs,
+        antifeature_idxs, antifeature_transcript_idxs)
 
-    (num_features, feature_idxs, feature_transcript_idxs,
-     antifeature_idxs, antifeature_transcript_idxs) =
-        splicing_features(ts, ts_metadata, gene_db)
+    num_samples, n = size(loaded_samples.x0_values)
 
     feature_indices = hcat(feature_idxs .- 1, feature_transcript_idxs .- 1)
     antifeature_indices = hcat(antifeature_idxs .- 1, antifeature_transcript_idxs .- 1)
 
     qx_feature_loc, qx_feature_scale = polee_py.approximate_splicing_likelihood(
-        loaded_samples.init_feed_dict, loaded_samples.variables,
-        num_samples, num_features, n, feature_indices, antifeature_indices, sess)
+        loaded_samples.variables,
+        num_samples, num_features, n, feature_indices, antifeature_indices)
 
-    open("splicing-approx.csv", "w") do output
-        println(output, "i,j,loc,scale")
-        for i in 1:size(qx_feature_loc, 1), j in 1:size(qx_feature_loc, 2)
-            println(output, i, ",", j, ",", qx_feature_loc[i, j], ",", qx_feature_scale[i, j])
-        end
-    end
+    # open("splicing-approx.csv", "w") do output
+    #     println(output, "i,j,loc,scale")
+    #     for i in 1:size(qx_feature_loc, 1), j in 1:size(qx_feature_loc, 2)
+    #         println(output, i, ",", j, ",", qx_feature_loc[i, j], ",", qx_feature_scale[i, j])
+    #     end
+    # end
 
     return (qx_feature_loc, qx_feature_scale)
 end
@@ -96,7 +95,7 @@ Returns:
     antifeature_idxs and antifeature_transcript_idxs: together a mapping between
         features and transcripts which exclude that feature
 """
-function splicing_features(ts, ts_metadata, gene_db; alt_ends::Bool=false)
+function splicing_features(ts, ts_metadata, gene_db=nothing; alt_ends::Bool=false)
     println("")
     cassette_exons, mutex_exons = Polee.get_cassette_exons(ts)
     alt_donacc_sites, retained_introns = Polee.get_alt_donor_acceptor_sites(ts)
@@ -116,12 +115,12 @@ function splicing_features(ts, ts_metadata, gene_db; alt_ends::Bool=false)
         println("     ", length(alt_tp_ends), " alternate 3' ends")
     end
 
-    @time write_splicing_features_to_gene_db(
-        gene_db, cassette_exons, mutex_exons,
-        alt_donacc_sites, retained_introns,
-        alt_fp_ends, alt_tp_ends)
-
-    # exit()
+    if gene_db !== nothing
+        @time write_splicing_features_to_gene_db(
+            gene_db, cassette_exons, mutex_exons,
+            alt_donacc_sites, retained_introns,
+            alt_fp_ends, alt_tp_ends)
+    end
 
     feature_idxs = Int32[]
     feature_transcript_idxs = Int32[]

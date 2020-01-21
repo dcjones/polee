@@ -44,6 +44,10 @@ arg_settings.prog = "polee model regression"
             Output file for isoform regression results when 'gene-isoform'
             regression is used. """
         default = "regression-isoform-coefficients.csv"
+    "--output-expression"
+        metavar = "filename"
+        help = "Output expression estimates to the given file."
+        default = nothing
     "--lower-credible"
         metavar = "L"
         default = 0.025
@@ -190,10 +194,19 @@ function main()
         #     end
         # end
 
-        open(string(parsed_args["output"], ".gene-expression.csv"), "w") do output
-            println(output, "gene_id,sample,expression")
-            for j in 1:size(qx_loc, 2), i in 1:size(qx_loc, 1)
-                println(output, feature_names[j], ",", i, ",", qx_loc[i,j])
+        if parsed_args["output-expression"] !== nothing
+            x_tpm = exp.(qx_loc)
+            x_tpm ./= sum(x_tpm, dims=2)
+            x_tpm .*= 1e6
+            open(parsed_args["output-expression"], "w") do output
+                println(output, "gene_id,sample,tpm")
+                for j in 1:size(x_tpm, 2), i in 1:size(x_tpm, 1)
+                    println(
+                        output,
+                        feature_names[j], ",",
+                        loaded_samples.sample_names[i], ",",
+                        x_tpm[i,j])
+                end
             end
         end
 

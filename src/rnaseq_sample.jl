@@ -474,8 +474,12 @@ mutable struct LoadedSamples
     # effective lengths
     efflen_values::Array{Float32, 2}
 
-    # reasonable initial values
+    # reasonable initial values (or point estimates)
     x0_values::Array{Float32, 2}
+
+    # optionally standard deviation estimates for the log of the point
+    # estimates stored in x0_values
+    log_x0_std::Union{Array{Float32, 2}, Nothing}
 
     # likelihood approximation base distribution parameters
     la_mu_values::Array{Float32, 2}

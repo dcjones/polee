@@ -30,6 +30,19 @@ arg_settings.prog = "polee model regression"
             instead of approximated likelihood."""
         default = nothing
         arg_type = String
+    "--kallisto-bootstrap"
+        help = """
+            Use kallisto bootstrap samples. The sample specifications should
+            have a `kallisto` key pointing to the h5 file.
+            """
+        action = :store_true
+    "--kallisto"
+        help = """
+            Use kallisto maximum likelihood estimates. The sample
+            specifications should have a `kallisto` key pointing to the h5
+            file.
+            """
+        action = :store_true
     "--pseudocount"
         metavar = "C"
         help = "If specified with --point-estimates, add C tpm to each value."
@@ -112,20 +125,41 @@ function main()
     polee_regression_py = pyimport("polee_regression")
 
     spec = YAML.load_file(parsed_args["experiment"])
-    use_point_estimates = parsed_args["point-estimates"] !== nothing
+    use_point_estimates = parsed_args["point-estimates"] !== nothing || parsed_args["kallisto"]
+    pseudocount = parsed_args["pseudocount"] === nothing ? 0.0 : parsed_args["pseudocount"]
 
-    if parsed_args["point-estimates"] !== nothing
+    use_kallisto = parsed_args["kallisto"] || parsed_args["kallisto-bootstrap"]
+
+    if parsed_args["kallisto"] && parsed_args["kallisto-bootstrap"]
+        error("Only one of '--kallisto' and '--kallisto-bootstrap' can be used.")
+    end
+
+    if use_kallisto && parsed_args["point-estimates"] !== nothing
+        error("'--use-point-estimates' in not compatible with '--kallisto' or '--kallisto-bootstrap'")
+    end
+
+    if parsed_args["kallisto"]
+        loaded_samples = load_kallisto_estimates_from_specification(
+            spec, ts, ts_metadata,
+            pseudocount === nothing ? 0.0 : pseudocount, false)
+
+    elseif parsed_args["kallisto-bootstrap"]
+        loaded_samples = load_kallisto_estimates_from_specification(
+            spec, ts, ts_metadata,
+            pseudocount === nothing ? 0.0 : pseudocount, true)
+
+    elseif parsed_args["point-estimates"] !== nothing
         loaded_samples = load_point_estimates_from_specification(
             spec, ts, ts_metadata, parsed_args["point-estimates"])
 
-        if parsed_args["pseudocount"] !== nothing
-            loaded_samples.x0_values .+= parsed_args["pseudocount"] / 1f6
+        if pseudocount !== nothing
+            loaded_samples.x0_values .+= pseudocount / 1f6
         end
     else
         loaded_samples = load_samples_from_specification(
             spec, ts, ts_metadata)
 
-        if parsed_args["pseudocount"] !== nothing
+        if pseudocount !== nothing
             error("--pseudocount argument only valid with --point-estimates")
         end
     end
@@ -144,7 +178,6 @@ function main()
         parsed_args["nonredundant"] ?
         parsed_args["redundant-factor"] : nothing)
 
-
     if parsed_args["balanced"]
         for idx in eachindex(factor_matrix)
             if factor_matrix[idx] == 0
@@ -154,6 +187,10 @@ function main()
     end
 
     if feature == "gene"
+        if parsed_args["kallisto-bootstrap"]
+            error("$(feature) regression with --kallisto-bootstrap not yet implemented")
+        end
+
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
 
@@ -213,9 +250,19 @@ function main()
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)
 
-        regression = polee_regression_py.RNASeqTranscriptLinearRegression(
+        if loaded_samples.log_x0_std !== nothing
+            @show extrema(loaded_samples.log_x0_std)
+            @show extrema(x0_log)
+
+            regression = polee_regression_py.RNASeqNormalTranscriptLinearRegression(
+                loaded_samples.variables,
+                x0_log, loaded_samples.log_x0_std,
+                factor_matrix, sample_scales)
+        else
+            regression = polee_regression_py.RNASeqTranscriptLinearRegression(
                 loaded_samples.variables,
                 x0_log, factor_matrix, sample_scales, use_point_estimates)
+        end
 
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(6000)
 
@@ -244,6 +291,10 @@ function main()
         #     end
         # end
     elseif feature == "gene-isoform"
+        if parsed_args["kallisto-bootstrap"]
+            error("$(feature) regression with --kallisto-bootstrap not yet implemented")
+        end
+
         num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
             Polee.gene_feature_matrix(ts, ts_metadata)
 
@@ -313,7 +364,9 @@ function main()
         qx_scale = qx_gene_scale
 
     elseif feature == "splice-feature"
-        # find splice features
+        if parsed_args["kallisto-bootstrap"]
+            error("$(feature) regression with --kallisto-bootstrap not yet implemented")
+        end
 
         # temporary database to store feature metadata
         # TODO: add an option to write this database to a file.

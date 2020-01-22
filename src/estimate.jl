@@ -1,5 +1,6 @@
 
-
+using LinearAlgebra: I
+using Statistics
 
 
 """
@@ -55,6 +56,90 @@ function read_specification(
     end
 
     return filenames, sample_names, sample_factors
+end
+
+
+"""
+Convert a vector of kallisto count estimates into a vector of proportions,
+using the set and ordering in transcript_idxs
+"""
+function kallisto_counts_to_proportions(counts, efflens, pseudocount, transcript_ids, transcript_idx)
+    # expand to same set and ordering as ts
+    n = length(transcript_idx)
+    xs = zeros(Float32, (1,n))
+    for (id, count, efflen) in zip(transcript_ids, counts, efflens)
+        if haskey(transcript_idx, id)
+            xs[1,transcript_idx[id]] = count / efflen
+        end
+    end
+
+    # convert to proportions
+    xs ./= sum(xs)
+    xs .+= pseudocount / 1f6
+end
+
+
+"""
+Load point estimates from kallisto files. If use bootstrap is true, standard
+deviation is estimated from the bootstrap samples.
+"""
+function load_kallisto_estimates_from_specification(
+        spec, ts, ts_metadata, pseudocount, use_bootstrap)
+
+    _, sample_names, sample_factors = read_specification(spec)
+    filenames = [entry["kallisto"] for entry in spec["samples"]]
+
+    transcript_idx = Dict{String, Int}()
+    for (j, t) in enumerate(ts)
+        transcript_idx[t.metadata.name] = j
+    end
+    n = length(transcript_idx)
+
+    xss = Array{Float32, 2}[]
+    xss_log_stds = Array{Float32, 2}[]
+
+    for filename in filenames
+        h5open(filename) do input
+            transcript_ids = read(input["aux"]["ids"])
+
+            efflens = read(input["aux"]["eff_lengths"])
+            est_counts = Vector{Float32}(read(input["est_counts"]))
+            xs = kallisto_counts_to_proportions(
+                est_counts, efflens, pseudocount, transcript_ids, transcript_idx)
+            push!(xss, xs)
+
+            if use_bootstrap
+                bss = Array{Float32, 2}[]
+                for dataset in input["bootstrap"]
+                    bootstrap_counts = Vector{Float32}(read(dataset))
+                    bs = kallisto_counts_to_proportions(
+                        bootstrap_counts, efflens, pseudocount, transcript_ids,
+                        transcript_idx)
+                    push!(bss, bs)
+                end
+
+                push!(xss_log_stds, max.(1e-4, std(log.(vcat(bss...)), dims=1)))
+            end
+        end
+    end
+
+    ls = LoadedSamples(
+        Array{Float32}(undef, (0,0)),
+        vcat(xss...),
+        use_bootstrap ? vcat(xss_log_stds...) : nothing,
+        Array{Float32}(undef, (0,0)),
+        Array{Float32}(undef, (0,0)),
+        Array{Float32}(undef, (0,0)),
+        Array{Int32}(undef, (0,0)),
+        Array{Int32}(undef, (0,0)),
+        Array{Int32}(undef, (0,0)),
+        Dict{String, Any}(),
+        Dict{Any, Any}(),
+        sample_factors,
+        sample_names,
+        filenames)
+
+    return ls
 end
 
 
@@ -211,6 +296,7 @@ function load_point_estimates(filenames, ts, ts_metadata)
     return LoadedSamples(
         Array{Float32}(undef, (0,0)),
         x0_values,
+        nothing,
         Array{Float32}(undef, (0,0)),
         Array{Float32}(undef, (0,0)),
         Array{Float32}(undef, (0,0)),
@@ -362,6 +448,7 @@ function load_samples_hdf5(
     ls = LoadedSamples(
         efflen_values,
         x0_values,
+        nothing,
         la_mu_values,
         la_sigma_values,
         la_alpha_values,

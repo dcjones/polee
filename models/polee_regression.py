@@ -391,11 +391,6 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
 
         qw_loc_var = self.qw_loc_var.numpy()
         qw_softplus_scale_var = self.qw_softplus_scale_var.numpy()
-        idx = np.abs(qw_loc_var) < 1.0
-        print("NUM COEFS")
-        print(np.sum(idx))
-        qw_loc_var[idx] = 0.0
-        qw_softplus_scale_var[idx] = -5.0
 
         self.qw_loc_var.assign(qw_loc_var)
         self.qw_softplus_scale_var.assign(qw_softplus_scale_var)
@@ -413,6 +408,45 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
         return super(RNASeqTranscriptLinearRegression, self).classify(
             x_init, likelihood_model, surrogate_likelihood_model,
             sample_scales, use_point_estimates, niter)
+
+
+"""
+Variational inference on transcript expression linear regression using just
+point estimates and standard deviation in place of likelihood.
+"""
+class RNASeqNormalTranscriptLinearRegression(RNASeqLinearRegression):
+    def __init__(
+            self, vars, x_likelihood_loc, x_likelihood_scale, F_arr,
+            sample_scales,
+            kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
+            num_samples=None, num_factors=None):
+
+        F = tf.constant(F_arr, dtype=tf.float32)
+        if num_samples is None:
+            num_samples = x_likelihood_loc.shape[0]
+        num_features = x_likelihood_loc.shape[1]
+
+        x_init_mean = np.mean(x_likelihood_loc, axis=0)
+        x_scale_hinges = tf.constant(
+            choose_knots(np.min(x_init_mean), np.max(x_init_mean), kernel_regression_degree),
+            dtype=tf.float32)
+
+        x_bias_mu0 = np.log(1/num_features)
+        x_bias_sigma0 = 12.0
+
+        def likelihood_model(x):
+            likelihood = yield tfd.Independent(RNASeqFeatureApproxLikelihoodDist(
+                x_likelihood_loc, x_likelihood_scale, x))
+
+        def surrogate_likelihood_model(qx):
+            dummy_likelihood_value = yield JDCRoot(Independent(
+                tfd.Deterministic(tf.zeros([self.num_samples]))))
+
+        super(RNASeqNormalTranscriptLinearRegression, self).__init__(
+            F, x_likelihood_loc, likelihood_model, surrogate_likelihood_model,
+            x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
+            False, kernel_regression_degree, kernel_regression_bandwidth,
+            num_samples=num_samples, num_factors=num_factors)
 
 
 """
@@ -1063,15 +1097,15 @@ class RNASeqJointLinearRegression:
 """
 Fake distribution for approximate splice log ratio likelihood.
 """
-class RNASeqSpliceFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
-    def __init__(self, loc, scale, x, name="RNASeqSpliceFeatureApproxLikelihoodDist"):
+class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
+    def __init__(self, loc, scale, x, name="RNASeqFeatureApproxLikelihoodDist"):
         self.loc = loc
         self.scale = scale
         self.x = x
 
         parameters = dict(locals())
 
-        super(RNASeqSpliceFeatureApproxLikelihoodDist, self).__init__(
+        super(RNASeqFeatureApproxLikelihoodDist, self).__init__(
               dtype=self.x.dtype,
               reparameterization_type=tfp.distributions.FULLY_REPARAMETERIZED,
               validate_args=False,
@@ -1176,7 +1210,7 @@ class RNASeqSpliceFeatureLinearRegression:
 
         if not self.use_point_estimates:
             likelihood = yield tfd.Independent(
-                RNASeqSpliceFeatureApproxLikelihoodDist(
+                RNASeqFeatureApproxLikelihoodDist(
                     self.qx_likelihood_loc, self.qx_likelihood_scale, x))
 
     def variational_model_fn(self):

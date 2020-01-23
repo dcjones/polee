@@ -33,6 +33,11 @@ arg_settings.prog = "evaluate-regression-results.jl"
         help = "Number of samples to draw when evaluating entropy."
         default = 50
         arg_type = Int
+    "--pseudocount"
+        metavar = "C"
+        default = 0.0
+        help = "If specified with --point-estimates, add C tpm to each value."
+        arg_type = Float64
     "--effect-size"
         metavar = "S"
         help = "Output the posterior probability of abs log2 fold-change greater than S"
@@ -44,6 +49,18 @@ arg_settings.prog = "evaluate-regression-results.jl"
             minimum effect size."""
         default = 0.1
         arg_type = Float64
+    "--point-estimates"
+        help = """
+            Use point estimates read from a file specified in the experiment
+            instead of approximated likelihood."""
+        default = nothing
+        arg_type = String
+    "--kallisto-bootstrap"
+        help = """
+            Use kallisto bootstrap samples. The sample specifications should
+            have a `kallisto` key pointing to the h5 file.
+            """
+        action = :store_true
     "factor"
         help = "Factors to regress on."
         arg_type = String
@@ -56,6 +73,9 @@ arg_settings.prog = "evaluate-regression-results.jl"
 end
 
 
+"""
+Find a value δ, where `target_coverage` of the probability mass is in (-δ, δ).
+"""
 function find_minimum_effect_size(μ, σ, target_coverage)
     dist = Normal(μ, σ)
 
@@ -78,6 +98,180 @@ function find_minimum_effect_size(μ, σ, target_coverage)
 end
 
 
+"""
+Evaluate classifier accuracy using samples drawn from approximated likelihood.
+"""
+function evaluate_regression_with_likelihood_samples(
+        testing_spec, ts, ts_metadata, num_eval_samples, sample_class_idxs,
+        qx_bias_loc, qw_loc, qx_scale)
+
+    x_samplers_testing, testing_efflens, testing_sample_names, testing_sample_factors =
+            load_samplers_from_specification(testing_spec, ts, ts_metadata)
+
+    n = length(ts)
+    num_classes = size(qw_loc, 2)
+    num_test_samples = length(x_samplers_testing)
+    xs = zeros(Float64, (num_test_samples, n))
+    class_probs = zeros(Float64, num_classes)
+    true_label_probs = zeros(Float64, (num_classes, n))
+
+    # using TDist to avoid zero probabilities
+    dist = TDist(20.0)
+    for t in 1:num_eval_samples
+        println(t, "/", num_eval_samples)
+        draw_samples!(x_samplers_testing, testing_efflens, xs)
+
+        high_expr_idx = qx_bias_loc .> quantile(qx_bias_loc, 0.9)
+        sample_scales = median(
+            (xs .- reshape(qx_bias_loc, (1, n)))[:,high_expr_idx],
+            dims=2)[:,1]
+
+        xs .-= sample_scales
+
+        for i in 1:num_test_samples, j in 1:n
+            for k in 1:num_classes
+                class_probs[k] = pdf(
+                    dist,
+                    (xs[i, j] - (qx_bias_loc[j] + qw_loc[j, k])) / qx_scale[j])
+            end
+
+            class_probs_sum = sum(class_probs)
+
+            # true label probability
+            true_label_probs[sample_class_idxs[i], j] +=
+                class_probs_sum == 0.0 ? 1/num_classes :
+                class_probs[sample_class_idxs[i]] / class_probs_sum
+        end
+    end
+
+    # average across sampler draws
+    true_label_probs ./= num_eval_samples
+
+    # average across number of samples in each class
+    class_counts = zeros(Int, num_classes)
+    for idx in sample_class_idxs
+        class_counts[idx] += 1
+    end
+    true_label_probs ./= class_counts
+
+    return true_label_probs
+end
+
+
+"""
+Evaluate classifier accuracy using point estimates.
+"""
+function evaluate_regression_with_point_estimates(
+        testing_spec, ts, ts_metadata, point_estimates_key, pseudocount,
+        sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
+
+    loaded_samples = load_point_estimates_from_specification(
+        testing_spec, ts, ts_metadata, point_estimates_key)
+
+    xs = log.(loaded_samples.x0_values .+ pseudocount/1f6)
+
+    n = length(ts)
+    num_test_samples = size(xs, 1)
+    num_classes = size(qw_loc, 2)
+    class_probs = zeros(Float64, num_classes)
+    true_label_probs = zeros(Float64, (num_classes, n))
+
+    # using TDist to avoid zero probabilities
+    dist = TDist(20.0)
+
+    high_expr_idx = qx_bias_loc .> quantile(qx_bias_loc, 0.9)
+    sample_scales = median(
+        (xs .- reshape(qx_bias_loc, (1, n)))[:,high_expr_idx],
+        dims=2)[:,1]
+
+    xs .-= sample_scales
+
+    for i in 1:num_test_samples, j in 1:n
+        for k in 1:num_classes
+            class_probs[k] = pdf(
+                dist,
+                (xs[i, j] - (qx_bias_loc[j] + qw_loc[j, k])) / qx_scale[j])
+        end
+
+        class_probs_sum = sum(class_probs)
+
+        # true label probability
+        true_label_probs[sample_class_idxs[i], j] +=
+            class_probs_sum == 0.0 ? 1/num_classes :
+            class_probs[sample_class_idxs[i]] / class_probs_sum
+    end
+
+    # average across number of samples in each class
+    class_counts = zeros(Int, num_classes)
+    for idx in sample_class_idxs
+        class_counts[idx] += 1
+    end
+    true_label_probs ./= class_counts
+
+    return true_label_probs
+end
+
+
+"""
+Evaluate classifier accuracy using kallisto bootstrap estimates.
+"""
+function evaluate_regression_with_kallisto_samples(
+        testing_spec, ts, ts_metadata, pseudocount,
+        sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
+
+    transcript_idx = Dict{String, Int}()
+    for (j, t) in enumerate(ts)
+        transcript_idx[t.metadata.name] = j
+    end
+    n = length(transcript_idx)
+    num_classes = size(qw_loc, 2)
+    class_probs = zeros(Float64, num_classes)
+    true_label_probs = zeros(Float64, (num_classes, n))
+
+    dist = TDist(20.0)
+    filenames = [entry["kallisto"] for entry in testing_spec["samples"]]
+    for (i, filename) in enumerate(filenames)
+        h5open(filename) do input
+            transcript_ids = read(input["aux"]["ids"])
+            efflens = read(input["aux"]["eff_lengths"])
+            num_bootstrap_samples = length(input["bootstrap"])
+            for dataset in input["bootstrap"]
+                counts = Vector{Float32}(read(dataset))
+                xs = log.(PoleeModel.kallisto_counts_to_proportions(
+                    counts, efflens, pseudocount, transcript_ids, transcript_idx))
+
+                # TODO: it seems a bit impossible to scale normalization here.
+
+                for j in 1:n
+                    for k in 1:num_classes
+                        class_probs[k] = pdf(
+                            dist,
+                            (xs[1,j] - (qx_bias_loc[j] + qw_loc[j, k])) / qx_scale[j])
+                    end
+
+                    class_probs_sum = sum(class_probs)
+
+                    # true label probability
+                    true_label_probs[sample_class_idxs[i], j] +=
+                        (1/num_bootstrap_samples) *
+                        (class_probs_sum == 0.0 ? 1/num_classes :
+                        class_probs[sample_class_idxs[i]] / class_probs_sum)
+                end
+            end
+        end
+    end
+
+    # average across number of samples in each class
+    class_counts = zeros(Int, num_classes)
+    for idx in sample_class_idxs
+        class_counts[idx] += 1
+    end
+    true_label_probs ./= class_counts
+
+    return true_label_probs
+end
+
+
 function main()
     parsed_args = parse_args(arg_settings)
 
@@ -91,14 +285,9 @@ function main()
     _, testing_sample_names, testing_sample_factors =
         PoleeModel.read_specification(testing_spec)
 
-    x_samplers_testing, testing_efflens, testing_sample_names, testing_sample_factors =
-            load_samplers_from_specification(testing_spec, ts, ts_metadata)
-
-    num_test_samples = length(x_samplers_testing)
+    num_test_samples = length(testing_sample_names)
 
     tnames = String[t.metadata.name for t in ts]
-    x_perm = sortperm(tnames)
-    tnames = tnames[x_perm]
 
     qx_bias_loc_df = unstack(
         reg[:,[:transcript_id, :factor, :qx_bias_loc]],
@@ -145,52 +334,27 @@ function main()
         push!(sample_class_idxs, factor_idx[c])
     end
 
-    xs = zeros(Float64, (num_test_samples, n))
-    scales = ones(Float64, num_test_samples)
+    if parsed_args["point-estimates"] !== nothing && parsed_args["kallisto-bootstrap"]
+        error("--point-estimates and --kallisto-bootstrap are mutually exclusive")
+    end
 
-    effect_size = log(abs(parsed_args["effect-size"]))
-    class_probs = zeros(Float64, num_classes)
-    true_label_probs = zeros(Float64, (num_classes, n))
+    if parsed_args["point-estimates"] !== nothing
+        true_label_probs = evaluate_regression_with_point_estimates(
+            testing_spec, ts, ts_metadata, parsed_args["point-estimates"],
+            parsed_args["pseudocount"], sample_class_idxs, qx_bias_loc,
+            qw_loc, qx_scale)
+    elseif parsed_args["kallisto-bootstrap"]
+        true_label_probs = evaluate_regression_with_kallisto_samples(
+            testing_spec, ts, ts_metadata, parsed_args["pseudocount"],
+            sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
+    else
+        true_label_probs = evaluate_regression_with_likelihood_samples(
+            testing_spec, ts, ts_metadata, parsed_args["num-samples"],
+            sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
+    end
 
     dist = TDist(20.0)
-    for t in 1:parsed_args["num-samples"]
-        println(t, "/", parsed_args["num-samples"])
-        draw_samples!(x_samplers_testing, testing_efflens, xs, x_perm)
-
-        high_expr_idx = qx_bias_loc .> quantile(qx_bias_loc, 0.9)
-        sample_scales = median(
-            (xs .- reshape(qx_bias_loc, (1, n)))[:,high_expr_idx],
-            dims=2)[:,1]
-
-        xs .-= sample_scales
-
-        for i in 1:num_test_samples, j in 1:n
-            for k in 1:num_classes
-                # using TDist to avoid zero probabilities
-                class_probs[k] = pdf(
-                    dist,
-                    (xs[i, j] - (qx_bias_loc[j] + qw_loc[j, k])) / qx_scale[j])
-            end
-
-            class_probs_sum = sum(class_probs)
-
-            # true label probability
-            true_label_probs[sample_class_idxs[i], j] +=
-                class_probs_sum == 0.0 ? 1/num_classes :
-                class_probs[sample_class_idxs[i]] / class_probs_sum
-        end
-    end
-
-    # average across sampler draws
-    true_label_probs ./= parsed_args["num-samples"]
-
-    # average across number of samples in each class
-    class_counts = zeros(Int, num_classes)
-    for idx in sample_class_idxs
-        class_counts[idx] += 1
-    end
-    true_label_probs ./= class_counts
-
+    effect_size = log(abs(parsed_args["effect-size"]))
     credibility = parsed_args["credible-interval"]
     open(parsed_args["output"], "w") do output
         println(output, "transcript_id,factor,de_prob,min_effect_size,true_label_prob")

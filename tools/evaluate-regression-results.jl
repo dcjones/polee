@@ -11,6 +11,7 @@ using ArgParse
 using CSV
 using YAML
 using Statistics
+using StatsBase
 using DataFrames
 using Distributions
 using StatsFuns
@@ -98,11 +99,21 @@ function find_minimum_effect_size(μ, σ, target_coverage)
 end
 
 
+function estimate_sample_scales(xs, qx_bias_loc, upper_quantile=0.9)
+    high_expr_idx = qx_bias_loc .> quantile(qx_bias_loc, upper_quantile)
+    n = length(qx_bias_loc)
+    sample_scales = median(
+        (xs .- reshape(qx_bias_loc, (1, n)))[:,high_expr_idx],
+        dims=2)[:,1]
+    return sample_scales
+end
+
+
 """
 Evaluate classifier accuracy using samples drawn from approximated likelihood.
 """
 function evaluate_regression_with_likelihood_samples(
-        testing_spec, ts, ts_metadata, num_eval_samples, sample_class_idxs,
+        testing_spec, ts, ts_metadata, x_perm, num_eval_samples, sample_class_idxs,
         qx_bias_loc, qw_loc, qx_scale)
 
     x_samplers_testing, testing_efflens, testing_sample_names, testing_sample_factors =
@@ -121,11 +132,8 @@ function evaluate_regression_with_likelihood_samples(
         println(t, "/", num_eval_samples)
         draw_samples!(x_samplers_testing, testing_efflens, xs)
 
-        high_expr_idx = qx_bias_loc .> quantile(qx_bias_loc, 0.9)
-        sample_scales = median(
-            (xs .- reshape(qx_bias_loc, (1, n)))[:,high_expr_idx],
-            dims=2)[:,1]
-
+        xs = xs[:,x_perm]
+        sample_scales = estimate_sample_scales(xs, qx_bias_loc)
         xs .-= sample_scales
 
         for i in 1:num_test_samples, j in 1:n
@@ -162,13 +170,14 @@ end
 Evaluate classifier accuracy using point estimates.
 """
 function evaluate_regression_with_point_estimates(
-        testing_spec, ts, ts_metadata, point_estimates_key, pseudocount,
+        testing_spec, ts, ts_metadata, x_perm, point_estimates_key, pseudocount,
         sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
 
     loaded_samples = load_point_estimates_from_specification(
         testing_spec, ts, ts_metadata, point_estimates_key)
 
     xs = log.(loaded_samples.x0_values .+ pseudocount/1f6)
+    xs = xs[:,x_perm]
 
     n = length(ts)
     num_test_samples = size(xs, 1)
@@ -178,13 +187,19 @@ function evaluate_regression_with_point_estimates(
 
     # using TDist to avoid zero probabilities
     dist = TDist(20.0)
-
-    high_expr_idx = qx_bias_loc .> quantile(qx_bias_loc, 0.9)
-    sample_scales = median(
-        (xs .- reshape(qx_bias_loc, (1, n)))[:,high_expr_idx],
-        dims=2)[:,1]
-
+    sample_scales = estimate_sample_scales(xs, qx_bias_loc)
     xs .-= sample_scales
+
+    # @show corspearman(qx_bias_loc, xs[1,:])
+    # @show cor(qx_bias_loc, xs[1,:])
+
+    # @show quantile(qx_bias_loc, 0.95)
+    # for i in 1:num_test_samples
+    #     @show (i, quantile(xs[i,:], 0.95), sum(exp.(xs[i,:])))
+    # end
+    # @show sample_scales
+    # @show sum(exp.(qx_bias_loc))
+    # exit()
 
     for i in 1:num_test_samples, j in 1:n
         for k in 1:num_classes
@@ -216,7 +231,7 @@ end
 Evaluate classifier accuracy using kallisto bootstrap estimates.
 """
 function evaluate_regression_with_kallisto_samples(
-        testing_spec, ts, ts_metadata, pseudocount,
+        testing_spec, ts, ts_metadata, x_perm, pseudocount,
         sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
 
     transcript_idx = Dict{String, Int}()
@@ -227,37 +242,55 @@ function evaluate_regression_with_kallisto_samples(
     num_classes = size(qw_loc, 2)
     class_probs = zeros(Float64, num_classes)
     true_label_probs = zeros(Float64, (num_classes, n))
+    num_test_samples = length(testing_spec["samples"])
 
-    dist = TDist(20.0)
     filenames = [entry["kallisto"] for entry in testing_spec["samples"]]
-    for (i, filename) in enumerate(filenames)
-        h5open(filename) do input
-            transcript_ids = read(input["aux"]["ids"])
-            efflens = read(input["aux"]["eff_lengths"])
-            num_bootstrap_samples = length(input["bootstrap"])
-            for dataset in input["bootstrap"]
-                counts = Vector{Float32}(read(dataset))
-                xs = log.(PoleeModel.kallisto_counts_to_proportions(
-                    counts, efflens, pseudocount, transcript_ids, transcript_idx))
+    files = [h5open(filename) for filename in filenames]
+    dist = TDist(20.0)
 
-                # TODO: it seems a bit impossible to scale normalization here.
+    num_efflens = length(files[1]["aux"]["eff_lengths"])
+    efflens = zeros(Float32, (num_test_samples, num_efflens))
 
-                for j in 1:n
-                    for k in 1:num_classes
-                        class_probs[k] = pdf(
-                            dist,
-                            (xs[1,j] - (qx_bias_loc[j] + qw_loc[j, k])) / qx_scale[j])
-                    end
+    for (i, file) in enumerate(files)
+        for (j, efflen) in enumerate(read(file["aux"]["eff_lengths"]))
+            efflens[i, j] = efflen
+        end
+    end
 
-                    class_probs_sum = sum(class_probs)
+    transcript_ids = read(files[1]["aux"]["ids"])
+    num_bootstrap_samples = length(files[1]["bootstrap"])
 
-                    # true label probability
-                    true_label_probs[sample_class_idxs[i], j] +=
-                        (1/num_bootstrap_samples) *
-                        (class_probs_sum == 0.0 ? 1/num_classes :
-                        class_probs[sample_class_idxs[i]] / class_probs_sum)
-                end
+    xs = zeros(Float32, (num_test_samples, n))
+    for boot_sample_num in 1:num_bootstrap_samples
+        key = string("bs", boot_sample_num-1)
+        for (i, file) in enumerate(files)
+            counts = Vector{Float32}(read(file["bootstrap"][key]))
+            props = PoleeModel.kallisto_counts_to_proportions(
+                counts, efflens, pseudocount, transcript_ids, transcript_idx)
+            props = props[1,x_perm]
+
+            for k in 1:n
+                xs[i,k] = log(props[k])
             end
+        end
+
+        sample_scales = estimate_sample_scales(xs, qx_bias_loc)
+        xs .-= sample_scales
+
+        for i in 1:num_test_samples, j in 1:n
+            for k in 1:num_classes
+                class_probs[k] = pdf(
+                    dist,
+                    (xs[i, j] - (qx_bias_loc[j] + qw_loc[j, k])) / qx_scale[j])
+            end
+
+            class_probs_sum = sum(class_probs)
+
+            # true label probability
+            true_label_probs[sample_class_idxs[i], j] +=
+                (1/num_bootstrap_samples) *
+                (class_probs_sum == 0.0 ? 1/num_classes :
+                class_probs[sample_class_idxs[i]] / class_probs_sum)
         end
     end
 
@@ -287,7 +320,12 @@ function main()
 
     num_test_samples = length(testing_sample_names)
 
+    # Because we are reading parameters from a csv file, they are not necessarily
+    # in the same order as ts, so we just put everything in sorted order by
+    # transcript name. `x_perm` is permutation to put ts in sorted order.
     tnames = String[t.metadata.name for t in ts]
+    x_perm = sortperm(tnames)
+    tnames = tnames[x_perm]
 
     qx_bias_loc_df = unstack(
         reg[:,[:transcript_id, :factor, :qx_bias_loc]],
@@ -340,16 +378,16 @@ function main()
 
     if parsed_args["point-estimates"] !== nothing
         true_label_probs = evaluate_regression_with_point_estimates(
-            testing_spec, ts, ts_metadata, parsed_args["point-estimates"],
+            testing_spec, ts, ts_metadata, x_perm, parsed_args["point-estimates"],
             parsed_args["pseudocount"], sample_class_idxs, qx_bias_loc,
             qw_loc, qx_scale)
     elseif parsed_args["kallisto-bootstrap"]
         true_label_probs = evaluate_regression_with_kallisto_samples(
-            testing_spec, ts, ts_metadata, parsed_args["pseudocount"],
+            testing_spec, ts, ts_metadata, x_perm, parsed_args["pseudocount"],
             sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
     else
         true_label_probs = evaluate_regression_with_likelihood_samples(
-            testing_spec, ts, ts_metadata, parsed_args["num-samples"],
+            testing_spec, ts, ts_metadata, x_perm, parsed_args["num-samples"],
             sample_class_idxs, qx_bias_loc, qw_loc, qx_scale)
     end
 
@@ -385,14 +423,14 @@ end
 Draw sample from approximated likelihood, adjust for effective length and log
 transform.
 """
-function draw_samples!(samplers, efflens, xs, x_perm)
+function draw_samples!(samplers, efflens, xs)
     num_samples = length(samplers)
     Threads.@threads for i in 1:size(xs, 1)
         xs_row = @view xs[i,:]
         rand!(samplers[i], xs_row)
         xs_row ./= @view efflens[i,:]
         xs_row ./= sum(xs_row)
-        permute!(xs_row, x_perm)
+        # permute!(xs_row, x_perm)
         map!(log, xs_row, xs_row)
     end
 end

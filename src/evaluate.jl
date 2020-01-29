@@ -1,4 +1,5 @@
 
+using DelimitedFiles
 
 """
 """
@@ -258,7 +259,7 @@ end
 Read output from the gibbs sampler.
 """
 function read_gibbs_samples(input_filename::String)
-    return readcsv(open(input_filename), Float32)
+    return readdlm(open(input_filename), Float32)
 end
 
 

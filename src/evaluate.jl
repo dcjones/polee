@@ -6,8 +6,20 @@ using DelimitedFiles
 function sample_likap(input_filename::String, num_samples)
     input = h5open(input_filename)
     approx_type_name = read(attrs(input["metadata"])["approximation"])
-    approx_type = eval(parse(approx_type_name))
-    return sample_likap(approx_type, input, num_samples)
+
+    # deal with old types names
+    approx_type_name = replace(approx_type_name, r"^Extruder\." => "")
+    approx_type_name = replace(approx_type_name, r"^Polee\." => "")
+
+    typenames = Dict(
+        "LogisticNormalApprox"     => LogisticNormalApprox,
+        "LogitNormalHSBApprox"     => LogitNormalHSBApprox,
+        "LogitSkewNormalHSBApprox" => LogitSkewNormalHSBApprox,
+        "KumaraswamyHSBApprox"     => KumaraswamyHSBApprox,
+        "NormalILRApprox"          => NormalILRApprox,
+        "NormalALRApprox"          => NormalALRApprox )
+
+    return sample_likap(typenames[approx_type_name], input, num_samples)
 end
 
 
@@ -22,10 +34,10 @@ function sample_likap(approx_type::Type{LogisticNormalApprox},
     close(input)
     n = length(mu) + 1
 
-    zs = Array{Float32}(n-1)
-    ys = Array{Float64}(n-1)
-    xs = Array{Float32}(n)
-    samples = Array{Float32}(num_samples, n)
+    zs = Array{Float32}(undef, n-1)
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float32}(undef, n)
+    samples = Array{Float32}(undef, (num_samples, n))
     eps = 1e-10
     for i in 1:num_samples
         for j in 1:n-1
@@ -67,10 +79,10 @@ function sample_likap(approx_type::Type{LogitNormalHSBApprox},
     close(input)
     n = length(mu) + 1
 
-    zs = Array{Float32}(n-1)
-    ys = Array{Float64}(n-1)
-    xs = Array{Float32}(n)
-    samples = Array{Float32}(num_samples, n)
+    zs = Array{Float32}(undef, n-1)
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float32}(undef, n)
+    samples = Array{Float32}(undef, (num_samples, n))
     eps = 1e-10
 
     for i in 1:num_samples
@@ -106,11 +118,11 @@ function sample_likap(approx_type::Type{LogitSkewNormalHSBApprox},
     close(input)
     n = length(mu) + 1
 
-    zs0 = Array{Float32}(n-1)
-    zs = Array{Float32}(n-1)
-    ys = Array{Float64}(n-1)
-    xs = Array{Float32}(n)
-    samples = Array{Float32}(num_samples, n)
+    zs0 = Array{Float32}(undef, n-1)
+    zs = Array{Float32}(undef, n-1)
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float32}(undef, n)
+    samples = Array{Float32}(undef, (num_samples, n))
     eps = 1e-10
 
     for i in 1:num_samples
@@ -149,11 +161,11 @@ function sample_likap(approx_type::Type{KumaraswamyHSBApprox},
     close(input)
     n = length(as) + 1
 
-    zs = Array{Float32}(n-1)
-    ys = Array{Float64}(n-1)
-    xs = Array{Float32}(n)
+    zs = Array{Float32}(undef, n-1)
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float32}(undef, n)
     work = zeros(Float32, n-1)
-    samples = Array{Float32}(num_samples, n)
+    samples = Array{Float32}(undef, (num_samples, n))
 
     minz = eps(Float32)
     maxz = 1.0f0 - eps(Float32)
@@ -192,10 +204,10 @@ function sample_likap(approx_type::Type{NormalILRApprox},
     n = length(mu) + 1
     eps = 1e-10
 
-    zs = Array{Float32}(n-1)
-    ys = Array{Float64}(n-1)
-    xs = Array{Float32}(n)
-    samples = Array{Float32}(num_samples, n)
+    zs = Array{Float32}(undef, n-1)
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float32}(undef, n)
+    samples = Array{Float32}(undef, (num_samples, n))
 
     for i in 1:num_samples
         for j in 1:n-1
@@ -229,10 +241,10 @@ function sample_likap(approx_type::Type{NormalALRApprox},
     n = length(mu) + 1
     eps = 1e-10
 
-    zs = Array{Float32}(n-1)
-    ys = Array{Float64}(n-1)
-    xs = Array{Float32}(n)
-    samples = Array{Float32}(num_samples, n)
+    zs = Array{Float32}(undef, n-1)
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float32}(undef, n)
+    samples = Array{Float32}(undef, (num_samples, n))
 
     for i in 1:num_samples
         for j in 1:n-1
@@ -259,7 +271,7 @@ end
 Read output from the gibbs sampler.
 """
 function read_gibbs_samples(input_filename::String)
-    return readdlm(open(input_filename), Float32)
+    return readdlm(open(input_filename), ',', Float32, '\n', skipstart=1)
 end
 
 
@@ -305,7 +317,7 @@ function mean_log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
     @assert size(a_likap) == (num_samples, n)
     @assert size(b_likap) == (num_samples, n)
 
-    losses = Array{Float32}(n)
+    losses = Array{Float32}(undef, n)
     for i in 1:n
 
         # TODO: I should also do this with median/quantiles
@@ -340,13 +352,13 @@ function median_log_fold_change_error(a_gibbs, b_gibbs, a_likap, b_likap)
     @assert size(a_likap) == (num_samples, n)
     @assert size(b_likap) == (num_samples, n)
 
-    lfc_ests_gibbs = Array{Float32}(num_samples)
-    lfc_ests_likap = Array{Float32}(num_samples)
+    lfc_ests_gibbs = Array{Float32}(undef, num_samples)
+    lfc_ests_likap = Array{Float32}(undef, num_samples)
 
     ord1 = shuffle(1:num_samples)
     ord2 = shuffle(1:num_samples)
 
-    losses = Array{Float32}(n)
+    losses = Array{Float32}(undef, n)
     for i in 1:n
         for k in 1:num_samples
             lfc_ests_gibbs[k] = log2(a_gibbs[ord1[k], i]) - log2(b_gibbs[ord2[k], i])

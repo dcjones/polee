@@ -129,6 +129,14 @@ end
             noninformative prior (which is not the same thing).
             """
         action = :store_true
+    "--no-efflen-jacobian"
+        help = """
+            By default the likelihood function includes the jacobian
+            determinant of the effective length adjustment, so it is a function
+            over transcript expression, rather that length weighted expression.
+            This option excludes that jacobian determinant factor.
+        """
+        action = :store_true
     "--alt-frag-model"
         help = """
             Use a somewhat different fragment model. This alternative model has
@@ -596,7 +604,8 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
     if !parsed_args["skip-likelihood-approximation"]
         approximate_likelihood(
             approx, sample, parsed_args["output"],
-            gene_noninformative=parsed_args["gene-noninformative"])
+            gene_noninformative=parsed_args["gene-noninformative"],
+            use_efflen_jacobian=!parsed_args["no-efflen-jacobian"])
     end
 end
 

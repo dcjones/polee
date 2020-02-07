@@ -77,10 +77,12 @@ end
 
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String;
-                                gene_noninformative::Bool=false)
+                                gene_noninformative::Bool=false,
+                                use_efflen_jacobian::Bool=true)
     @tic()
     params = approximate_likelihood(
-        approximation, sample, gene_noninformative=gene_noninformative)
+        approximation, sample, gene_noninformative=gene_noninformative,
+        use_efflen_jacobian=use_efflen_jacobian)
     @toc("Approximating likelihood")
 
     # TODO: delete this
@@ -594,7 +596,8 @@ end
 function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
                                 sample::RNASeqSample,
                                 ::Type{Val{GRADONLY}}=Val{true};
-                                gene_noninformative::Bool=false) where {GRADONLY}
+                                gene_noninformative::Bool=false,
+                                use_efflen_jacobian::Bool=true) where {GRADONLY}
     X = sample.X
     efflens = sample.effective_lengths
 
@@ -713,8 +716,9 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
                                 X, Xt, xs, x_grad, Val{GRADONLY}) # 0.047 seconds
 
-
-            lp += effective_length_jacobian_adjustment!(efflens, xs, xls, x_grad)
+            if use_efflen_jacobian
+                lp += effective_length_jacobian_adjustment!(efflens, xs, xls, x_grad)
+            end
 
             if gene_noninformative
                 lp += gene_noninformative_prior!(

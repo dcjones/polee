@@ -159,7 +159,7 @@ function main()
         loaded_samples = load_samples_from_specification(
             spec, ts, ts_metadata)
 
-        if pseudocount !== nothing
+        if parsed_args["pseudocount"] !== nothing
             error("--pseudocount argument only valid with --point-estimates")
         end
     end

@@ -130,9 +130,8 @@ function evaluate_regression_with_likelihood_samples(
     dist = TDist(20.0)
     for t in 1:num_eval_samples
         println(t, "/", num_eval_samples)
-        draw_samples!(x_samplers_testing, testing_efflens, xs)
+        draw_samples!(x_samplers_testing, testing_efflens, x_perm, xs)
 
-        xs = xs[:,x_perm]
         sample_scales = estimate_sample_scales(xs, qx_bias_loc)
         xs .-= sample_scales
 
@@ -266,7 +265,8 @@ function evaluate_regression_with_kallisto_samples(
         for (i, file) in enumerate(files)
             counts = Vector{Float32}(read(file["bootstrap"][key]))
             props = PoleeModel.kallisto_counts_to_proportions(
-                counts, efflens, pseudocount, transcript_ids, transcript_idx)
+                counts, (@view efflens[i,:]), pseudocount,
+                transcript_ids, transcript_idx)
             props = props[1,x_perm]
 
             for k in 1:n
@@ -423,14 +423,14 @@ end
 Draw sample from approximated likelihood, adjust for effective length and log
 transform.
 """
-function draw_samples!(samplers, efflens, xs)
+function draw_samples!(samplers, efflens, x_perm, xs)
     num_samples = length(samplers)
     Threads.@threads for i in 1:size(xs, 1)
         xs_row = @view xs[i,:]
         rand!(samplers[i], xs_row)
         xs_row ./= @view efflens[i,:]
         xs_row ./= sum(xs_row)
-        # permute!(xs_row, x_perm)
+        permute!(xs_row, x_perm)
         map!(log, xs_row, xs_row)
     end
 end

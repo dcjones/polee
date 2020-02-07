@@ -53,6 +53,9 @@ function gibbs_sampler(
         ys[t,:] ./= ys_sum
     end
 
+    # effective length adjusted mixtures
+    xs = similar(ys)
+
     # temporary vector to store row products
     wlen = 0
     for i in 1:m
@@ -71,7 +74,7 @@ function gibbs_sampler(
             if t == 1 && (sample_num % 10) == 0
                 println("Burn-in: ", sample_num, "/", num_burnin_samples)
             end
-            generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, ys, zs,
+            generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, xs, ys, zs,
                                     samples, 0)
         end
     end
@@ -93,7 +96,7 @@ function gibbs_sampler(
                     stored_sample_num += 1
                 end
 
-                generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, ys, zs,
+                generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, xs, ys, zs,
                                         samples, stored_sample_num)
             end
         end
@@ -163,7 +166,7 @@ function gibbs_sampler(
 end
 
 
-function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, ys, zs,
+function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, xs, ys, zs,
                                samples, stored_sample_num)
     # sample zs
     zs[t,:] .= 0
@@ -199,16 +202,21 @@ function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, ys, zs,
     # sample mixture
     ys_sum = 0.0f0
     for j in 1:n
-        # ys[t, j] = rand(Gamma(1.0 + cs[t, j], 1.0))
-        # ys[t, j] = rand_gamma(rng, 1.0 + cs[t, j], 1.0 / (1.0 + els[j]))
         ys[t, j] = rand_gamma(rng, 1.0 + cs[t, j], 1.0)
         ys_sum += ys[t, j]
     end
     ys[t,:] ./= ys_sum
 
     if stored_sample_num > 0
+        xs_sum = 0.0f0
+        for j in 1:n
+            xs[t, j] = ys[t, j] / els[j]
+            xs_sum += xs[t, j]
+        end
+        xs[t,:] ./= xs_sum
+
         for i in 1:n
-            samples[t, stored_sample_num, i] = ys[t, i]
+            samples[t, stored_sample_num, i] = xs[t, i]
         end
     end
 end

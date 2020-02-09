@@ -94,20 +94,6 @@ include("sequences.jl")
 include("evaluate.jl")
 include("approx-sampler.jl")
 
-
-
-# TODO: need to rethink this wit the move to edward2
-# POLEE_MODELS = Dict{String, Function}()
-# include("models/linear-regression.jl")
-# include("models/simple-linear-regression.jl")
-# include("models/simple-mode.jl")
-# include("models/simple-pca.jl")
-# include("models/logistic-regression.jl")
-# include("models/simple-logistic-regression.jl")
-# include("models/quantification.jl")
-# include("models/pca.jl")
-# include("models/gplvm.jl")
-
 include("main.jl")
 
 end # module Polee

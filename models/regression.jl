@@ -100,6 +100,7 @@ arg_settings.prog = "polee model regression"
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification"
+        required = true
 end
 
 

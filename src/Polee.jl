@@ -2,7 +2,6 @@
 
 module Polee
 
-
 using GenomicFeatures
 using BioAlignments
 using BioSequences
@@ -25,6 +24,8 @@ using Statistics
 using Random
 # using Profile
 # using InteractiveUtils
+
+export install_polee_script
 
 """
 More convenient interface to Bio.jl read! functions.
@@ -55,6 +56,19 @@ macro toc(context)
         dt = time() - $(t0)
         @debug @sprintf("%s: %0.2f secs", $(context), dt)
     end
+end
+
+
+"""
+Install the polee command line script to the given path. If not specified, it will
+copy the script to \$HOME/bin.
+
+By default it will not overwrite an existing file. Pass 'force=true' to overwrite.
+"""
+function install_polee_script(dest_path=joinpath(ENV["HOME"], "bin"); force=false)
+    src = joinpath(dirname(pathof(Polee)), "..", "polee")
+    dest = joinpath(dest_path, "polee")
+    cp(src, dest, force=force)
 end
 
 

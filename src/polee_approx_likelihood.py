@@ -101,13 +101,18 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
               name=name)
 
     def _event_shape(self):
-        return tf.TensorShape([self.x.get_shape()[-1]])
+        # return tf.TensorShape([self.x.get_shape()[-1]])
+        return tf.TensorShape([])
 
     def _batch_shape(self):
         return self.x.get_shape()[:-1]
 
-    @tf.function
-    def log_prob(self, __ignored__):
+    def _sample_n(self, N, seed=None):
+        shape = (N,) + self._batch_shape()
+        return tf.zeros(shape)
+
+    # @tf.function
+    def _log_prob(self, __ignored__):
         num_samples = int(self.x.get_shape()[0])
         n           = int(self.x.get_shape()[-1])
         num_nodes   = 2*n - 1

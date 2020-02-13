@@ -249,10 +249,20 @@ class RNASeqLinearRegression:
 
         step_num = tf.Variable(1, trainable=False)
 
-        @tf.function
+        # @tf.function
         def trace_fn(loss, grad, vars):
-            if tf.math.mod(step_num, 200) == 0:
+            def doprint():
                 tf.print("[", step_num, "/", niter, "]  loss: ", loss, sep='')
+                return tf.constant(0)
+
+            def dontprint():
+                return tf.constant(0)
+
+            tf.cond(
+                tf.math.mod(step_num, 200) == 0,
+                doprint,
+                dontprint)
+
             step_num.assign(step_num + 1)
             return loss
 
@@ -373,11 +383,13 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
 
         def likelihood_model(x):
             if not use_point_estimates:
-                likelihood = yield tfd.Independent(rnaseq_approx_likelihood_from_vars(vars, x))
+                likelihood = yield tfd.Independent(
+                    rnaseq_approx_likelihood_from_vars(vars, x))
 
         def surrogate_likelihood_model(qx):
             if not use_point_estimates:
-                qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+                qrnaseq_reads = yield JDCRoot(Independent(
+                    tfd.Deterministic(tf.zeros([num_samples, 0]))))
 
         super(RNASeqTranscriptLinearRegression, self).__init__(
             F, x_init, likelihood_model, surrogate_likelihood_model,

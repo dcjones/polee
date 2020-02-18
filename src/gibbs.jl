@@ -3,7 +3,8 @@ function gibbs_sampler(
         input_filename, output_filename, ts::Transcripts;
         kallisto::Bool=false, num_samples::Int=1000,
         num_burnin_samples = 2000, sample_stride::Int=25,
-        convergence_test_stride::Int=125)
+        convergence_test_stride::Int=125,
+        use_efflen::Bool=true)
 
     nthreads = Threads.nthreads()
 
@@ -75,7 +76,7 @@ function gibbs_sampler(
                 println("Burn-in: ", sample_num, "/", num_burnin_samples)
             end
             generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, xs, ys, zs,
-                                    samples, 0)
+                                    samples, 0, use_efflen)
         end
     end
 
@@ -97,7 +98,7 @@ function gibbs_sampler(
                 end
 
                 generate_gibbs_sample(rngs[t], m, n, t, Xt, els, cs, ws, xs, ys, zs,
-                                        samples, stored_sample_num)
+                                        samples, stored_sample_num, use_efflen)
             end
         end
 
@@ -110,8 +111,10 @@ function gibbs_sampler(
     close(diagnostics_output)
 
     function prop_to_counts(prop)
-        prop_ = prop .* els
-        prop_ ./= sum(prop_)
+        if use_efflen
+            prop_ = prop .* els
+            prop_ ./= sum(prop_)
+        end
         return Vector{Float64}(prop_ .* m)
     end
 
@@ -167,7 +170,7 @@ end
 
 
 function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, xs, ys, zs,
-                               samples, stored_sample_num)
+                               samples, stored_sample_num, use_efflen)
     # sample zs
     zs[t,:] .= 0
     for i in 1:m
@@ -209,9 +212,16 @@ function generate_gibbs_sample(rng, m, n, t, X, els, cs, ws, xs, ys, zs,
 
     if stored_sample_num > 0
         xs_sum = 0.0f0
-        for j in 1:n
-            xs[t, j] = ys[t, j] / els[j]
-            xs_sum += xs[t, j]
+        if use_efflen
+            for j in 1:n
+                xs[t, j] = ys[t, j] / els[j]
+                xs_sum += xs[t, j]
+            end
+        else
+            for j in 1:n
+                xs[t, j] = ys[t, j]
+                xs_sum += xs[t, j]
+            end
         end
         xs[t,:] ./= xs_sum
 

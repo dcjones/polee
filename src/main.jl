@@ -203,15 +203,15 @@ end
         help = ""
         required = false
     "--trim-prefix"
-            metavar = "prefix"
-            help = """Trim the given prefix from transcripts identifiers when
-            writing output."""
-            default = nothing
+        metavar = "prefix"
+        help = """Trim the given prefix from transcripts identifiers when
+        writing output."""
+        default = nothing
     "--sample-counts"
-            help = """Sample read counts in addition to sampling expression.
-            (Default behavior is to sample expression, and compute expected
-            read counts if needed."""
-            action = :store_true
+        help = """Sample read counts in addition to sampling expression.
+        (Default behavior is to sample expression, and compute expected
+        read counts if needed."""
+        action = :store_true
     "prepared_sample"
         help = "Prepared RNA-Seq sample to generate samples from."
         metavar = "prepared-sample.h5"
@@ -248,6 +248,9 @@ end
         metavar = "sequences.fa"
         help = "Load transcripts from sequences file."
         required = false
+    "--no-efflen"
+        help = "Do not do effective length transformation."
+        action = :store_true
     "likelihood-matrix"
         metavar = "likelihood-matrix.h5"
         help = """
@@ -774,7 +777,8 @@ function polee_debug_sample(parsed_args::Dict{String, Any})
         kallisto=parsed_args["kallisto"],
         num_samples=parsed_args["num-samples"],
         num_burnin_samples=parsed_args["burnin"],
-        sample_stride=parsed_args["stride"])
+        sample_stride=parsed_args["stride"],
+        use_efflen=!parsed_args["no-efflen"])
 end
 
 

@@ -708,7 +708,8 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
                         loc=self.qx_isoform_loc_var,
                         scale=tf.nn.softplus(self.qx_isoform_softplus_scale_var))))
 
-                qrnaseq_reads = yield JDCRoot(Independent(tfd.Deterministic(tf.zeros([num_samples]))))
+                qrnaseq_reads = yield JDCRoot(Independent(
+                    tfd.Deterministic(tf.zeros([num_samples, 0]))))
 
         super(RNASeqGeneIsoformLinearRegression, self).__init__(
             F, x_gene_init, likelihood_model, surrogate_likelihood_model,

@@ -72,14 +72,18 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
               parameters=parameters,
               name=name)
 
+    def _sample_n(self, N, seed=None):
+        shape = (N,) + self._batch_shape()
+        return tf.zeros(shape)
+
     def _event_shape(self):
-        return tf.TensorShape([self.x_gene.get_shape()[-1]])
+        return tf.TensorShape([])
 
     def _batch_shape(self):
         return self.x_gene.get_shape()[:-1]
 
-    @tf.function
-    def log_prob(self, __ignored__):
+    # @tf.function
+    def _log_prob(self, __ignored__):
         return self.transcript_likelihood.log_prob(__ignored__) + \
             noninformative_gene_prior(self.x_gene, self.feature_sizes)
 

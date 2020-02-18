@@ -13,14 +13,16 @@ ext_path = os.path.join(polee_src_path, "tensorflow_ext", "hsb_ops.so")
 inverse_hsb_op_module = tf.load_op_library(ext_path)
 
 @ops.RegisterGradient("InvHSB")
-def _inv_hsb_grad(op, grad):
+def _inv_hsb_grad(op, y_grad, ladj_grad):
     left_index  = op.inputs[1]
     right_index = op.inputs[2]
     leaf_index  = op.inputs[3]
-    y_logit     = op.outputs[0]
+    y           = op.outputs[0]
+    ladj        = op.outputs[1]
 
-    x_grad = inverse_hsb_op_module.inv_hsb_grad(grad, y_logit, left_index,
-                                                 right_index, leaf_index)
+    x_grad = inverse_hsb_op_module.inv_hsb_grad(
+        y_grad, ladj_grad, y, ladj, left_index, right_index, leaf_index)
+
     return [x_grad, None, None, None]
 
 
@@ -121,6 +123,9 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
         sigma = self.sigma
         alpha = self.alpha
 
+        # log absolute determinant of the jacobian
+        ladj = 0.0
+
         # tf.print("x span", tf.reduce_min(self.x), tf.reduce_max(self.x))
 
         x = tf.nn.softmax(self.x, axis=-1)
@@ -137,30 +142,50 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
 
-        y_logit_tensors = []
+        y_tensors = []
+        ptt_ladj_tensors = []
         for x_efflen_batch in tf.unstack(x_efflen):
-            y_logit_tensors.append(
-                inverse_hsb_op_module.inv_hsb(
-                    x_efflen_batch, self.left_index, self.right_index, self.leaf_index))
-        y_logit = tf.stack(y_logit_tensors)
+            y_, ladj_ = inverse_hsb_op_module.inv_hsb(
+                    x_efflen_batch, self.left_index, self.right_index, self.leaf_index)
+            y_tensors.append(y_)
+            ptt_ladj_tensors.append(ladj_)
+        y = tf.stack(y_tensors)
+        ptt_ladj = tf.stack(ptt_ladj_tensors)
+        ladj += tf.reduce_sum(ptt_ladj, axis=-1)
+
+        y_log = tf.math.log(y)
+        y_1mlog = tf.math.log1p(-y)
+
+        y_logit = tf.cast(y_log - y_1mlog, tf.float32)
+
+        ladj += tf.reduce_sum(
+            tf.cast(-y_log - y_1mlog, tf.float32),
+            axis=-1)
 
         # normal standardization transform
         # --------------------------------
 
         z_std = tf.divide(tf.subtract(y_logit, mu), sigma)
 
+        ladj += tf.reduce_sum(tf.math.reciprocal(sigma), axis=-1)
+
         # inverse sinh-asinh transform
         # ----------------------------
 
-        z_c = tf.subtract(tf.asinh(z_std), alpha)
-        z = tf.sinh(z_c)
+        z_asinh = tf.math.asinh(z_std)
+        z = tf.sinh(z_asinh - alpha)
+
+        ladj += tf.reduce_sum(
+            tf.math.log(tf.math.cosh(alpha - z_asinh)) -
+                0.5 * tf.math.log1p(tf.math.square(z_std)),
+            axis=-1)
 
         # standand normal log-probability
         # -------------------------------
 
         lp = (-np.log(2.0*np.pi) -  tf.reduce_sum(tf.square(z), axis=-1)) / 2.0
 
-        return lp
+        return lp + ladj
 
 def RNASeqApproxLikelihood(*args, **kwargs):
     return RNASeqApproxLikelihoodDist(*args, **kwargs)

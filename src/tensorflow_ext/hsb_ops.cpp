@@ -130,7 +130,8 @@ REGISTER_OP("InvHSB")
     .Input("left_index: int32")
     .Input("right_index: int32")
     .Input("leaf_index: int32")
-    .Output("y_logit: float32")
+    .Output("y: float64")
+    .Output("ladj: float32")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
         shape_inference::ShapeHandle x;
         TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &x));
@@ -144,6 +145,7 @@ REGISTER_OP("InvHSB")
         shape_inference::DimensionHandle n = c->Dim(x, 1);
         shape_inference::DimensionHandle n_minus_one = c->MakeDim(c->Value(n) - 1);
         c->set_output(0, c->MakeShape({m, n_minus_one}));
+        c->set_output(1, c->MakeShape({m, 1}));
         return Status::OK();
     });
 
@@ -163,13 +165,19 @@ class InvHSBOp : public OpKernel {
         const int64 m = input_x.dim_size(0);
         const int64 n = input_x.dim_size(1);
 
-        Tensor* output_y_logit = nullptr;
+        Tensor* output_y = nullptr;
         OP_REQUIRES_OK(
             context, context->allocate_output(
-                0, TensorShape({m, n-1}), &output_y_logit));
+                0, TensorShape({m, n-1}), &output_y));
+
+        Tensor* output_ladj = nullptr;
+        OP_REQUIRES_OK(
+            context, context->allocate_output(
+                1, TensorShape({m, 1}), &output_ladj));
 
         auto x           = input_x.flat_inner_dims<float>();
-        auto y_logit     = output_y_logit->flat_inner_dims<float>();
+        auto y           = output_y->flat_inner_dims<double>();
+        auto ladj        = output_ladj->flat_inner_dims<float>();
         auto left_index  = input_left_index.flat_inner_dims<int32>();
         auto right_index = input_right_index.flat_inner_dims<int32>();
         auto leaf_index  = input_leaf_index.flat_inner_dims<int32>();
@@ -203,11 +211,13 @@ class InvHSBOp : public OpKernel {
 
             for (int i = start_batch; i < limit_batch; ++i) {
                 const float* x_i = &x(i, 0);
-                float* y_logit_i = &y_logit(i, 0);
+                double* y_i = &y(i, 0);
+                float* ladj_i = &ladj(i, 0);
                 const int32* left_index_i  = &left_index(i, 0);
                 const int32* right_index_i = &right_index(i, 0);
                 const int32* leaf_index_i  = &leaf_index(i, 0);
 
+                ladj_i[0] = 0.0;
                 int k = n - 2;
                 for (int j = 2*n-2; j >= 0; --j) {
                     // leaf node
@@ -219,8 +229,9 @@ class InvHSBOp : public OpKernel {
                         double u_left = u_data[left_index_i[j]];
                         double u_right = u_data[right_index_i[j]];
                         u_data[j] = u_left + u_right;
-                        double y_ik = u_left / u_data[j];
-                        y_logit_i[k] = (float) log(y_ik / (1.0 - y_ik));
+                        y_i[k] = u_left / u_data[j];
+                        ladj_i[0] -= log(u_data[j]);
+
                         --k;
                     }
                 }
@@ -239,23 +250,26 @@ REGISTER_KERNEL_BUILDER(Name("InvHSB").Device(DEVICE_CPU), InvHSBOp);
 
 
 REGISTER_OP("InvHSBGrad")
-    .Input("gradients: float32")
-    .Input("y_logit: float32")
+    .Input("y_grad: float64")
+    .Input("ladj_grad: float32")
+    .Input("y: float64")
+    .Input("ladj: float32")
     .Input("left_index: int32")
     .Input("right_index: int32")
     .Input("leaf_index: int32")
     .Output("backprops: float32")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
-        shape_inference::ShapeHandle y_logit;
-        TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &y_logit));
+        shape_inference::ShapeHandle y;
+        TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &y));
 
         shape_inference::ShapeHandle unused;
         TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 2, &unused));
         TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 2, &unused));
         TF_RETURN_IF_ERROR(c->WithRank(c->input(3), 2, &unused));
+        TF_RETURN_IF_ERROR(c->WithRank(c->input(4), 2, &unused));
 
-        shape_inference::DimensionHandle m = c->Dim(y_logit, 0);
-        shape_inference::DimensionHandle n_minus_one = c->Dim(y_logit, 1);
+        shape_inference::DimensionHandle m = c->Dim(y, 0);
+        shape_inference::DimensionHandle n_minus_one = c->Dim(y, 1);
         shape_inference::DimensionHandle n = c->MakeDim(c->Value(n_minus_one) + 1);
 
         c->set_output(0, c->MakeShape({m, n}));
@@ -268,22 +282,25 @@ class InvHSBGradOp : public OpKernel {
     explicit InvHSBGradOp(OpKernelConstruction* context) : OpKernel(context) {}
 
     void Compute(OpKernelContext* context) override {
-        const Tensor& input_gradients   = context->input(0);
-        const Tensor& input_y_logit     = context->input(1);
-        const Tensor& input_left_index  = context->input(2);
-        const Tensor& input_right_index = context->input(3);
-        const Tensor& input_leaf_index  = context->input(4);
+        const Tensor& input_y_grad      = context->input(0);
+        const Tensor& input_ladj_grad   = context->input(1);
+        const Tensor& input_y           = context->input(2);
+        const Tensor& input_ladj        = context->input(3);
+        const Tensor& input_left_index  = context->input(4);
+        const Tensor& input_right_index = context->input(5);
+        const Tensor& input_leaf_index  = context->input(6);
 
-        const int64 m = input_y_logit.dim_size(0);
-        const int64 n = input_y_logit.dim_size(1) + 1;
+        const int64 m = input_y.dim_size(0);
+        const int64 n = input_y.dim_size(1) + 1;
 
         Tensor* output_backprops = nullptr;
         OP_REQUIRES_OK(
             context, context->allocate_output(
                 0, TensorShape({m, n}), &output_backprops));
 
-        auto gradients   = input_gradients.flat_inner_dims<float>();
-        auto y_logit    = input_y_logit.flat_inner_dims<float>();
+        auto y_grad      = input_y_grad.flat_inner_dims<double>();
+        auto ladj_grad   = input_ladj_grad.flat_inner_dims<float>();
+        auto y           = input_y.flat_inner_dims<double>();
         auto backprops   = output_backprops->flat_inner_dims<float>();
         auto left_index  = input_left_index.flat_inner_dims<int32>();
         auto right_index = input_right_index.flat_inner_dims<int32>();
@@ -323,8 +340,9 @@ class InvHSBGradOp : public OpKernel {
             map_mutex.unlock();
 
             for (int i = start_batch; i < limit_batch; ++i) {
-                const float* gradients_i = &gradients(i, 0);
-                const float* y_logit_i = &y_logit(i, 0);
+                const double* y_grad_i = &y_grad(i, 0);
+                const float* ladj_grad_i = &ladj_grad(i, 0);
+                const double* y_i = &y(i, 0);
                 float* backprops_i = &backprops(i, 0);
                 const int32* left_index_i  = &left_index(i, 0);
                 const int32* right_index_i = &right_index(i, 0);
@@ -340,14 +358,27 @@ class InvHSBGradOp : public OpKernel {
                     }
                     // internal node
                     else {
-                        double y_logit_ik = y_logit_i[k];
-                        double y = 1.0 / (1.0 + exp(-y_logit_ik));
+                        // double y_logit_ik = y_logit_i[k];
+                        // double y = 1.0 / (1.0 + exp(-y_logit_ik));
+                        double y = y_i[k];
 
-                        double u_left = u_data[j] * y;
-                        double u_right = u_data[j] * (1.0 - y);
+                        double u_j = u_data[j];
+                        double u_left = u_j * y;
+                        double u_right = u_j * (1.0 - y);
 
-                        v_data[left_index_i[j]] = v_data[j] + (1/u_left) * gradients_i[k];
-                        v_data[right_index_i[j]] = v_data[j] - (1/u_right) * gradients_i[k];
+                        // y = log(u_left/u_right)
+                        // or
+                        // y = u_left / (u_left + u_right)
+
+                        // derivative of ladj wrt u_j
+                        double dladj_du = -1.0/u_j;
+
+                        double u_j2 = u_j * u_j;
+
+                        v_data[left_index_i[j]] =
+                            dladj_du * ladj_grad_i[0] + v_data[j] + (u_right/u_j2) * y_grad_i[k];
+                        v_data[right_index_i[j]] =
+                            dladj_du * ladj_grad_i[0] + v_data[j] - (u_left/u_j2) * y_grad_i[k];
 
                         u_data[left_index_i[j]] = u_left;
                         u_data[right_index_i[j]] = u_right;

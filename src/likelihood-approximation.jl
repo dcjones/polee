@@ -599,6 +599,7 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
                                 gene_noninformative::Bool=false,
                                 use_efflen_jacobian::Bool=true) where {GRADONLY}
     X = sample.X
+
     efflens = sample.effective_lengths
 
     m, n = size(X)
@@ -654,7 +655,7 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
     y_grad = Array{Float32}(undef, n-1)
     x_grad = Array{Float64}(undef, n)
     xl_grad = Array{Float64}(undef, n)
-    z_grad = Array{Float32}(undef, n)
+    z_grad = Array{Float32}(undef, n-1)
 
     elbo = 0.0
     elbo0 = 0.0
@@ -729,7 +730,7 @@ function approximate_likelihood(approx::LogitSkewNormalHSBApprox,
 
             transform_gradients!(t, ys, y_grad, x_grad) # 0.025 seconds
             logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, z_grad, mu_grad, sigma_grad) # 0.003 seconds
-            sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad) # 0.027 seconds
+            sinh_asinh_transform_gradients!(zs0, alpha, z_grad, alpha_grad) # 0.027 seconds
 
             # adjust for log transform and accumulate
             for i in 1:n-1

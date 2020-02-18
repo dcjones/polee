@@ -26,15 +26,13 @@ end
 """
 One parameter sinh/asinh transformation gradient wrt alpha.
 """
-function sinh_asinh_transform!(zs0, zs, alpha, z_grad, alpha_grad)
+function sinh_asinh_transform_gradients!(zs0, alpha, z_grad, alpha_grad)
     n = length(alpha)+1
     Threads.@threads for i in 1:n-1
         dz_dalpha = cosh(alpha[i] + asinh(zs0[i]))
         alpha_grad[i] += dz_dalpha * z_grad[i]
 
         # ladj gradient
-        alpha_grad[i] += tanh(alpha[i] + sinh(zs0[i]))
+        alpha_grad[i] += tanh(alpha[i] + asinh(zs0[i]))
     end
 end
-
-

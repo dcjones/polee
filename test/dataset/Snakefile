@@ -1,0 +1,97 @@
+
+
+# To try to get a relatively small self contained dataset I'm taking the first 5
+# million bases of chromosomes 1 and 2.
+
+rule annotations_subset:
+    output:
+        "annotations.gff3"
+    shell:
+        "julia subset-annotations.jl"
+        " /home/dcjones/data/mus_musculus/Mus_musculus.GRCm38.95.gff3"
+        " {output}"
+
+
+rule genome_subset:
+    output:
+        "genome.fa"
+    shell:
+        "julia subset-genome.jl"
+        " /home/dcjones/data/mus_musculus/Mus_musculus.GRCm38.dna.primary_assembly.fa"
+        " {output}"
+
+
+rule genome_index:
+    input:
+        "genome.fa"
+    output:
+        "genome_index/genome.1.ht2"
+    shell:
+        "hisat2-build"
+        "  genome.fa"
+        "  genome_index/genome"
+
+
+rule genome_align:
+    input:
+        "{name}_1.fastq",
+        "{name}_2.fastq",
+        "genome_index/genome.1.ht2"
+    output:
+        "{name}.genome.bam"
+    threads:
+        8
+    shell:
+        "hisat2"
+        " --threads {threads}"
+        " -x genome_index/genome"
+        " -1 {input[0]}"
+        " -2 {input[1]}"
+        " | julia filter-unaligned.jl"
+        " | samtools view -S -b -u -"
+        " | samtools sort -@ 4 -m 3G -"
+        " > {output}"
+
+
+rule transcriptome:
+    input:
+        "annotations.gff3"
+    output:
+        "transcriptome.fa"
+    shell:
+        "gffread -w {output} -g /home/dcjones/data/mus_musculus/Mus_musculus.GRCm38.dna.primary_assembly.fa {input}"
+
+
+rule transcriptome_index:
+    input:
+        "transcriptome.fa"
+    output:
+        "transcriptome_index/transcriptome.1.ht2"
+    shell:
+        "hisat2-build"
+        "  transcriptome.fa"
+        "  transcriptome_index/transcriptome"
+
+
+rule transcriptome_align:
+    input:
+        "{name}_1.fastq",
+        "{name}_2.fastq",
+        "transcriptome_index/transcriptome.1.ht2"
+    output:
+        "{name}.transcriptome.bam"
+    threads:
+        8
+    shell:
+        "hisat2"
+        " --threads {threads}"
+        " -x transcriptome_index/transcriptome"
+        " -1 {input[0]}"
+        " -2 {input[1]}"
+        " | julia filter-unaligned.jl"
+        " | samtools view -S -b -u -"
+        " | samtools sort -@ 4 -m 3G -"
+        " > {output}"
+
+
+

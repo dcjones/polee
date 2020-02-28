@@ -339,7 +339,7 @@ function load_samples_hdf5(
     n = length(ts)
 
     efflen_values = Array{Float32}(undef, (num_samples, n))
-    x0_values     = Array{Float32}(undef, (num_samples, n))
+    x0_values     = zeros(Float32, (num_samples, n))
 
     # likelihood approximation base distribution parameters
     la_mu_values    = Array{Float32}(undef, (num_samples, n-1))
@@ -407,22 +407,29 @@ function load_samples_hdf5(
         right_index_values[i, :] = right_index
         leaf_index_values[i, :]  = leaf_index
 
-        # find reasonable initial valuse by taking the mean of the base normal
-        # distribution and transforming it
+        # find reasonable initial values by estimating the mean
+        N = 30
         y0 = Array{Float64}(undef, n-1)
         x0 = Array{Float32}(undef, n)
-        for j in 1:n-1
-            y0[j] = clamp(
-                Polee.logistic(sinh(alpha[j]) + mu[j]),
-                Polee.LIKAP_Y_EPS, 1 - Polee.LIKAP_Y_EPS)
-        end
         t = Polee.PolyaTreeTransform(node_parent_idxs, node_js)
         if transforms !== nothing
             push!(transforms, t)
         end
-        Polee.transform!(t, y0, x0, Val(false))
-        x0_values[i, :] = x0 ./ efflen_values[i, :]
-        x0_values[i, :] ./= sum(x0_values[i, :])
+        for _ in 1:N
+            for j in 1:n-1
+                z0 = randn(Float32)
+                z = sinh(asinh(z0) + alpha[j])
+                y0[j] = clamp(
+                    Polee.logistic(mu[j] + z * sigma[j]),
+                    Polee.LIKAP_Y_EPS, 1 - Polee.LIKAP_Y_EPS)
+            end
+            Polee.transform!(t, y0, x0, Val{true})
+
+            x0 ./= efflen_values[i,:]
+            x0 ./= sum(x0)
+            x0_values[i, :] .+= x0
+        end
+        x0_values[i,:] ./= N
 
         next!(prog)
     end

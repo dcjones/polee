@@ -232,22 +232,6 @@ function main()
         #     end
         # end
 
-        if parsed_args["output-expression"] !== nothing
-            x_tpm = exp.(qx_loc)
-            x_tpm ./= sum(x_tpm, dims=2)
-            x_tpm .*= 1e6
-            open(parsed_args["output-expression"], "w") do output
-                println(output, "gene_id,sample,tpm")
-                for j in 1:size(x_tpm, 2), i in 1:size(x_tpm, 1)
-                    println(
-                        output,
-                        feature_names[j], ",",
-                        loaded_samples.sample_names[i], ",",
-                        x_tpm[i,j])
-                end
-            end
-        end
-
     elseif feature == "transcript"
         sample_scales = estimate_sample_scales(x0_log)
 
@@ -265,7 +249,7 @@ function main()
                 x0_log, factor_matrix, sample_scales, use_point_estimates)
         end
 
-        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(6000)
+        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(8000)
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"
@@ -417,6 +401,22 @@ function main()
             ts_metadata, x_init)
 
         exit()
+    end
+
+    if parsed_args["output-expression"] !== nothing
+        x_tpm = exp.(qx_loc)
+        x_tpm ./= sum(x_tpm, dims=2)
+        x_tpm .*= 1e6
+        open(parsed_args["output-expression"], "w") do output
+            println(output, feature_names_label, ",sample,tpm")
+            for j in 1:size(x_tpm, 2), i in 1:size(x_tpm, 1)
+                println(
+                    output,
+                    feature_names[j], ",",
+                    loaded_samples.sample_names[i], ",",
+                    x_tpm[i,j])
+            end
+        end
     end
 
     write_regression_effects(

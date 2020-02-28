@@ -167,7 +167,7 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
 
         z_std = tf.divide(tf.subtract(y_logit, mu), sigma)
 
-        ladj += tf.reduce_sum(tf.math.reciprocal(sigma), axis=-1)
+        ladj += tf.reduce_sum(-tf.math.log(sigma), axis=-1)
 
         # inverse sinh-asinh transform
         # ----------------------------

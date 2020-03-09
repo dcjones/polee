@@ -376,9 +376,11 @@ class InvHSBGradOp : public OpKernel {
                         double u_j2 = u_j * u_j;
 
                         v_data[left_index_i[j]] =
-                            dladj_du * ladj_grad_i[0] + v_data[j] + (u_right/u_j2) * y_grad_i[k];
+                            dladj_du * ladj_grad_i[0] +
+                            v_data[j] + (u_right/u_j2) * y_grad_i[k];
                         v_data[right_index_i[j]] =
-                            dladj_du * ladj_grad_i[0] + v_data[j] - (u_left/u_j2) * y_grad_i[k];
+                            dladj_du * ladj_grad_i[0] +
+                            v_data[j] - (u_left/u_j2) * y_grad_i[k];
 
                         u_data[left_index_i[j]] = u_left;
                         u_data[right_index_i[j]] = u_right;

@@ -1,5 +1,6 @@
 
 import os
+import sys
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework import ops
@@ -115,7 +116,7 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
 
     # @tf.function
     def _log_prob(self, __ignored__):
-        num_samples = int(self.x.get_shape()[0])
+        num_samples = int(self.x.get_shape()[-2])
         n           = int(self.x.get_shape()[-1])
         num_nodes   = 2*n - 1
 
@@ -126,18 +127,26 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
         # log absolute determinant of the jacobian
         ladj = 0.0
 
-        # tf.print("x span", tf.reduce_min(self.x), tf.reduce_max(self.x))
+        x_exp = tf.math.exp(self.x)
 
-        x = tf.nn.softmax(self.x, axis=-1)
+        # jacobian for exp transformation
+        ladj += tf.reduce_sum(self.x, axis=-1)
+
+        # jacobian for softmax
+        ladj -= (n-1) * tf.math.log(tf.reduce_sum(x_exp, axis=-1))
+
+        # compute softmax of x
+        x = x_exp / tf.reduce_sum(x_exp, axis=-1, keepdims=True)
 
         # effective length transform
         # --------------------------
 
-        efflens = self.efflens
-
-        x_scaled = x * efflens
+        x_scaled = x * self.efflens
         x_scaled_sum = tf.reduce_sum(x_scaled, axis=-1, keepdims=True)
         x_efflen = x_scaled / x_scaled_sum
+
+        ladj += tf.expand_dims(tf.reduce_sum(tf.math.log(self.efflens), axis=-1), axis=0) - \
+                tf.reshape(tf.math.log(x_scaled_sum), [1, num_samples])
 
         # Inverse hierarchical stick breaking transform
         # ---------------------------------------------
@@ -146,7 +155,9 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
         ptt_ladj_tensors = []
         for x_efflen_batch in tf.unstack(x_efflen):
             y_, ladj_ = inverse_hsb_op_module.inv_hsb(
-                    x_efflen_batch, self.left_index, self.right_index, self.leaf_index)
+                    x_efflen_batch,
+                    self.left_index, self.right_index, self.leaf_index)
+
             y_tensors.append(y_)
             ptt_ladj_tensors.append(ladj_)
         y = tf.stack(y_tensors)
@@ -183,7 +194,7 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
         # standand normal log-probability
         # -------------------------------
 
-        lp = (-np.log(2.0*np.pi) -  tf.reduce_sum(tf.square(z), axis=-1)) / 2.0
+        lp = tf.reduce_sum(-np.log(2.0*np.pi) - tf.square(z), axis=-1) / 2.0
 
         return lp + ladj
 

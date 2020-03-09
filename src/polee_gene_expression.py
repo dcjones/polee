@@ -84,8 +84,8 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
 
     # @tf.function
     def _log_prob(self, __ignored__):
-        return self.transcript_likelihood.log_prob(__ignored__) + \
-            noninformative_gene_prior(self.x_gene, self.feature_sizes)
+        return self.transcript_likelihood.log_prob(__ignored__)
+            # noninformative_gene_prior(self.x_gene, self.feature_sizes)
 
 
 """
@@ -108,22 +108,26 @@ class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
               parameters=parameters,
               name=name)
 
+    def _sample_n(self, N, seed=None):
+        shape = (N,) + self._batch_shape()
+        return tf.zeros(shape)
+
     def _event_shape(self):
-        return tf.TensorShape([self.x.get_shape()[-1]])
+        return tf.TensorShape([])
 
     def _batch_shape(self):
         return self.x.get_shape()[:-1]
 
-    @tf.function
-    def log_prob(self, __ignored__):
+    # @tf.function
+    def _log_prob(self, __ignored__):
         x_gene = tf.math.log(tf.nn.softmax(self.x, axis=-1))
 
         feature_likelihood = tfp.distributions.Normal(
             loc=self.loc,
             scale=self.scale)
 
-        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + \
-            noninformative_gene_prior(x_gene, self.feature_sizes)
+        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1)
+            # noninformative_gene_prior(x_gene, self.feature_sizes)
 
 
 """

@@ -448,7 +448,8 @@ class RNASeqNormalTranscriptLinearRegression(RNASeqLinearRegression):
 
         def likelihood_model(x):
             likelihood = yield tfd.Independent(RNASeqFeatureApproxLikelihoodDist(
-                x_likelihood_loc, x_likelihood_scale, x))
+                x_likelihood_loc, x_likelihood_scale,
+                np.ones([num_features], dtype=np.int), x))
 
         def surrogate_likelihood_model(qx):
             dummy_likelihood_value = yield JDCRoot(Independent(
@@ -1107,38 +1108,38 @@ class RNASeqJointLinearRegression:
             tf.nn.softplus(self.qw_splice_softplus_scale_var).numpy())
 
 
-"""
-Fake distribution for approximate splice log ratio likelihood.
-"""
-class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
-    def __init__(self, loc, scale, x, name="RNASeqFeatureApproxLikelihoodDist"):
-        self.loc = loc
-        self.scale = scale
-        self.x = x
+# """
+# Fake distribution for approximate splice log ratio likelihood.
+# """
+# class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
+#     def __init__(self, loc, scale, x, name="RNASeqFeatureApproxLikelihoodDist"):
+#         self.loc = loc
+#         self.scale = scale
+#         self.x = x
 
-        parameters = dict(locals())
+#         parameters = dict(locals())
 
-        super(RNASeqFeatureApproxLikelihoodDist, self).__init__(
-              dtype=self.x.dtype,
-              reparameterization_type=tfp.distributions.FULLY_REPARAMETERIZED,
-              validate_args=False,
-              allow_nan_stats=False,
-              parameters=parameters,
-              name=name)
+#         super(RNASeqFeatureApproxLikelihoodDist, self).__init__(
+#               dtype=self.x.dtype,
+#               reparameterization_type=tfp.distributions.FULLY_REPARAMETERIZED,
+#               validate_args=False,
+#               allow_nan_stats=False,
+#               parameters=parameters,
+#               name=name)
 
-    def _event_shape(self):
-        return tf.TensorShape([self.x.get_shape()[-1]])
+#     def _event_shape(self):
+#         return tf.TensorShape([self.x.get_shape()[-1]])
 
-    def _batch_shape(self):
-        return self.x.get_shape()[:-1]
+#     def _batch_shape(self):
+#         return self.x.get_shape()[:-1]
 
-    @tf.function
-    def log_prob(self, __ignored__):
-        feature_likelihood = tfp.distributions.Normal(
-            loc=self.loc,
-            scale=self.scale)
+#     @tf.function
+#     def log_prob(self, __ignored__):
+#         feature_likelihood = tfp.distributions.Normal(
+#             loc=self.loc,
+#             scale=self.scale)
 
-        return tf.reduce_sum(feature_likelihood.log_prob(self.x), axis=-1)
+#         return tf.reduce_sum(feature_likelihood.log_prob(self.x), axis=-1)
 
 
 class RNASeqSpliceFeatureLinearRegression:

@@ -122,13 +122,6 @@ end
             Without this option, pseudoalignments from kallisto will be treated as single-end.
             """
         action = :store_true
-    "--gene-noninformative"
-        help = """
-            Default behavior is to estimate the transcript expression distribution under
-            transcript-level noninormative prior. This option instead uses a gene-level
-            noninformative prior (which is not the same thing).
-            """
-        action = :store_true
     "--no-efflen-jacobian"
         help = """
             By default the likelihood function includes the jacobian
@@ -212,6 +205,11 @@ end
         (Default behavior is to sample expression, and compute expected
         read counts if needed."""
         action = :store_true
+    "--uniform-gene-prior"
+        help = """Sample with a uniform ("noninformative") prior over gene
+        expression. (Default behavior is to use a uniform prior over transcript
+        expression.)"""
+        action = :store_true
     "prepared_sample"
         help = "Prepared RNA-Seq sample to generate samples from."
         metavar = "prepared-sample.h5"
@@ -286,8 +284,12 @@ end
 end
 
 
-function main()
-    parsed_args = parse_args(arg_settings)
+function main(args=nothing)
+    if args === nothing
+        parsed_args = parse_args(arg_settings)
+    else
+        parsed_args = parse_args(args, arg_settings)
+    end
 
     command = parsed_args["%COMMAND%"]::String
     command_args = parsed_args[command]::Dict{String, Any}
@@ -649,10 +651,11 @@ function polee_sample(parsed_args::Dict{String, Any})
             transcripts_filename, excluded_transcripts)
     end
 
+    tnames = String[t.metadata.name for t in ts]
     if parsed_args["trim-prefix"] !== nothing
-        for t in ts
-            t.metadata.name = replace(
-                t.metadata.name, parsed_args["trim-prefix"] => "")
+        for (i, tname) in enumerate(tnames)
+            tnames[i] = replace(
+                tname, parsed_args["trim-prefix"] => "")
         end
     end
 
@@ -724,7 +727,7 @@ function polee_sample(parsed_args::Dict{String, Any})
             aux_group["num_bootstrap"]    = Int[num_samples]
             aux_group["eff_lengths"]      = Vector{Float64}(efflens)
             aux_group["lengths"]          = Int[exonic_length(t) for t in ts]
-            aux_group["ids"]              = String[t.metadata.name for t in ts]
+            aux_group["ids"]              = tnames
             aux_group["call"]             = String[join(ARGS, " ")]
             aux_group["index_version"]    = Int[-1]
             aux_group["kallisto_version"] = "polee sample" # TODO: should record polee version
@@ -742,7 +745,7 @@ function polee_sample(parsed_args::Dict{String, Any})
         open(parsed_args["output"], "w") do output
             println(output, "transcript_id,tpm")
             for (j, t) in enumerate(ts)
-                println(output, t.metadata.name, ",", 1e6*post_mean[j])
+                println(output, tnames[j], ",", 1e6*post_mean[j])
             end
         end
     end

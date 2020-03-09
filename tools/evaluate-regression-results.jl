@@ -99,12 +99,14 @@ function find_minimum_effect_size(μ, σ, target_coverage)
 end
 
 
-function estimate_sample_scales(xs, qx_bias_loc, upper_quantile=0.9)
+function estimate_sample_scales(xs, qx_bias_loc, upper_quantile=0.95)
     high_expr_idx = qx_bias_loc .> quantile(qx_bias_loc, upper_quantile)
     n = length(qx_bias_loc)
+
     sample_scales = median(
         (xs .- reshape(qx_bias_loc, (1, n)))[:,high_expr_idx],
         dims=2)[:,1]
+
     return sample_scales
 end
 
@@ -188,17 +190,6 @@ function evaluate_regression_with_point_estimates(
     dist = TDist(20.0)
     sample_scales = estimate_sample_scales(xs, qx_bias_loc)
     xs .-= sample_scales
-
-    # @show corspearman(qx_bias_loc, xs[1,:])
-    # @show cor(qx_bias_loc, xs[1,:])
-
-    # @show quantile(qx_bias_loc, 0.95)
-    # for i in 1:num_test_samples
-    #     @show (i, quantile(xs[i,:], 0.95), sum(exp.(xs[i,:])))
-    # end
-    # @show sample_scales
-    # @show sum(exp.(qx_bias_loc))
-    # exit()
 
     for i in 1:num_test_samples, j in 1:n
         for k in 1:num_classes

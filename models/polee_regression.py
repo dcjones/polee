@@ -18,6 +18,7 @@ from polee import *
 class RNASeqLinearRegression:
     def __init__(self, F, x_init, likelihood_model, surrogate_likelihood_model,
             x_bias_loc0, x_bias_scale0, x_scale_hinges, sample_scales,
+            use_distortion, scale_penalty,
             use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth,
             num_samples=None, num_factors=None):
         if num_samples is None:
@@ -37,6 +38,8 @@ class RNASeqLinearRegression:
         self.x_bias_scale0 = x_bias_scale0
         self.x_scale_hinges = x_scale_hinges
         self.sample_scales = sample_scales
+        self.use_distortion = use_distortion
+        self.scale_penalty = scale_penalty
         self.use_point_estimates = use_point_estimates
         self.kernel_regression_degree = kernel_regression_degree
         self.kernel_regression_bandwidth = kernel_regression_bandwidth
@@ -121,6 +124,8 @@ class RNASeqLinearRegression:
         weights = kernel_regression_weights(
             self.kernel_regression_bandwidth, x_bias, self.x_scale_hinges)
 
+        F = yield from design_matrix_model()
+
         # Kernel regression correction.
         # This can be thought of as encoding the prior that similarly expression
         # genes are probably not all DE in the same direction. This can help
@@ -129,19 +134,18 @@ class RNASeqLinearRegression:
         # in sequencing depth alter the likelihood function of transcripts with
         # no reads which can otherwise manifest as  bias in the w
         # posterior.
+        if self.use_distortion:
+            w_distortion_c = yield Independent(tfd.Normal(
+                loc=tf.zeros([self.num_factors, self.kernel_regression_degree]),
+                scale=1.0))
 
-        w_distortion_c = yield Independent(tfd.Normal(
-            loc=tf.zeros([self.num_factors, self.kernel_regression_degree]),
-            scale=1.0))
+            w_distortion = tf.matmul(
+                tf.expand_dims(w_distortion_c, 1),
+                tf.expand_dims(weights, 0)) # [num_factors, num_features]
 
-        w_distortion = tf.matmul(
-            tf.expand_dims(w_distortion_c, 1),
-            tf.expand_dims(weights, 0)) # [num_factors, num_features]
-
-        F = yield from design_matrix_model()
-
-        # the actual regression part
-        x_loc = tf.matmul(F, w + w_distortion) + x_bias
+            x_loc = tf.matmul(F, w + w_distortion) + x_bias
+        else:
+            x_loc = tf.matmul(F, w) + x_bias
 
         # Kernel regression mean-variance model
         # Biological variance is InverseGamma distributed with the mode
@@ -166,7 +170,7 @@ class RNASeqLinearRegression:
 
             x_sample_scale = yield Independent(tfd.Normal(
                 loc=tf.zeros(num_samples),
-                scale=5e-4))
+                scale=self.scale_penalty))
 
         yield from likelihood_model(x)
 
@@ -199,10 +203,11 @@ class RNASeqLinearRegression:
             loc=self.qx_bias_loc_var,
             scale=tf.nn.softplus(self.qx_bias_softplus_scale_var))))
 
-        qw_distortion_c = yield JDCRoot(Independent(tfd.Deterministic(
-            loc=self.qw_distortion_c_loc_var)))
-
         yield from surrogate_design_matrix_model()
+
+        if self.use_distortion:
+            qw_distortion_c = yield JDCRoot(Independent(tfd.Deterministic(
+                loc=self.qw_distortion_c_loc_var)))
 
         qx_scale_concentration_c = yield JDCRoot(Independent(tfd.Deterministic(
             loc=tf.nn.softplus(self.qx_scale_concentration_c_loc_var))))
@@ -364,7 +369,9 @@ Variational inference on transcript expression linear regression.
 class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
     def __init__(
             self, vars, x_init, F_arr,
-            sample_scales, use_point_estimates,
+            sample_scales,
+            use_distortion, scale_penalty,
+            use_point_estimates,
             kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
             num_samples=None, num_factors=None):
 
@@ -394,6 +401,7 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
         super(RNASeqTranscriptLinearRegression, self).__init__(
             F, x_init, likelihood_model, surrogate_likelihood_model,
             x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
+            use_distortion, scale_penalty,
             use_point_estimates,
             kernel_regression_degree, kernel_regression_bandwidth,
             num_samples=num_samples, num_factors=num_factors)
@@ -419,7 +427,7 @@ class RNASeqTranscriptLinearRegression(RNASeqLinearRegression):
 
         return super(RNASeqTranscriptLinearRegression, self).classify(
             x_init, likelihood_model, surrogate_likelihood_model,
-            sample_scales, use_point_estimates, niter)
+            sample_scales, use_distortion, scale_penalty, use_point_estimates, niter)
 
 
 """
@@ -429,7 +437,7 @@ point estimates and standard deviation in place of likelihood.
 class RNASeqNormalTranscriptLinearRegression(RNASeqLinearRegression):
     def __init__(
             self, vars, x_likelihood_loc, x_likelihood_scale, F_arr,
-            sample_scales,
+            sample_scales, use_distortion, scale_penalty,
             kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
             num_samples=None, num_factors=None):
 
@@ -458,6 +466,7 @@ class RNASeqNormalTranscriptLinearRegression(RNASeqLinearRegression):
         super(RNASeqNormalTranscriptLinearRegression, self).__init__(
             F, x_likelihood_loc, likelihood_model, surrogate_likelihood_model,
             x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
+            use_distortion, scale_penalty,
             False, kernel_regression_degree, kernel_regression_bandwidth,
             num_samples=num_samples, num_factors=num_factors)
 
@@ -471,7 +480,9 @@ class RNASeqGeneLinearRegression(RNASeqLinearRegression):
         feature_idxs, transcript_idxs,
         x_gene_init, x_isoform_init,
         feature_sizes,
-        F_arr, sample_scales, use_point_estimates,
+        F_arr, sample_scales,
+        use_distortion, scale_penalty,
+        use_point_estimates,
         kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
 
         num_samples = x_gene_init.shape[0]
@@ -528,6 +539,7 @@ class RNASeqGeneLinearRegression(RNASeqLinearRegression):
         super(RNASeqGeneLinearRegression, self).__init__(
             F, x_gene_init, likelihood_model, surrogate_likelihood_model,
             x_gene_bias_mu0, x_gene_bias_sigma0, x_gene_scale_hinges, sample_scales,
+            use_distortion, scale_penalty,
             use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth)
 
     def classify(
@@ -1145,6 +1157,7 @@ class RNASeqJointLinearRegression:
 class RNASeqSpliceFeatureLinearRegression:
     def __init__(
             self, F_arr, x_init, qx_likelihood_loc, qx_likelihood_scale,
+            use_distortion, scale_penalty,
             use_point_estimates=False):
 
         self.use_point_estimates = use_point_estimates

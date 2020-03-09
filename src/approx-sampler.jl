@@ -40,7 +40,7 @@ function Random.rand!(als::ApproxLikelihoodSampler, xs::AbstractArray)
     end
     sinh_asinh_transform!(als.alpha, als.zs, als.zs, Val{true})
     logit_normal_transform!(als.mu, als.sigma, als.zs, als.ys, Val{true})
-    transform!(als.t, als.ys, xs, Val(false))
+    transform!(als.t, als.ys, xs, Val{false})
 end
 
 

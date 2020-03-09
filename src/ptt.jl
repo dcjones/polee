@@ -122,7 +122,7 @@ function transform!(
         t::PolyaTreeTransform{T},
         ys::AbstractVector,
         xs::AbstractVector,
-        ::Val{compute_ladj}) where {compute_ladj, T}
+        ::Type{Val{compute_ladj}}) where {compute_ladj, T}
     ladj = zero(T)
     t.us[1] = one(T)
     k = 1 # internal node count

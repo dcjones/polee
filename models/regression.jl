@@ -86,6 +86,20 @@ arg_settings.prog = "polee model regression"
         """
         default = nothing
         arg_type = String
+    "--no-distortion"
+        help = """
+            Disable 'distortion' model in regression. Enabled by default,
+            this 'distortion' model tries to remove any systemic technical
+            effects, but can potentially remove true effects.
+        """
+        action = :store_true
+    "--scale-penalty"
+        help = """
+            Expression vectors with sum strays too far from 1.0 are
+            penalized according to a normal distribution with the given std. dev.
+        """
+        default = 1e-2
+        arg_type = Float64
     "--nonredundant"
         help = "Avoid overparameterization by excluding one factor from each group"
         action = :store_true
@@ -217,6 +231,7 @@ function main()
                 loaded_samples.variables,
                 gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
                 gene_sizes, factor_matrix, sample_scales,
+                !parsed_args["no-distortion"], parsed_args["scale-penalty"],
                 use_point_estimates)
 
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(10000)
@@ -242,14 +257,19 @@ function main()
             regression = polee_regression_py.RNASeqNormalTranscriptLinearRegression(
                 loaded_samples.variables,
                 x0_log, loaded_samples.log_x0_std,
-                factor_matrix, sample_scales)
+                factor_matrix, sample_scales,
+                !parsed_args["no-distortion"],
+                parsed_args["scale-penalty"])
         else
             regression = polee_regression_py.RNASeqTranscriptLinearRegression(
                 loaded_samples.variables,
-                x0_log, factor_matrix, sample_scales, use_point_estimates)
+                x0_log, factor_matrix, sample_scales,
+                !parsed_args["no-distortion"],
+                parsed_args["scale-penalty"],
+                use_point_estimates)
         end
 
-        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(8000)
+        qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(6000)
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"
@@ -384,6 +404,10 @@ function main()
             loaded_samples, num_features, feature_idxs, feature_transcript_idxs,
             antifeature_idxs, antifeature_transcript_idxs)
         println("done")
+
+        if parsed_args["no-distortion"]
+            @warn "'--no-distortion' is not applicable to splice-feature regression."
+        end
 
         regression = polee_regression_py.RNASeqSpliceFeatureLinearRegression(
             factor_matrix, x_init, qx_feature_loc, qx_feature_scale)

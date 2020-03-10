@@ -21,7 +21,7 @@ export
 
 import Polee
 using Polee:
-    HSBTransform, Transcript, Transcripts, TranscriptsMetadata, LoadedSamples,
+    Transcript, Transcripts, TranscriptsMetadata, LoadedSamples,
     STRAND_POS, STRAND_NEG
 
 import YAML

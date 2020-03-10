@@ -4,15 +4,15 @@ using ArgParse
 
 function select_approx_method(method_name::String, tree_method::Symbol)
     if method_name == "optimize"
-        return OptimizeHSBApprox()
+        return OptimizePTTApprox()
     elseif method_name == "logistic_normal"
         return LogisticNormalApprox()
-    elseif method_name == "kumaraswamy_hsb"
-        return KumaraswamyHSBApprox(tree_method)
-    elseif method_name == "logit_skew_normal_hsb"
-        return LogitSkewNormalHSBApprox(tree_method)
-    elseif method_name == "logit_normal_hsb"
-        return LogitNormalHSBApprox(tree_method)
+    elseif method_name == "kumaraswamy_ptt"
+        return KumaraswamyPTTApprox(tree_method)
+    elseif method_name == "logit_skew_normal_ptt"
+        return LogitSkewNormalPTTApprox(tree_method)
+    elseif method_name == "logit_normal_ptt"
+        return LogitNormalPTTApprox(tree_method)
     elseif method_name == "normal_ilr"
         return NormalILRApprox(tree_method)
     elseif method_name == "normal_alr"
@@ -104,10 +104,10 @@ end
         required = false
     "--approx-method"
         help = "Likelihood approximation method. (Don't mess with this)"
-        default = "logit_skew_normal_hsb"
+        default = "logit_skew_normal_ptt"
     "--tree-method"
         help = "Tree building heurustic for polya tree transform. (Don't mess with this either)"
-        default = "cluster"
+        default = "clustered"
     "--no-bias"
         help = "Disable bias correction model."
         action = :store_true
@@ -454,9 +454,9 @@ function polee_prep(parsed_args::Dict{String, Any})
     no_bias = Bool(get(spec, "no_bias", false))
 
     approximation_method_name =
-        get(spec, "approximation", "logit_skew_normal_hsb")
+        get(spec, "approximation", "logit_skew_normal_ptt")
     approximation_tree_method =
-        Symbol(get(spec, "approximation_tree_method", "cluster"))
+        Symbol(get(spec, "approximation_tree_method", "clustered"))
     approximation = select_approx_method(
         approximation_method_name, approximation_tree_method)
 
@@ -597,19 +597,10 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
             alt_frag_model=parsed_args["alt-frag-model"])
     end
 
-    # using gene noninformative prior makes the distribution harder to fit,
-    # so give it more time to do so.
-    if parsed_args["gene-noninformative"]
-        global ADAM_LEARNING_RATE_DECAY
-        ADAM_LEARNING_RATE_DECAY = 1e-2
-        global LIKAP_NUM_STEPS
-        LIKAP_NUM_STEPS = 800
-    end
-
     if !parsed_args["skip-likelihood-approximation"]
         approximate_likelihood(
             approx, sample, parsed_args["output"],
-            gene_noninformative=parsed_args["gene-noninformative"],
+            gene_noninformative=false,
             use_efflen_jacobian=!parsed_args["no-efflen-jacobian"])
     end
 end

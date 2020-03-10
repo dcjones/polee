@@ -21,6 +21,9 @@ end
     Polee.main(args)
 end
 
+@testset "Sampling from approximated likelihood" begin
+end
+
 # TODO: test polee sample
 
 # TODO: test polee debug-sample

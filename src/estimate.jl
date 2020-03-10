@@ -222,7 +222,6 @@ function load_samples_from_specification(
         spec, ts, ts_metadata;
         max_num_samples=nothing, batch_size=nothing,
         check_gff_hash::Bool=true,
-        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
         using_tensorflow::Bool=true)
 
     filenames, sample_names, sample_factors =
@@ -321,7 +320,6 @@ Input:
 function load_samples(
         filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
         check_gff_hash::Bool=true,
-        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
         using_tensorflow::Bool=true)
     return load_samples_hdf5(
         filenames, ts, ts_metadata, batch_size,
@@ -333,7 +331,6 @@ end
 function load_samples_hdf5(
         filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
         check_gff_hash::Bool=true,
-        transforms::Union{Nothing, Vector{HSBTransform}}=nothing,
         using_tensorflow::Bool=true)
     num_samples = length(filenames)
     n = length(ts)
@@ -401,7 +398,7 @@ function load_samples_hdf5(
         close(input)
 
         left_index, right_index, leaf_index =
-            Polee.make_inverse_hsb_params(node_parent_idxs, node_js)
+            Polee.make_inverse_ptt_params(node_parent_idxs, node_js)
 
         left_index_values[i, :]  = left_index
         right_index_values[i, :] = right_index
@@ -412,9 +409,6 @@ function load_samples_hdf5(
         y0 = Array{Float64}(undef, n-1)
         x0 = Array{Float32}(undef, n)
         t = Polee.PolyaTreeTransform(node_parent_idxs, node_js)
-        if transforms !== nothing
-            push!(transforms, t)
-        end
         for _ in 1:N
             for j in 1:n-1
                 z0 = randn(Float32)
@@ -423,7 +417,7 @@ function load_samples_hdf5(
                     Polee.logistic(mu[j] + z * sigma[j]),
                     Polee.LIKAP_Y_EPS, 1 - Polee.LIKAP_Y_EPS)
             end
-            Polee.transform!(t, y0, x0, Val{true})
+            Polee.transform!(t, y0, x0)
 
             x0 ./= efflen_values[i,:]
             x0 ./= sum(x0)

@@ -5,13 +5,13 @@ logit(x) = log(x / (1 - x))
 
 
 
-function logit_normal_transform!(mu, sigma, zs, ys, ::Type{Val{GRADONLY}}) where {GRADONLY}
+function logit_normal_transform!(mu, sigma, zs, ys, ::Val{compute_ladj}=Val(false)) where {compute_ladj}
     n = length(mu)+1
     ladj = 0.0f0
     for i in 1:n-1
         ys[i] = logistic(mu[i] + zs[i] * sigma[i])
 
-        if !GRADONLY
+        if compute_ladj
             ladj += log(sigma[i] * ys[i] * (1 - ys[i]))
         end
     end

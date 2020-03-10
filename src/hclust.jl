@@ -268,22 +268,6 @@ function hclust(X::SparseMatrixCSC)
     return root
 end
 
-# TODO: Everything is essentially an older implementation of PolyaTreeTransform
-# that is still used in some of the likelihood approximation methods that are
-# implemented for comparison purposes. PolyaTreeTransform is what should be
-# actually used, and this stuff should be purged (along with alternative
-# approximations) eventually.
-
-# Hierarchical stick breaking transformation
-mutable struct HSBTransform
-    # tree nodes in depth first traversal order
-    nodes::Vector{HClustNode}
-
-    # hint at an appropriate initial value for x. When cluster heuristic is used,
-    # this is the approximate mode, otherwis its fill(1/n)
-    x0::Vector{Float32}
-end
-
 
 function set_subtree_sizes!(nodes::Vector{HClustNode})
     # traverse up the tree setting the subtree size
@@ -355,32 +339,6 @@ function order_nodes(root::HClustNode, n)
 end
 
 
-function HSBTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
-    m, n = size(X)
-    if method == :cluster
-        root = hclust(X)
-        x0 = fill(1.0f0/n, n)
-        nodes = order_nodes(root, n)
-    elseif method == :random
-        nodes = rand_tree_nodes(n)
-        x0 = fill(1.0f0/n, n)
-    elseif method == :sequential
-        nodes = rand_list_nodes(n)
-        x0 = fill(1.0f0/n, n)
-    else
-        error("$(method) is not a supported HSB heuristic")
-    end
-    return HSBTransform(nodes, x0)
-end
-
-
-# rebuild tree from serialization
-function HSBTransform(parent_idxs::Vector{T}, js::Vector{T}) where {T<:Integer}
-    n = div(length(js) + 1, 2)
-    return HSBTransform(deserialize_tree(parent_idxs, js), fill(1.0f0/n, n))
-end
-
-
 function deserialize_tree(parent_idxs, js)
     @assert length(parent_idxs) == length(js)
     nodes = [HClustNode(0) for i in 1:length(parent_idxs)]
@@ -410,11 +368,6 @@ end
 Reduce the tree structure to two arrays: on giving parent indexes, one giving
 leaf indexes.
 """
-function flattened_tree(t::HSBTransform)
-    return flattened_tree(t.nodes)
-end
-
-
 function flattened_tree(nodes::Vector{HClustNode})
     node_parent_idxs = Array{Int32}(undef, length(nodes))
     node_js          = Array{Int32}(undef, length(nodes))
@@ -471,120 +424,24 @@ function rand_list_nodes(n)
 end
 
 
-function rand_hsb_tree(n)
-    return HSBTransform(rand_tree_nodes(n))
-end
-
-
-function hsb_transform!(t::HSBTransform, ys::AbstractVector, xs::AbstractVector,
-                        ::Type{Val{GRADONLY}}) where {GRADONLY}
-    nodes = t.nodes
-    nodes[1].input_value = 1.0f0
-    k = 1 # internal node count
-    ladj = 0.0f0
-    for i in 1:length(nodes)
-        node = nodes[i]
-
-        if node.j != 0 # leaf node
-            xs[node.j] = node.input_value
-            continue
-        end
-
-        @assert node.left_child !== node
-        @assert node.right_child !== node
-
-        node.k = k # TODO: this is dumb, I'm just keeping note of k for debugging purposes
-        node.left_child.input_value = ys[k] * node.input_value
-        node.right_child.input_value = (1 - ys[k]) * node.input_value
-
-        if !GRADONLY
-            # log jacobian determinant term for stick breaking
-            ladj += log(node.input_value)
-        end
-
-        k += 1
-    end
-    @assert k == length(ys) + 1
-    @assert isfinite(ladj)
-
-    return ladj
-end
-
-
-function hsb_inverse_transform!(t::HSBTransform, xs::AbstractVector, ys::AbstractVector)
-    nodes = t.nodes
-    n = length(xs)
-    k = n - 1 # internal node count
-    for i in length(nodes):-1:1
-        node = nodes[i]
-
-        if node.j != 0 # leaf node
-            node.input_value = xs[node.j]
-            continue
-        end
-
-        node.input_value = node.left_child.input_value + node.right_child.input_value
-        ys[k] = node.left_child.input_value / node.input_value
-
-        k -= 1
+# Some debugging utilities
+function node_label(node)
+    if node.j != 0
+        return @sprintf("L%d", node.j)
+    else
+        return @sprintf("I%d", node.k)
     end
 end
 
 
-function hsb_transform_gradients!(t::HSBTransform, ys::Vector,
-                                  y_grad::Vector,
-                                  x_grad::Vector)
-    nodes = t.nodes
-    k = length(y_grad)
-    for i in length(nodes):-1:1
-        node = nodes[i]
-
-        if node.j != 0 # leaf node
-            node.grad = x_grad[node.j]
-            node.ladj_grad = 0.0f0
-        else
-            # get derivative wrt y by multiplying children's derivatives by y's
-            # contribution to their input values
-            y_grad[k] = node.input_value *
-                ((node.left_child.grad + node.left_child.ladj_grad) -
-                 (node.right_child.grad + node.right_child.ladj_grad))
-
-            # store derivative wrt this nodes input_value
-            node.grad = ys[k] * node.left_child.grad + (1 - ys[k]) * node.right_child.grad
-
-            # store ladj derivative wrt to input_value
-            node.ladj_grad = 1/node.input_value +
-                ys[k] * node.left_child.ladj_grad + (1 - ys[k]) * node.right_child.ladj_grad
-
-            k -= 1
-        end
-
+function show_node(node, xs, ys)
+    if node.j != 0
+        println(node_label(node), "[label=\"x=", xs[node.j], "\"];")
+    else
+        println(node_label(node), "[label=\"", node.k, "\\ny=", round(ys[node.k], 4), "\\nin=", node.input_value, "\"];")
+        println(node_label(node), " -> ", node_label(node.left_child), ";")
+        println(node_label(node), " -> ", node_label(node.right_child), ";")
+        show_node(node.left_child, xs, ys)
+        show_node(node.right_child, xs, ys)
     end
-    @assert k == 0
 end
-
-
-function hsb_transform_gradients_no_ladj!(t::HSBTransform, ys::Vector,
-                                          y_grad::Vector,
-                                          x_grad::Vector)
-    nodes = t.nodes
-    k = length(y_grad)
-    for i in length(nodes):-1:1
-        node = nodes[i]
-
-        if node.j != 0 # leaf node
-            node.grad = x_grad[node.j]
-        else
-            # get derivative wrt y by multiplying children's derivatives by y's
-            # contribution to their input values
-            y_grad[k] = node.input_value * (node.left_child.grad - node.right_child.grad)
-
-            # store derivative wrt this nodes input_value
-            node.grad = ys[k] * node.left_child.grad + (1 - ys[k]) * node.right_child.grad
-            k -= 1
-        end
-
-    end
-    @assert k == 0
-end
-

@@ -32,9 +32,9 @@ Heuristically build a PTT based on a sparse data. The defaut method will try
 to define a transform that is able to preserve correlation/anticorrelation
 between dimensions in X.
 """
-function PolyaTreeTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
+function PolyaTreeTransform(X::SparseMatrixCSC, method::Symbol=:clustered)
     m, n = size(X)
-    if method == :cluster
+    if method == :clustered
         root = hclust(X)
         nodes = order_nodes(root, n)
     elseif method == :random
@@ -122,7 +122,7 @@ function transform!(
         t::PolyaTreeTransform{T},
         ys::AbstractVector,
         xs::AbstractVector,
-        ::Type{Val{compute_ladj}}) where {compute_ladj, T}
+        ::Val{compute_ladj}=Val(false)) where {compute_ladj, T}
     ladj = zero(T)
     t.us[1] = one(T)
     k = 1 # internal node count
@@ -210,10 +210,10 @@ contains gradients df(x)/dx, compute df(x)/dy
 where x = T(y) and J is the jacobian matrix for T.
 """
 function transform_gradients_no_ladj!(
-        t::PolyaTreeTransform,
+        t::PolyaTreeTransform{T},
         ys::AbstractVector,
         y_grad::AbstractVector,
-        x_grad::AbstractVector)
+        x_grad::AbstractVector) where {T}
     num_nodes = size(t.index, 2)
     n = div(num_nodes + 1, 2)
     k = n - 1 # internal node number
@@ -282,7 +282,7 @@ Given a partial Polya tree serialized as parent pointers (node_parent_idxs)
 and leaf node indexes (node_js), build a more complete tree description
 consising of left and right child pointers.
 """
-function make_inverse_hsb_params(node_parent_idxs, node_js)
+function make_inverse_ptt_params(node_parent_idxs, node_js)
     num_nodes = length(node_js)
 
     left_index = fill(Int32(-1), num_nodes)

@@ -36,7 +36,7 @@ end
 function log_likelihood(
         frag_probs, log_frag_probs,
         X::SparseMatrixCSC, Xt::SparseMatrixCSC, xs, x_grad,
-        ::Type{Val{GRADONLY}}) where {GRADONLY}
+        ::Val{gradonly}) where {gradonly}
     m, n = size(X)
 
     # conditional fragment probabilities
@@ -44,7 +44,7 @@ function log_likelihood(
 
     # log likelihood
     lp = 0.0
-    if !GRADONLY
+    if !gradonly
         log!(log_frag_probs, frag_probs, m)
         lp = sum(log_frag_probs)
         @assert isfinite(lp)

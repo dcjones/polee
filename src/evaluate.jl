@@ -1,4 +1,6 @@
 
+# This is benchmarking code for doing goodness of fit tests.
+
 using DelimitedFiles
 
 """
@@ -13,9 +15,12 @@ function sample_likap(input_filename::String, num_samples)
 
     typenames = Dict(
         "LogisticNormalApprox"     => LogisticNormalApprox,
-        "LogitNormalHSBApprox"     => LogitNormalHSBApprox,
-        "LogitSkewNormalHSBApprox" => LogitSkewNormalHSBApprox,
-        "KumaraswamyHSBApprox"     => KumaraswamyHSBApprox,
+        "LogitNormalHSBApprox"     => LogitNormalPTTApprox,
+        "LogitNormalPTTApprox"     => LogitNormalPTTApprox,
+        "LogitSkewNormalHSBApprox" => LogitSkewNormalPTTApprox,
+        "LogitSkewNormalPTTApprox" => LogitSkewNormalPTTApprox,
+        "KumaraswamyHSBApprox"     => KumaraswamyPTTApprox,
+        "KumaraswamyPTTApprox"     => KumaraswamyPTTApprox,
         "NormalILRApprox"          => NormalILRApprox,
         "NormalALRApprox"          => NormalALRApprox )
 
@@ -69,13 +74,14 @@ function sample_likap(approx_type::Type{LogisticNormalApprox},
 end
 
 
-function sample_likap(approx_type::Type{LogitNormalHSBApprox},
+function sample_likap(approx_type::Type{LogitNormalPTTApprox},
                       input, num_samples)
     mu = read(input["mu"])
     sigma = exp.(read(input["omega"]))
     effective_lengths = read(input["effective_lengths"])
-    t = HSBTransform(read(input["node_parent_idxs"]),
-                     read(input["node_js"]))
+    t = PolyaTreeTransform(
+        read(input["node_parent_idxs"]),
+        read(input["node_js"]))
     close(input)
     n = length(mu) + 1
 
@@ -106,15 +112,16 @@ function sample_likap(approx_type::Type{LogitNormalHSBApprox},
 end
 
 
-function sample_likap(approx_type::Type{LogitSkewNormalHSBApprox},
+function sample_likap(approx_type::Type{LogitSkewNormalPTTApprox},
                       input, num_samples)
     mu = read(input["mu"])
     sigma = exp.(read(input["omega"]))
     alpha = read(input["alpha"])
 
     effective_lengths = read(input["effective_lengths"])
-    t = HSBTransform(read(input["node_parent_idxs"]),
-                     read(input["node_js"]))
+    t = PolyaTreeTransform(
+        read(input["node_parent_idxs"]),
+        read(input["node_js"]))
     close(input)
     n = length(mu) + 1
 
@@ -151,13 +158,14 @@ end
 """
 Generate samples from an approximated likelihood stored in the given file.
 """
-function sample_likap(approx_type::Type{KumaraswamyHSBApprox},
+function sample_likap(approx_type::Type{KumaraswamyPTTApprox},
                       input, num_samples)
     as = exp.(read(input["alpha"]))
     bs = exp.(read(input["beta"]))
     effective_lengths = read(input["effective_lengths"])
-    t = HSBTransform(read(input["node_parent_idxs"]),
-                     read(input["node_js"]))
+    t = PolyaTreeTransform(
+        read(input["node_parent_idxs"]),
+        read(input["node_js"]))
     close(input)
     n = length(as) + 1
 

@@ -38,9 +38,9 @@ function Random.rand!(als::ApproxLikelihoodSampler, xs::AbstractArray)
     for j in 1:length(als.zs)
         als.zs[j] = randn(Float32)
     end
-    sinh_asinh_transform!(als.alpha, als.zs, als.zs, Val{true})
-    logit_normal_transform!(als.mu, als.sigma, als.zs, als.ys, Val{true})
-    transform!(als.t, als.ys, xs, Val{false})
+    sinh_asinh_transform!(als.alpha, als.zs, als.zs)
+    logit_normal_transform!(als.mu, als.sigma, als.zs, als.ys)
+    transform!(als.t, als.ys, xs)
 end
 
 

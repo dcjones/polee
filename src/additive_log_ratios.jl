@@ -10,7 +10,7 @@ Transfrom real numbers ys to simplex constrain vector xs using ALR
 transformation.
 """
 function alr_transform!(t::ALRTransform, ys::Vector, xs::Vector,
-                        ::Type{Val{GRADONLY}}) where {GRADONLY}
+                        ::Val{compute_ladj}=Val(false)) where {compute_ladj}
     n = length(xs)
     for i in 1:n
         if i == t.refidx
@@ -23,7 +23,7 @@ function alr_transform!(t::ALRTransform, ys::Vector, xs::Vector,
     xs ./= sum(xs)
 
     ladj = 0.0
-    if !GRADONLY
+    if compute_ladj
         ladj = sum(ys) - log(1 + sum(exp.(ys)))
     end
 
@@ -34,8 +34,7 @@ end
 """
 Transfrom simplex constrained xs to unconstrained real numbers ys.
 """
-function inverse_alr_transform!(t::ALRTransform, xs::Vector, ys::Vector,
-                                ::Type{Val{GRADONLY}}) where {GRADONLY}
+function inverse_alr_transform!(t::ALRTransform, xs::Vector, ys::Vector)
     n = length(xs)
     for i in 1:n
         if i == t.refidx

@@ -84,8 +84,8 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
 
     # @tf.function
     def _log_prob(self, __ignored__):
-        return self.transcript_likelihood.log_prob(__ignored__)
-            # noninformative_gene_prior(self.x_gene, self.feature_sizes)
+        return self.transcript_likelihood.log_prob(__ignored__) + \
+            noninformative_gene_prior(self.x_gene, self.feature_sizes)
 
 
 """

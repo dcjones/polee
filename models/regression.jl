@@ -98,7 +98,7 @@ arg_settings.prog = "polee model regression"
             Expression vectors with sum strays too far from 1.0 are
             penalized according to a normal distribution with the given std. dev.
         """
-        default = 1e-2
+        default = 1e-3
         arg_type = Float64
     "--nonredundant"
         help = "Avoid overparameterization by excluding one factor from each group"
@@ -328,6 +328,7 @@ function main()
                 loaded_samples.variables,
                 gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
                 gene_sizes, factor_matrix, sample_scales,
+                !parsed_args["no-distortion"], parsed_args["scale-penalty"],
                 use_point_estimates)
 
         qw_gene_loc, qw_gene_scale, qw_isoform_loc, qw_isoform_scale,

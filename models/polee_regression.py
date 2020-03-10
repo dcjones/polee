@@ -603,7 +603,9 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
         feature_idxs, transcript_idxs,
         x_gene_init, x_isoform_init,
         feature_sizes,
-        F_arr, sample_scales, use_point_estimates,
+        F_arr, sample_scales,
+        use_distortion, scale_penalty,
+        use_point_estimates,
         kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
 
         num_samples = x_gene_init.shape[0]
@@ -727,7 +729,8 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
         super(RNASeqGeneIsoformLinearRegression, self).__init__(
             F, x_gene_init, likelihood_model, surrogate_likelihood_model,
             x_gene_bias_mu0, x_gene_bias_sigma0, x_gene_scale_hinges, sample_scales,
-            use_point_estimates, kernel_regression_degree, kernel_regression_bandwidth)
+            use_distortion, scale_penalty, use_point_estimates,
+            kernel_regression_degree, kernel_regression_bandwidth)
 
     def fit(self, niter):
         _, qw_gene_loc, qw_gene_scale, _, _ = \

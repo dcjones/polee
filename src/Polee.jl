@@ -12,6 +12,7 @@ using ProgressMeter
 using StatsBase
 using Nullables
 using Logging
+using SpecialFunctions: beta, digamma # used by kumaraswamy
 import IntervalTrees
 import SHA
 import YAML

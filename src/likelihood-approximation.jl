@@ -34,9 +34,14 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
                                 gene_noninformative::Bool=false,
                                 use_efflen_jacobian::Bool=true)
     @tic()
-    params = approximate_likelihood(
-        approximation, sample, gene_noninformative=gene_noninformative,
-        use_efflen_jacobian=use_efflen_jacobian)
+    if !isa(approximation, LogitSkewNormalPTTApprox)
+        @warn "Using alternative approximation. Some features not supported."
+        params = approximate_likelihood(approximation, sample)
+    else
+        params = approximate_likelihood(
+            approximation, sample, gene_noninformative=gene_noninformative,
+            use_efflen_jacobian=use_efflen_jacobian)
+    end
     @toc("Approximating likelihood")
 
     h5open(output_filename, "w") do out

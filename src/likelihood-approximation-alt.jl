@@ -47,52 +47,52 @@ end
 NormalALRApprox() = NormalALRApprox(-1)
 
 
-function approximate_likelihood(::LogisticNormalApprox, X::SparseMatrixCSC,
-                                ::Type{Val{GRADONLY}}=Val{false}) where {GRADONLY}
+function approximate_likelihood(::LogisticNormalApprox, sample::RNASeqSample,
+                                ::Val{gradonly}=Val(true)) where {gradonly}
+    X = sample.X
     m, n = size(X)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
     model = Model(m, n)
 
     # gradient running mean
-    m_mu    = Array{Float32}(n-1)
-    m_omega = Array{Float32}(n-1)
+    m_mu    = Array{Float32}(undef, n-1)
+    m_omega = Array{Float32}(undef, n-1)
 
     # gradient running variances
-    v_mu    = Array{Float32}(n-1)
-    v_omega = Array{Float32}(n-1)
+    v_mu    = Array{Float32}(undef, n-1)
+    v_omega = Array{Float32}(undef, n-1)
 
     # step size clamp
     ss_max_mu_step    = 2e-2
     ss_max_omega_step = 2e-2
 
     # Normal distributed values
-    zs = Array{Float32}(n-1)
+    zs = Array{Float32}(undef, n-1)
 
     # zs transformed to Kumaraswamy distributed values
-    ys = Array{Float64}(n-1)
+    ys = Array{Float64}(undef, n-1)
 
     # ys transformed by hierarchical stick breaking
-    xs = Array{Float32}(n)
+    xs = Array{Float32}(undef, n)
 
     mu = fill(0.0f0, n-1)
     omega = fill(0.1f0, n-1)
 
     # exp(omega)
-    sigma = Array{Float32}(n-1)
+    sigma = Array{Float32}(undef, n-1)
 
     # various intermediate gradients
-    mu_grad    = Array{Float32}(n-1)
-    omega_grad = Array{Float32}(n-1)
-    sigma_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float64}(n)
+    mu_grad    = Array{Float32}(undef, n-1)
+    omega_grad = Array{Float32}(undef, n-1)
+    sigma_grad = Array{Float32}(undef, n-1)
+    y_grad = Array{Float32}(undef, n-1)
+    x_grad = Array{Float64}(undef, n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
     elbo0 = 0.0
     max_elbo = -Inf # smallest elbo seen so far
 
-    tic()
     prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
@@ -133,7 +133,7 @@ function approximate_likelihood(::LogisticNormalApprox, X::SparseMatrixCSC,
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val{GRADONLY})
+                                X, Xt, xs, x_grad, Val(gradonly))
 
             c = 0.0f0
             for i in 1:n
@@ -183,7 +183,7 @@ function approximate_likelihood(::LogisticNormalApprox, X::SparseMatrixCSC,
         # using uniform values on [0,1] which has entropy of 0, so that term
         # goes away.
 
-        @show elbo
+        # @show elbo
 
         max_elbo = max(max_elbo, elbo)
         @assert isfinite(elbo)
@@ -197,8 +197,6 @@ function approximate_likelihood(::LogisticNormalApprox, X::SparseMatrixCSC,
         next!(prog)
     end
 
-    toc()
-
     return Dict(
         "mu" => mu,
         "omega" => omega)
@@ -208,19 +206,20 @@ end
 
 
 function approximate_likelihood(approx::LogitNormalPTTApprox,
-                                X::SparseMatrixCSC,
-                                ::Type{Val{GRADONLY}}=Val{true}) where {GRADONLY}
+                                sample::RNASeqSample,
+                                ::Val{gradonly}=Val(false)) where {gradonly}
+    X = sample.X
     m, n = size(X)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
     model = Model(m, n)
 
     # gradient running mean
-    m_mu    = Array{Float32}(n-1)
-    m_omega = Array{Float32}(n-1)
+    m_mu    = Array{Float32}(undef, n-1)
+    m_omega = Array{Float32}(undef, n-1)
 
     # gradient running variances
-    v_mu    = Array{Float32}(n-1)
-    v_omega = Array{Float32}(n-1)
+    v_mu    = Array{Float32}(undef, n-1)
+    v_omega = Array{Float32}(undef, n-1)
 
     # step size clamp
     ss_max_mu_step    = 2e-1
@@ -230,38 +229,27 @@ function approximate_likelihood(approx::LogitNormalPTTApprox,
     t = PolyaTreeTransform(X, approx.treemethod)
 
     # Unifom distributed values
-    zs = Array{Float32}(n-1)
+    zs = Array{Float32}(undef, n-1)
 
     # zs transformed to Kumaraswamy distributed values
-    ys = Array{Float64}(n-1)
+    ys = Array{Float64}(undef, n-1)
 
     # ys transformed by hierarchical stick breaking
-    xs = Array{Float32}(n)
+    xs = Array{Float32}(undef, n)
 
-    hsb_inverse_transform!(t, fill(1.0f0/n, n), ys)
+    inverse_transform!(t, fill(1.0f0/n, n), ys)
     mu    = fill(0.0f0, n-1)
-    k = 1
-    for node in t.nodes
-        if node.j == 0
-            # nl = node.left_child.subtree_size
-            # nr = node.right_child.subtree_size
-            # mu[k] = logit(nl / (nl + nr))
-            mu[k] = logit(ys[k])
-            k += 1
-        end
-    end
-
     omega = fill(log(0.1f0), n-1)
 
     # exp(omega)
-    sigma = Array{Float32}(n-1)
+    sigma = Array{Float32}(undef, n-1)
 
     # various intermediate gradients
-    mu_grad    = Array{Float32}(n-1)
-    omega_grad = Array{Float32}(n-1)
-    sigma_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float64}(n)
+    mu_grad    = Array{Float32}(undef, n-1)
+    omega_grad = Array{Float32}(undef, n-1)
+    sigma_grad = Array{Float32}(undef, n-1)
+    y_grad = Array{Float32}(undef, n-1)
+    x_grad = Array{Float64}(undef, n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
@@ -292,17 +280,17 @@ function approximate_likelihood(approx::LogitNormalPTTApprox,
                 zs[i] = randn(Float32)
             end
 
-            ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val{GRADONLY})
+            ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val(!gradonly))
             ys = clamp!(ys, eps, 1 - eps)
 
-            hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            hsb_ladj = transform!(t, ys, xs, Val(!gradonly))
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val{GRADONLY})
+                                X, Xt, xs, x_grad, Val(gradonly))
             elbo = lp + ln_ladj + hsb_ladj
 
-            hsb_transform_gradients!(t, ys, y_grad, x_grad)
+            transform_gradients!(t, ys, y_grad, x_grad)
             logit_normal_transform_gradients!(zs, ys, mu, sigma, y_grad, mu_grad, sigma_grad)
 
             # adjust for log transform and accumulate
@@ -330,56 +318,70 @@ function approximate_likelihood(approx::LogitNormalPTTApprox,
         next!(prog)
     end
 
-    return merge(flattened_tree(t),
-                 Dict{String, Vector}("mu" => mu, "omega" => omega))
+    return Dict{String, Vector}(
+        "node_parent_idxs" => t.index[4,:],
+        "node_js"          => t.index[1,:],
+        "mu" => mu, "omega" => omega)
 end
 
 
 function approximate_likelihood(approx::KumaraswamyPTTApprox,
-                                X::SparseMatrixCSC,
-                                ::Type{Val{GRADONLY}}=Val{true}) where {GRADONLY}
+                                sample::RNASeqSample,
+                                ::Val{gradonly}=Val(false)) where {gradonly}
+    X = sample.X
     m, n = size(X)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
     model = Model(m, n)
 
     # gradient running mean
-    m_α = Array{Float32}(n-1)
-    m_β = Array{Float32}(n-1)
+    m_α = Array{Float32}(undef, n-1)
+    m_β = Array{Float32}(undef, n-1)
 
     # gradient running variances
-    v_α = Array{Float32}(n-1)
-    v_β = Array{Float32}(n-1)
+    v_α = Array{Float32}(undef, n-1)
+    v_β = Array{Float32}(undef, n-1)
 
     # step size clamp
     ss_max_α_step = 1e-1
     ss_max_β_step = 1e-1
 
     # cluster transcripts for hierachrical stick breaking
-    t = PolyaTreeTransform(X, approx.treemethod)
+    m, n = size(X)
+    if approx.treemethod == :clustered
+        root = hclust(X)
+        nodes = order_nodes(root, n)
+    elseif approx.treemethod == :random
+        nodes = rand_tree_nodes(n)
+    elseif approx.treemethod == :sequential
+        nodes = rand_list_nodes(n)
+    else
+        error("$(approx.treemethod) is not a supported Polya tree transform heuristic")
+    end
+    t = PolyaTreeTransform(nodes)
 
     # Unifom distributed values
-    zs = Array{Float32}(n-1)
+    zs = Array{Float32}(undef, n-1)
 
     # zs transformed to Kumaraswamy distributed values
-    ys = Array{Float64}(n-1)
+    ys = Array{Float64}(undef, n-1)
 
     # ys transformed by hierarchical stick breaking
-    xs = Array{Float32}(n)
+    xs = Array{Float32}(undef, n)
 
     # log transformed kumaraswamy parameters
     αs = zeros(Float32, n-1)
     βs = zeros(Float32, n-1)
 
-    as = Array{Float32}(n-1) # exp(αs)
-    bs = Array{Float32}(n-1) # exp(βs)
+    as = Array{Float32}(undef, n-1) # exp(αs)
+    bs = Array{Float32}(undef, n-1) # exp(βs)
 
     # various intermediate gradients
-    α_grad = Array{Float32}(n-1)
-    β_grad = Array{Float32}(n-1)
-    a_grad = Array{Float32}(n-1)
-    b_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float64}(n)
+    α_grad = Array{Float32}(undef, n-1)
+    β_grad = Array{Float32}(undef, n-1)
+    a_grad = Array{Float32}(undef, n-1)
+    b_grad = Array{Float32}(undef, n-1)
+    y_grad = Array{Float32}(undef, n-1)
+    x_grad = Array{Float64}(undef, n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
@@ -397,9 +399,7 @@ function approximate_likelihood(approx::KumaraswamyPTTApprox,
 
     # choose initial values to avoid underflow
     # count subtree size and store in the node's input_value field
-    tic()
     k = 1
-    nodes = t.nodes
     for i in 1:length(nodes)
         node = nodes[i]
         if node.j != 0
@@ -416,9 +416,6 @@ function approximate_likelihood(approx::KumaraswamyPTTApprox,
             k += 1
         end
     end
-    toc()
-
-    tic()
 
     prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
@@ -443,17 +440,17 @@ function approximate_likelihood(approx::KumaraswamyPTTApprox,
                 zs[i] = min(maxz, max(minz, rand()))
             end
 
-            kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work, Val{GRADONLY})  # z -> y
+            kum_ladj = kumaraswamy_transform!(as, bs, zs, ys, work, Val(!gradonly))
             ys = clamp!(ys, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
-            hsb_ladj = hsb_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            hsb_ladj = transform!(t, ys, xs, Val(!gradonly))
             xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val{GRADONLY})
+                                X, Xt, xs, x_grad, Val(gradonly))
             elbo = lp + kum_ladj + hsb_ladj
 
-            hsb_transform_gradients!(t, ys, y_grad, x_grad)
+            transform_gradients!(t, ys, y_grad, x_grad)
             kumaraswamy_transform_gradients!(zs, as, bs, y_grad, a_grad, b_grad)
 
             # adjust for log transform and accumulate
@@ -483,36 +480,38 @@ function approximate_likelihood(approx::KumaraswamyPTTApprox,
         adam_update_params!(αs, m_α, v_α, learning_rate, step_num, ss_max_α_step)
         adam_update_params!(βs, m_β, v_β, learning_rate, step_num, ss_max_β_step)
 
-        # TODO: This loop really shouldn't be allocating anything but on julia
-        # 1.1.0 it does, and I can't figure out why, so I have to periodically
-        # run the gc to make sure I don't run out of memory.
-        gc()
+        # # TODO: This loop really shouldn't be allocating anything but on julia
+        # # 1.1.0 it does, and I can't figure out why, so I have to periodically
+        # # run the gc to make sure I don't run out of memory.
+        # gc()
 
         next!(prog)
     end
 
-    toc()
-
-    return merge(flattened_tree(t),
-                 Dict{String, Vector}("alpha" => αs, "beta" => βs))
+    return Dict{String, Vector}(
+        "node_parent_idxs" => t.index[4,:],
+        "node_js"          => t.index[1,:],
+        "alpha" => αs, "beta" => βs)
 end
 
 
 
+
 function approximate_likelihood(approx::NormalILRApprox,
-                                X::SparseMatrixCSC,
-                                ::Type{Val{GRADONLY}}=Val{false}) where {GRADONLY}
+                                sample::RNASeqSample,
+                                ::Val{gradonly}=Val(false)) where {gradonly}
+    X = sample.X
     m, n = size(X)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
     model = Model(m, n)
 
     # gradient running mean
-    m_mu    = Array{Float32}(n-1)
-    m_omega = Array{Float32}(n-1)
+    m_mu    = Array{Float32}(undef, n-1)
+    m_omega = Array{Float32}(undef, n-1)
 
     # gradient running variances
-    v_mu    = Array{Float32}(n-1)
-    v_omega = Array{Float32}(n-1)
+    v_mu    = Array{Float32}(undef, n-1)
+    v_omega = Array{Float32}(undef, n-1)
 
     # step size clamp
     ss_max_mu_step    = 2e-1
@@ -522,30 +521,29 @@ function approximate_likelihood(approx::NormalILRApprox,
     t = ILRTransform(X, approx.treemethod)
 
     # standard normal values
-    zs = Array{Float32}(n-1)
+    zs = Array{Float32}(undef, n-1)
 
     # destandardized normal random numbers
-    ys = Array{Float64}(n-1)
+    ys = Array{Float64}(undef, n-1)
 
     # ys transformed to simplex using ILR
-    xs = Array{Float32}(n)
+    xs = Array{Float32}(undef, n)
 
     mu = fill(0.0f0, n-1)
     omega = fill(log(0.1f0), n-1)
 
-    sigma = Array{Float32}(n-1)
+    sigma = Array{Float32}(undef, n-1)
 
     # various intermediate gradients
-    mu_grad    = Array{Float32}(n-1)
-    omega_grad = Array{Float32}(n-1)
-    sigma_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
+    mu_grad    = Array{Float32}(undef, n-1)
+    omega_grad = Array{Float32}(undef, n-1)
+    sigma_grad = Array{Float32}(undef, n-1)
+    y_grad = Array{Float32}(undef, n-1)
+    x_grad = Array{Float32}(undef, n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
 
-    tic()
     prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
@@ -570,11 +568,11 @@ function approximate_likelihood(approx::NormalILRApprox,
                 ys[i] = mu[i] + sigma[i] * zs[i]
             end
 
-            ilr_ladj = ilr_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            ilr_ladj = ilr_transform!(t, ys, xs, Val(!gradonly))
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val{GRADONLY})
+                                X, Xt, xs, x_grad, Val(gradonly))
             elbo += lp + ilr_ladj
 
             ilr_transform_gradients!(t, xs, y_grad, x_grad)
@@ -599,7 +597,6 @@ function approximate_likelihood(approx::NormalILRApprox,
         elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
         # elbo += normal_entropy(sigma)
 
-        @show elbo
         @assert isfinite(elbo)
 
         adam_update_mv!(m_mu, v_mu, mu_grad, step_num)
@@ -611,28 +608,27 @@ function approximate_likelihood(approx::NormalILRApprox,
         next!(prog)
     end
 
-    toc()
-
     return merge(flattened_tree(t),
                  Dict{String, Vector}("mu" => mu, "omega" => omega))
 end
 
 
 function approximate_likelihood(approx::NormalALRApprox,
-                                X::SparseMatrixCSC,
-                                ::Type{Val{GRADONLY}}=Val{false}) where {GRADONLY}
+                                sample::RNASeqSample,
+                                ::Val{gradonly}=Val(false)) where {gradonly}
 
+    X = sample.X
     m, n = size(X)
-    Xt = transpose(X)
+    Xt = SparseMatrixCSC(transpose(X))
     model = Model(m, n)
 
     # gradient running mean
-    m_mu    = Array{Float32}(n-1)
-    m_omega = Array{Float32}(n-1)
+    m_mu    = Array{Float32}(undef, n-1)
+    m_omega = Array{Float32}(undef, n-1)
 
     # gradient running variances
-    v_mu    = Array{Float32}(n-1)
-    v_omega = Array{Float32}(n-1)
+    v_mu    = Array{Float32}(undef, n-1)
+    v_omega = Array{Float32}(undef, n-1)
 
     # step size clamp
     ss_max_mu_step    = 2e-1
@@ -644,30 +640,29 @@ function approximate_likelihood(approx::NormalALRApprox,
     t = ALRTransform(refidx)
 
     # standard normal values
-    zs = Array{Float32}(n-1)
+    zs = Array{Float32}(undef, n-1)
 
     # destandardized normal random numbers
-    ys = Array{Float64}(n-1)
+    ys = Array{Float64}(undef, n-1)
 
     # ys transformed to simplex using ILR
-    xs = Array{Float32}(n)
+    xs = Array{Float32}(undef, n)
 
     mu = fill(0.0f0, n-1)
     omega = fill(log(0.1f0), n-1)
 
-    sigma = Array{Float32}(n-1)
+    sigma = Array{Float32}(undef, n-1)
 
     # various intermediate gradients
-    mu_grad    = Array{Float32}(n-1)
-    omega_grad = Array{Float32}(n-1)
-    sigma_grad = Array{Float32}(n-1)
-    y_grad = Array{Float32}(n-1)
-    x_grad = Array{Float32}(n)
+    mu_grad    = Array{Float32}(undef, n-1)
+    omega_grad = Array{Float32}(undef, n-1)
+    sigma_grad = Array{Float32}(undef, n-1)
+    y_grad = Array{Float32}(undef, n-1)
+    x_grad = Array{Float32}(undef, n)
     work   = zeros(Float32, n-1) # used by kumaraswamy_transform!
 
     elbo = 0.0
 
-    tic()
     prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
         learning_rate = adam_learning_rate(step_num - 1)
@@ -692,11 +687,11 @@ function approximate_likelihood(approx::NormalALRApprox,
                 ys[i] = mu[i] + sigma[i] * zs[i]
             end
 
-            alr_ladj = alr_transform!(t, ys, xs, Val{GRADONLY})                     # y -> x
+            alr_ladj = alr_transform!(t, ys, xs, Val(!gradonly))
             xs = clamp!(xs, eps, 1 - eps)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val{GRADONLY})
+                                X, Xt, xs, x_grad, Val(gradonly))
             elbo += lp + alr_ladj
 
             alr_transform_gradients!(t, ys, xs, y_grad, x_grad)
@@ -721,7 +716,6 @@ function approximate_likelihood(approx::NormalALRApprox,
         elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
         # elbo += normal_entropy(sigma)
 
-        @show elbo
         @assert isfinite(elbo)
 
         adam_update_mv!(m_mu, v_mu, mu_grad, step_num)
@@ -732,8 +726,6 @@ function approximate_likelihood(approx::NormalALRApprox,
 
         next!(prog)
     end
-
-    toc()
 
     return Dict{String, Vector}("mu" => mu, "omega" => omega,
                                 "refidx" => [t.refidx])

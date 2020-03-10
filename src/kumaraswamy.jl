@@ -25,7 +25,7 @@ end
 # Take uniform random numbers in zs, transform them to Kamaraswamy distributed values
 # in ys according to parameters as and bs. Return the log absolute determinant of the jacobian,
 function kumaraswamy_transform!(
-        as::Vector, bs::Vector, zs::Vector, ys::Vector, work::Vector,::Type{Val{GRADONLY}}) where {GRADONLY}
+        as::Vector, bs::Vector, zs::Vector, ys::Vector, work::Vector,::Val{compute_ladj}) where {compute_ladj}
     Threads.@threads for i in 1:length(ys)
         a = Float64(as[i])
         b = Float64(bs[i])
@@ -40,7 +40,7 @@ function kumaraswamy_transform!(
         ys[i] = c^ia
 
         # ladj term
-        if !GRADONLY
+        if compute_ladj
             work[i] = (ib - 1) * log(1 - z) + (ia - 1) * log(c) - log(a * b)
         end
     end
@@ -156,8 +156,8 @@ end
 
 function kumaraswamy_fit_median_var(med, var)
     ab = Float64[0.0, 0.0]
-    J = Array{Float64}(2, 2)
-    f = Array{Float64}(2)
+    J = Array{Float64}(undef, (2, 2))
+    f = Array{Float64}(undef, 2)
 
     ab[1] = 1.0
     ab[2] = 1.0

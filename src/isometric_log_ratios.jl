@@ -19,7 +19,7 @@ end
 
 function ILRTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
     m, n = size(X)
-    root, xs0 = hclust(X)
+    root = hclust(X)
     nodes = order_nodes(root, n)
     return ILRTransform(nodes)
 end
@@ -41,7 +41,7 @@ Transfrom real numbers ys to simplex constrain vector xs. (This is actually
 the inverse ilr transformation, if we follew the literature.)
 """
 function ilr_transform!(t::ILRTransform, ys::Vector, xs::Vector,
-                        ::Type{Val{GRADONLY}}) where {GRADONLY}
+                        ::Val{compute_ladj}) where {compute_ladj}
 
     nodes = t.nodes
     nodes[1].input_value = 0.0f0
@@ -74,7 +74,7 @@ function ilr_transform!(t::ILRTransform, ys::Vector, xs::Vector,
     t.xs_sum = sum(xs) # stored to use when computing gradients
     xs ./= t.xs_sum
 
-    if !GRADONLY
+    if compute_ladj
         n = length(xs)
         for x in xs
             ladj += log(x)

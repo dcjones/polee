@@ -90,9 +90,33 @@ end
     Polee.main(args)
 end
 
-# TODO: test polee sample
+@testset "Sampling from approximate likelihood" begin
+    args = String[
+        "sample",
+        "--num-samples", "5",
+        "--annotations", "dataset/annotations.gff3",
+        "dataset/mBr_M_6w_1.prep.h5" ]
+    Polee.main(args)
+end
 
-# TODO: test polee debug-sample
+@testset "Gibbs sampler" begin
+    args = String[
+        "debug-sample",
+        "--burnin", "20",
+        "--num-samples", "20",
+        "--stride", "2",
+        "--annotations", "dataset/annotations.gff3",
+        "dataset/mBr_M_6w_1.likelihood-matrix.h5" ]
+    Polee.main(args)
+end
+
+@testset "EM" begin
+    args = String[
+        "debug-optimize",
+        "--annotations", "dataset/annotations.gff3",
+        "dataset/mBr_M_6w_1.likelihood-matrix.h5" ]
+    Polee.main(args)
+end
 
 # TODO: some tests for Transcripts
 

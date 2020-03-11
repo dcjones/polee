@@ -93,5 +93,21 @@ rule transcriptome_align:
         " | samtools sort -@ 4 -m 3G -"
         " > {output}"
 
+rule polee_prep:
+    input:
+        "genome.fa",
+        "{name}.genome.bam",
+        "annotations.gff3",
+    output:
+        "{name}.prep.h5",
+        "{name}.likelihood-matrix.h5"
+    shell:
+        "polee prep-sample"
+        "  -o {output[0]}"
+        "  --likelihood-matrix {output[1]}"
+        "  {input[0]}"
+        "  {input[1]}"
+        "  {input[2]}"
+
 
 

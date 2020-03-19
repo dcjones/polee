@@ -14,7 +14,7 @@ approximation used by polee.
 struct LogitSkewNormalPTTApprox <: LikelihoodApproximation
     treemethod::Symbol # [one of :sequential, :random, :cluster]
 end
-LogitSkewNormalPTTApprox() = LogitSkewNormalPTTApprox(:clustered)
+LogitSkewNormalPTTApprox() = LogitSkewNormalPTTApprox(:cluster)
 
 
 """
@@ -87,7 +87,8 @@ end
 Compute ADAM learning rate for the step_num iteration.
 """
 function adam_learning_rate(step_num)
-    return ADAM_INITIAL_LEARNING_RATE * exp(-ADAM_LEARNING_RATE_DECAY * step_num)
+    return max(ADAM_MIN_LEARNING_RATE,
+        ADAM_INITIAL_LEARNING_RATE * exp(-ADAM_LEARNING_RATE_DECAY * step_num))
 end
 
 
@@ -268,7 +269,7 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
     xls = Array{Float32}(undef, n)
 
     inverse_transform!(t, fill(1.0f0/n, n), ys)
-    mu    = fill(0.0f0, n-1)
+    mu = Array{Float32}(undef, n-1)
     map!(logit, mu, ys)
 
     omega = fill(log(0.1f0), n-1)

@@ -229,7 +229,9 @@ function approximate_likelihood(approx::LogitNormalPTTApprox,
     t = PolyaTreeTransform(X, approx.treemethod)
 
     # Unifom distributed values
-    zs = Array{Float32}(undef, n-1)
+    # NOTE: in LogitSkewNormalPTTApprox we use 32bit zs. Because
+    # we are testing weird tree configurations here this can underflow.
+    zs = Array{Float64}(undef, n-1)
 
     # zs transformed to Kumaraswamy distributed values
     ys = Array{Float64}(undef, n-1)
@@ -238,8 +240,9 @@ function approximate_likelihood(approx::LogitNormalPTTApprox,
     xs = Array{Float32}(undef, n)
 
     inverse_transform!(t, fill(1.0f0/n, n), ys)
-    mu    = fill(0.0f0, n-1)
-    omega = fill(log(0.1f0), n-1)
+    mu = Vector{Float32}(logit.(ys))
+    # omega = fill(log(0.1f0), n-1)
+    omega = fill(log(0.01f0), n-1)
 
     # exp(omega)
     sigma = Array{Float32}(undef, n-1)
@@ -277,7 +280,7 @@ function approximate_likelihood(approx::LogitNormalPTTApprox,
             fill!(sigma_grad, 0.0f0)
 
             for i in 1:n-1
-                zs[i] = randn(Float32)
+                zs[i] = randn(Float64)
             end
 
             ln_ladj = logit_normal_transform!(mu, sigma, zs, ys, Val(!gradonly))
@@ -347,7 +350,7 @@ function approximate_likelihood(approx::KumaraswamyPTTApprox,
 
     # cluster transcripts for hierachrical stick breaking
     m, n = size(X)
-    if approx.treemethod == :clustered
+    if approx.treemethod == :cluster
         root = hclust(X)
         nodes = order_nodes(root, n)
     elseif approx.treemethod == :random

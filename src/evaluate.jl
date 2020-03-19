@@ -85,7 +85,7 @@ function sample_likap(approx_type::Type{LogitNormalPTTApprox},
     close(input)
     n = length(mu) + 1
 
-    zs = Array{Float32}(undef, n-1)
+    zs = Array{Float64}(undef, n-1)
     ys = Array{Float64}(undef, n-1)
     xs = Array{Float32}(undef, n)
     samples = Array{Float32}(undef, (num_samples, n))
@@ -93,11 +93,11 @@ function sample_likap(approx_type::Type{LogitNormalPTTApprox},
 
     for i in 1:num_samples
         for j in 1:n-1
-            zs[j] = randn(Float32)
+            zs[j] = randn(Float64)
         end
-        logit_normal_transform!(mu, sigma, zs, ys, Val{true})
+        logit_normal_transform!(mu, sigma, zs, ys, Val(true))
         ys = clamp!(ys, eps, 1 - eps)
-        hsb_transform!(t, ys, xs, Val{true})
+        transform!(t, ys, xs, Val(true))
         xs = clamp!(xs, eps, 1 - eps)
 
         for j in 1:n
@@ -137,10 +137,10 @@ function sample_likap(approx_type::Type{LogitSkewNormalPTTApprox},
             zs0[j] = randn(Float32)
         end
 
-        sinh_asinh_transform!(alpha, zs0, zs, Val{true})
-        logit_normal_transform!(mu, sigma, zs, ys, Val{true})
+        sinh_asinh_transform!(alpha, zs0, zs, Val(true))
+        logit_normal_transform!(mu, sigma, zs, ys, Val(true))
         ys = clamp!(ys, eps, 1 - eps)
-        hsb_transform!(t, ys, xs, Val{true})
+        transform!(t, ys, xs, Val(true))
         xs = clamp!(xs, eps, 1 - eps)
 
         for j in 1:n
@@ -182,10 +182,10 @@ function sample_likap(approx_type::Type{KumaraswamyPTTApprox},
         for j in 1:n-1
             zs[j] = min(maxz, max(minz, rand()))
         end
-        kumaraswamy_transform!(as, bs, zs, ys, work, Val{true})  # z -> y
+        kumaraswamy_transform!(as, bs, zs, ys, work, Val(true))  # z -> y
         ys = clamp!(ys, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
-        hsb_transform!(t, ys, xs, Val{true})
+        transform!(t, ys, xs, Val(true))
         xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
         for j in 1:n
@@ -223,7 +223,7 @@ function sample_likap(approx_type::Type{NormalILRApprox},
             ys[j] = mu[j] + sigma[j] * zs[j]
         end
 
-        ilr_ladj = ilr_transform!(t, ys, xs, Val{true})                     # y -> x
+        ilr_ladj = ilr_transform!(t, ys, xs, Val(true))                     # y -> x
         xs = clamp!(xs, eps, 1 - eps)
 
         for j in 1:n
@@ -260,7 +260,7 @@ function sample_likap(approx_type::Type{NormalALRApprox},
             ys[j] = mu[j] + sigma[j] * zs[j]
         end
 
-        ilr_ladj = alr_transform!(t, ys, xs, Val{true})                     # y -> x
+        ilr_ladj = alr_transform!(t, ys, xs, Val(true))                     # y -> x
         xs = clamp!(xs, eps, 1 - eps)
 
         for j in 1:n

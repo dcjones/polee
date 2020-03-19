@@ -107,7 +107,7 @@ end
         default = "logit_skew_normal_ptt"
     "--tree-method"
         help = "Tree building heurustic for polya tree transform. (Don't mess with this either)"
-        default = "clustered"
+        default = "cluster"
     "--no-bias"
         help = "Disable bias correction model."
         action = :store_true
@@ -456,7 +456,7 @@ function polee_prep(parsed_args::Dict{String, Any})
     approximation_method_name =
         get(spec, "approximation", "logit_skew_normal_ptt")
     approximation_tree_method =
-        Symbol(get(spec, "approximation_tree_method", "clustered"))
+        Symbol(get(spec, "approximation_tree_method", "cluster"))
     approximation = select_approx_method(
         approximation_method_name, approximation_tree_method)
 

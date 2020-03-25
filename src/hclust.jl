@@ -120,38 +120,20 @@ function distance(X::SparseMatrixCSC, j1::Int, j2::Int)
     cp1 = Int(X.colptr[j1])
     cp2 = Int(X.colptr[j2])
 
-    d = 0.0
+    intersection_count = 0
     while cp1 < X.colptr[j1+1] && cp2 < X.colptr[j2+1]
         if X.rowval[cp1] < X.rowval[cp2]
-            d += X.nzval[cp1]^2
             cp1 += 1
         elseif X.rowval[cp1] > X.rowval[cp2]
-            d += X.nzval[cp2]^2
             cp2 += 1
         else
-            d += (X.nzval[cp1] - X.nzval[cp2])^2
             cp1 += 1
             cp2 += 1
+            intersection_count += 1
         end
     end
 
-    while cp1 < X.colptr[j1+1]
-        d += X.nzval[cp1]^2
-        cp1 += 1
-    end
-
-    while cp2 < X.colptr[j2+1]
-        d += X.nzval[cp2]^2
-        cp2 += 1
-    end
-
-    # @show (Int(X.colptr[j1]), Int(X.colptr[j1+1]), Int(X.colptr[j2]), Int(X.colptr[j2+1]), cp1, cp2)
-    # @show d
-
-    # we inject a little noise to break ties randomly and lead to a more
-    # balanced tree
-    noise = 1e-20 * rand()
-    return d + noise
+    return 1/intersection_count
 end
 
 

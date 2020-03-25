@@ -41,7 +41,9 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts, alt_frag_model::Bool=fa
     strand_match_count = 0
     strand_mismatch_count = 0
 
+    num_overlaps = 0
     for (t, alnpr) in eachoverlap(ts, examples)
+        num_overlaps += 1
         fraglen = fragmentlength(t, rs, alnpr)
 
         if fraglen === nothing
@@ -62,6 +64,15 @@ function SimplisticFragModel(rs::Reads, ts::Transcripts, alt_frag_model::Bool=fa
                 alnpr_fraglen[h] = fraglen
             end
         end
+    end
+
+    aligned_count = strand_match_count + strand_mismatch_count
+    if aligned_count == 0
+        error("""
+            No reads overlap any transcripts. This is usally because a set of
+            transcripts was provided that doesn't match transcriptome or
+            genome that the reads were aligned to.
+            """)
     end
 
     strand_specificity = strand_match_count /
@@ -232,6 +243,15 @@ function BiasedFragModel(
         tpos = rand(1:length(tseq)-fl+1)
         # tpos = min(max(1, tpos + rand(-20:20)), length(tseq)-fl+1)
         push!(bias_background_examples, BiasTrainingExample(tseq, tpos, fl))
+    end
+
+    aligned_count = strand_match_count + strand_mismatch_count
+    if aligned_count == 0
+        error("""
+            No reads overlap any transcripts. This is usally because a set of
+            transcripts was provided that doesn't match transcriptome or
+            genome that the reads were aligned to.
+            """)
     end
 
     strand_specificity = strand_match_count /

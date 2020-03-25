@@ -227,6 +227,7 @@ end
 function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
                                 sample::RNASeqSample,
                                 ::Val{gradonly}=Val(true);
+                                # ::Val{gradonly}=Val(false);
                                 gene_noninformative::Bool=false,
                                 use_efflen_jacobian::Bool=true) where {gradonly}
     X = sample.X
@@ -369,11 +370,14 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
             end
         end
 
+        all_finite = true
         for i in 1:n-1
             mu_grad[i]    /= LIKAP_NUM_MC_SAMPLES
             omega_grad[i] /= LIKAP_NUM_MC_SAMPLES
             alpha_grad[i] /= LIKAP_NUM_MC_SAMPLES
+            all_finite &= isfinite(mu_grad[i]) && isfinite(omega_grad[i]) && isfinite(alpha_grad[i])
         end
+        @assert all_finite
 
         elbo /= LIKAP_NUM_MC_SAMPLES # get estimated expectation over mc samples
 

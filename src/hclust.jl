@@ -16,6 +16,7 @@ mutable struct HClustNode
 
     subtree_size::Int32
 
+    # TODO: Would like to delete these values but still used by ilr
     input_value::Float64
     grad::Float32
     ladj_grad::Float32
@@ -76,64 +77,83 @@ end
 
 
 struct HClustEdge
-    j1::Int
-    j2::Int
-    d::Float64
+    j1::UInt32
+    j2::UInt32
+    similarity::Int32 # intersection size
 end
 
 
 function Base.isless(a::HClustEdge, b::HClustEdge)
-    return a.d < b.d
+    return a.similarity < b.similarity
+end
+
+function Base.isgreater(a::HClustEdge, b::HClustEdge)
+    return a.similarity > b.similarity
 end
 
 
-"""
-Comparator used by delete! to force minheap items to the top.
-"""
-struct DeleteComparator
+struct NodeWithSize
+    j::UInt32
+    size::UInt32
+end
+
+function Base.isless(a::NodeWithSize, b::NodeWithSize)
+    return a.size < b.size
+end
+
+function Base.isgreater(a::NodeWithSize, b::NodeWithSize)
+    return a.size > b.size
 end
 
 
-function DataStructures.compare(c::DeleteComparator, x, y)
-    return true
-end
-
-
-"""
-Delete and return the entry at index i.
-"""
-function heap_delete!(queue::MutableBinaryHeap, i::Int)
-    nodes = queue.nodes
-    nodemap = queue.node_map
-
-    nd_id = nodemap[i]
-    v0 = nodes[nd_id].value
-    DataStructures._heap_bubble_up!(DeleteComparator(), nodes, nodemap, nd_id)
-    return pop!(queue)
-end
-
-
-"""
-Compute euclidean distance between two columns of the sparse matrix.
-"""
-function distance(X::SparseMatrixCSC, j1::Int, j2::Int)
-    cp1 = Int(X.colptr[j1])
-    cp2 = Int(X.colptr[j2])
-
-    intersection_count = 0
-    while cp1 < X.colptr[j1+1] && cp2 < X.colptr[j2+1]
-        if X.rowval[cp1] < X.rowval[cp2]
-            cp1 += 1
-        elseif X.rowval[cp1] > X.rowval[cp2]
-            cp2 += 1
-        else
-            cp1 += 1
-            cp2 += 1
-            intersection_count += 1
-        end
+function read_set_intersection_size(rs1::Vector{UInt32}, rs2::Vector{UInt32})
+    if isempty(rs1) || isempty(rs2) || rs1[1] > rs2[end] || rs1[end] < rs2[1]
+        return 0
     end
 
-    return 1/(1+intersection_count)
+    i = 1
+    j = 1
+    intersection_size = 0
+    while i <= length(rs1) && j <= length(rs2)
+        if rs1[i] < rs2[j]
+            i += 1
+        elseif rs1[i] > rs2[j]
+            j += 1
+        else
+            i += 1
+            j += 1
+            intersection_size += 1
+        end
+    end
+    return intersection_size
+end
+
+
+function merge_read_sets(
+        rs1::Vector{UInt32}, rs2::Vector{UInt32})
+    intersection_size = read_set_intersection_size(rs1, rs2)
+    rs_merged = Vector{UInt32}(
+        undef, length(rs1) + length(rs2) - intersection_size)
+
+    i = 1
+    j = 1
+    k = 1
+    while i <= length(rs1) && j <= length(rs2)
+        if rs1[i] < rs2[j]
+            rs_merged[k] = rs1[i]
+            i += 1
+        elseif rs1[i] > rs2[j]
+            rs_merged[k] = rs2[j]
+            j += 1
+        else
+            rs_merged[k] = rs1[i]
+            i += 1
+            j += 1
+        end
+        k += 1
+    end
+
+    return rs_merged
 end
 
 
@@ -158,96 +178,103 @@ function hclust(X::SparseMatrixCSC)
     end
     idxs = (1:n)[sortperm(medreadidx)]
 
-    # initial edges
-    queue = MutableBinaryMinHeap{HClustEdge}()
-    queue_idxs = Dict{Tuple{Int, Int}, Int}()
-    neighbors = MultiDict{Int, Int}()
-    set_size = Dict{Int, Int}()
-    nodes = Dict{Int, HClustNode}()
-    max_d = 0.0
+    # add initial nodes
+    read_sets = Dict{UInt32, Vector{UInt32}}()
+    nodes = Dict{UInt32, HClustNode}()
+    for j in 1:n
+        nodes[j] = HClustNode(idxs[j])
+        read_sets[j] = X.rowval[X.colptr[idxs[j]]:X.colptr[idxs[j]+1]-1]
+    end
+
+    # add initial edges
+    queue = BinaryMaxHeap{HClustEdge}()
+    neighbors = MultiDict{UInt32, UInt32}()
     for j1 in 1:n
         for j2 in j1+1:min(j1+K, n)
-            d = distance(X, idxs[j1], idxs[j2])
-            max_d = max(max_d, d)
-            e = HClustEdge(j1, j2, d)
-            queue_idxs[(e.j1, e.j2)] = push!(queue, e)
+            similarity = read_set_intersection_size(read_sets[j1], read_sets[j2])
+            if similarity > 0
+                push!(queue, HClustEdge(j1, j2, similarity))
+            end
             insert!(neighbors, j1, j2)
             insert!(neighbors, j2, j1)
         end
-        set_size[j1] = 1
-        nodes[j1] = HClustNode(idxs[j1])
     end
-    deleted_nodes = Set{Int}()
 
-    # cluster
+    # build tree greedily by joining the subtrees that share the most reads first
     next_node_idx = n + 1
-    while !isempty(queue)
-        e = pop!(queue)
-        delete!(queue_idxs, (e.j1, e.j2))
+    deleted_nodes = Set{UInt32}()
 
-        # introduce a new node
+    next_node_idx = hclust_join_edges!(
+        queue, nodes, deleted_nodes, read_sets, neighbors,
+        next_node_idx, read_set_intersection_size)
+    @assert isempty(queue)
+
+    remainder_queue = BinaryMinHeap{NodeWithSize}()
+    for j in keys(nodes)
+        push!(remainder_queue, NodeWithSize(j, length(read_sets[j])))
+    end
+    while length(remainder_queue) > 1
+        node1 = pop!(remainder_queue)
+        node2 = pop!(remainder_queue)
+
         k = next_node_idx
         next_node_idx += 1
+        nodes[k] = HClustNode(nodes[node1.j], nodes[node2.j])
+        push!(remainder_queue, NodeWithSize(k, node1.size + node2.size))
+    end
 
-        for (ja, jb) in [(e.j1, e.j2), (e.j2, e.j1)]
-            s_ja = set_size[ja]
-            s_jb = set_size[jb]
+    @assert length(remainder_queue) == 1
+    return nodes[pop!(remainder_queue).j]
+end
 
+
+function hclust_join_edges!(
+        queue, nodes, deleted_nodes, read_sets, neighbors,
+        next_node_idx, similarity_function)
+
+    while !isempty(queue)
+        e = pop!(queue)
+
+        # stale edge
+        if e.j1 ∈ deleted_nodes || e.j2 ∈ deleted_nodes
+            continue
+        end
+
+        # new node
+        k = next_node_idx
+        next_node_idx += 1
+        read_sets[k] = merge_read_sets(
+            read_sets[e.j1], read_sets[e.j2])
+        nodes[k] = HClustNode(nodes[e.j1], nodes[e.j2])
+
+        # delete old nodes
+        delete!(nodes, e.j1)
+        delete!(read_sets, e.j1)
+        delete!(nodes, e.j2)
+        delete!(read_sets, e.j2)
+        push!(deleted_nodes, e.j1)
+        push!(deleted_nodes, e.j2)
+
+        # add new edges
+        for (ja, jb) in ((e.j1, e.j2), (e.j2, e.j1))
             for l in neighbors[ja]
                 if l == jb || l ∈ deleted_nodes
                     continue
                 end
-                # delete old edge
-                u1, u2 = min((l, ja), (ja, l))
-                old_edge = heap_delete!(queue, queue_idxs[(u1, u2)])
-                delete!(queue_idxs, (u1, u2))
 
-                # already added this edge
-                if haskey(queue_idxs, (l, k))
-                    continue
+                similarity = similarity_function(read_sets[l], read_sets[k])
+
+                if similarity != 0
+                    push!(queue, HClustEdge(l, k, similarity))
                 end
 
-                # estimate (l, k) distance
-                d_lja = old_edge.d
-
-                v1, v2 = min((l, jb), (jb, l))
-                if haskey(queue_idxs, (v1, v2))
-                    d_ljb = queue[queue_idxs[(v1, v2)]].d
-                else
-                    d_ljb = max_d
-                end
-
-                # averange linkage
-                d = (s_ja * d_lja + s_jb * d_ljb) / (s_ja + s_jb)
-
-                # complete linkage
-                # d = max(d_lja, d_ljb)
-
-                # single linkage
-                # d = min(d_lja, d_ljb)
-
-                # add (l, k) edge
-                new_edge = HClustEdge(l, k, d)
-                set_size[k] = s_ja + s_jb
-                queue_idxs[(l, k)] = push!(queue, new_edge)
                 insert!(neighbors, l, k)
                 insert!(neighbors, k, l)
             end
         end
-
-        nodes[k] = HClustNode(nodes[e.j1], nodes[e.j2])
-
-        delete!(neighbors, e.j1)
-        delete!(neighbors, e.j2)
-
-        delete!(set_size, e.j1)
-        delete!(set_size, e.j2)
-        push!(deleted_nodes, e.j1)
-        push!(deleted_nodes, e.j2)
     end
 
-    root = nodes[next_node_idx-1]
-    return root
+    return next_node_idx
 end
 
 

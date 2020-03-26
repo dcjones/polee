@@ -133,7 +133,7 @@ function distance(X::SparseMatrixCSC, j1::Int, j2::Int)
         end
     end
 
-    return 1/intersection_count
+    return 1/(1+intersection_count)
 end
 
 

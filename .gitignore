@@ -5,3 +5,8 @@ notes/*
 !notes/*.tex
 junk/*
 testing/*
+.vscode/*
+src/__pycache__/
+models/__pycache__/
+tools/__pycache__/
+Manifest.toml

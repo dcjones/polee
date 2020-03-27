@@ -1,0 +1,6 @@
+*
+!.gitignore
+!Snakefile
+!genome.fa
+!transcriptome.fa
+!*.bam

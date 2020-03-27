@@ -279,12 +279,12 @@ function BiasedFragModel(
         fraglen_pmf ./= sum(fraglen_pmf)
     end
 
-    open("fraglen_pmf.csv", "w") do output
-        println(output, "fraglen,pr")
-        for (fraglen, pr) in enumerate(fraglen_pmf)
-            println(output, fraglen, ",", pr)
-        end
-    end
+    # open("fraglen_pmf.csv", "w") do output
+    #     println(output, "fraglen,pr")
+    #     for (fraglen, pr) in enumerate(fraglen_pmf)
+    #         println(output, fraglen, ",", pr)
+    #     end
+    # end
 
     fraglen_cdf = copy(fraglen_pmf)
     for i in 2:length(fraglen_cdf)
@@ -303,7 +303,7 @@ function BiasedFragModel(
         bias_background_examples,
         use_pos_bias=use_pos_bias)
 
-    # if dump_bias_training_examples
+    if dump_bias_training_examples
         open("bias-foreground.csv", "w") do output
             for example in bias_foreground_examples
                 println(
@@ -337,8 +337,7 @@ function BiasedFragModel(
                     ',', join(example.t_freqs, ','))
             end
         end
-    # end
-    # exit()
+    end
 
     fraglen_by_prob = collect(1:MAX_FRAG_LEN)[sortperm(fraglen_pmf, rev=true)]
     high_prob_fraglens = fraglen_by_prob[1:BIAS_EFFLEN_NUM_FRAGLENS]

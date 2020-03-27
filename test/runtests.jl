@@ -8,7 +8,8 @@ using Polee
         "prep-sample",
         "dataset/genome.fa",
         "dataset/mBr_M_6w_1.genome.bam",
-        "dataset/annotations.gff3" ]
+        "dataset/annotations.gff3",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -16,7 +17,8 @@ end
     args = String[
         "prep-sample",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -26,7 +28,8 @@ end
         "--no-bias",
         "--tree-method", "random",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -36,7 +39,8 @@ end
         "--no-bias",
         "--tree-method", "sequential",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -46,7 +50,8 @@ end
         "--no-bias",
         "--approx-method", "logistic_normal",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -56,7 +61,8 @@ end
         "--no-bias",
         "--approx-method", "kumaraswamy_ptt",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -66,7 +72,8 @@ end
         "--no-bias",
         "--approx-method", "logit_normal_ptt",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -76,7 +83,8 @@ end
         "--no-bias",
         "--approx-method", "normal_ilr",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -86,7 +94,8 @@ end
         "--no-bias",
         "--approx-method", "normal_alr",
         "dataset/transcriptome.fa",
-        "dataset/mBr_M_6w_1.transcriptome.bam" ]
+        "dataset/mBr_M_6w_1.transcriptome.bam",
+        "-o", "output/prep.h5" ]
     Polee.main(args)
 end
 
@@ -95,7 +104,19 @@ end
         "sample",
         "--num-samples", "5",
         "--annotations", "dataset/annotations.gff3",
-        "dataset/mBr_M_6w_1.prep.h5" ]
+        "dataset/mBr_M_6w_1.prep.h5",
+        "-o", "output/sample.csv"]
+    Polee.main(args)
+end
+
+@testset "Outputing kallisto format" begin
+    args = String[
+        "sample",
+        "--num-samples", "5",
+        "--annotations", "dataset/annotations.gff3",
+        "dataset/mBr_M_6w_1.prep.h5",
+        "--kallisto",
+        "-o", "output/sample.h5"]
     Polee.main(args)
 end
 
@@ -106,7 +127,8 @@ end
         "--num-samples", "20",
         "--stride", "2",
         "--annotations", "dataset/annotations.gff3",
-        "dataset/mBr_M_6w_1.likelihood-matrix.h5" ]
+        "dataset/mBr_M_6w_1.likelihood-matrix.h5",
+        "-o", "output/gibbs.csv"]
     Polee.main(args)
 end
 
@@ -114,7 +136,8 @@ end
     args = String[
         "debug-optimize",
         "--annotations", "dataset/annotations.gff3",
-        "dataset/mBr_M_6w_1.likelihood-matrix.h5" ]
+        "dataset/mBr_M_6w_1.likelihood-matrix.h5",
+        "-o", "output/em.csv"]
     Polee.main(args)
 end
 

@@ -51,20 +51,30 @@ class RNASeqLinearRegression:
         self.qw_global_scale_noncentered_loc_var = tf.Variable(0.0)
         self.qw_global_scale_noncentered_softplus_scale_var = tf.Variable(-1.0)
 
-        self.qw_local_scale_variance_loc_var = tf.Variable(
+        self.qw_local1_scale_variance_loc_var = tf.Variable(
             tf.fill([self.num_factors, self.num_features], 0.0))
-        self.qw_local_scale_variance_softplus_scale_var = tf.Variable(
+        self.qw_local1_scale_variance_softplus_scale_var = tf.Variable(
             tf.fill([self.num_factors, self.num_features], -1.0))
 
-        self.qw_local_scale_noncentered_loc_var = tf.Variable(
+        self.qw_local1_scale_noncentered_loc_var = tf.Variable(
             tf.fill([self.num_factors, self.num_features], 0.0))
-        self.qw_local_scale_noncentered_softplus_scale_var = tf.Variable(
+        self.qw_local1_scale_noncentered_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_features], -1.0))
+
+        self.qw_local2_scale_variance_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_features], 0.0))
+        self.qw_local2_scale_variance_softplus_scale_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_features], -1.0))
+
+        self.qw_local2_scale_noncentered_loc_var = tf.Variable(
+            tf.fill([self.num_factors, self.num_features], 0.0))
+        self.qw_local2_scale_noncentered_softplus_scale_var = tf.Variable(
             tf.fill([self.num_factors, self.num_features], -1.0))
 
         self.qw_loc_var = tf.Variable(
             tf.zeros([self.num_factors, self.num_features]))
         self.qw_softplus_scale_var = tf.Variable(
-            tf.fill([self.num_factors, self.num_features], -2.0))
+            tf.fill([self.num_factors, self.num_features], 0.0))
 
         self.qx_bias_loc_var = tf.Variable(
             tf.reduce_mean(x_init, axis=0))
@@ -106,16 +116,42 @@ class RNASeqLinearRegression:
             scale=1.0)))
         w_global_scale = w_global_scale_noncentered * tf.sqrt(w_global_scale_variance)
 
-        w_local_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
+        w_local1_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
             concentration=tf.fill([self.num_factors, self.num_features], 0.5),
             scale=tf.fill([self.num_factors, self.num_features], 0.5))))
-        w_local_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
+        w_local1_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
             scale=tf.ones([self.num_factors, self.num_features]))))
-        w_local_scale = w_local_scale_noncentered * tf.sqrt(w_local_scale_variance)
+        w_local1_scale = w_local1_scale_noncentered * tf.sqrt(w_local1_scale_variance)
+
+        w_local2_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
+            concentration=tf.fill([self.num_factors, self.num_features], 0.5),
+            scale=tf.fill([self.num_factors, self.num_features], 0.5))))
+        w_local2_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
+            scale=tf.ones([self.num_factors, self.num_features]))))
+        w_local2_scale = w_local2_scale_noncentered * tf.sqrt(w_local2_scale_variance)
+
+        # Let's try to do something like a spike-and-slab prior. Mixture
+        # of two half-normals, one with extremely low variance, one with extremely
+        # high variance.
+
+        # mix_probs = tf.stack([
+        #     tf.fill([self.num_factors, self.num_features], 0.15),
+        #     tf.fill([self.num_factors, self.num_features], 0.85)], axis=-1)
+
+        # w_scales = tf.stack([
+        #     tf.fill([self.num_factors, self.num_features], 2.0),
+        #     tf.fill([self.num_factors, self.num_features], 0.05)], axis=-1)
+
+        # w_scale = yield JDCRoot(Independent(tfd.MixtureSameFamily(
+        #     mixture_distribution=tfd.Categorical(probs=mix_probs),
+        #     components_distribution=tfd.HalfCauchy(loc=[0.0], scale=w_scales))))
 
         w = yield Independent(tfd.Normal(
             loc=tf.zeros([self.num_factors, self.num_features]),
-            scale=w_local_scale * w_global_scale))
+            # scale=w_scale))
+            scale=w_local1_scale * w_local2_scale * w_global_scale))
+            # scale=w_local1_scale * w_global_scale))
+            # scale=w_local_scale))
 
         x_bias = yield JDCRoot(Independent(tfd.Normal(
             loc=tf.fill([self.num_features], np.float32(self.x_bias_loc0)),
@@ -134,6 +170,7 @@ class RNASeqLinearRegression:
         # in sequencing depth alter the likelihood function of transcripts with
         # no reads which can otherwise manifest as  bias in the w
         # posterior.
+
         if self.use_distortion:
             w_distortion_c = yield Independent(tfd.Normal(
                 loc=tf.zeros([self.num_factors, self.kernel_regression_degree]),
@@ -152,10 +189,10 @@ class RNASeqLinearRegression:
         # determined by kernel regression against the mean expression.
 
         x_scale_concentration_c = yield JDCRoot(Independent(tfd.HalfCauchy(
-            loc=tf.zeros([self.kernel_regression_degree]), scale=10.0)))
+            loc=tf.zeros([self.kernel_regression_degree]), scale=1.0)))
 
         x_scale_scale_c = yield JDCRoot(Independent(tfd.HalfCauchy(
-            loc=tf.zeros([self.kernel_regression_degree]), scale=10.0)))
+            loc=tf.zeros([self.kernel_regression_degree]), scale=1.0)))
 
         x_scale = yield Independent(mean_variance_model(
             weights, x_scale_concentration_c, x_scale_scale_c))
@@ -187,17 +224,27 @@ class RNASeqLinearRegression:
             loc=self.qw_global_scale_noncentered_loc_var,
             scale=tf.nn.softplus(self.qw_global_scale_noncentered_softplus_scale_var))))
 
-        qw_local_scale_variance = yield JDCRoot(Independent(SoftplusNormal(
-            loc=self.qw_local_scale_variance_loc_var,
-            scale=tf.nn.softplus(self.qw_local_scale_variance_softplus_scale_var))))
+        qw_local1_scale_variance = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_local1_scale_variance_loc_var,
+            scale=tf.nn.softplus(self.qw_local1_scale_variance_softplus_scale_var))))
 
-        qw_local_scale_noncentered = yield JDCRoot(Independent(SoftplusNormal(
-            loc=self.qw_local_scale_noncentered_loc_var,
-            scale=tf.nn.softplus(self.qw_local_scale_noncentered_softplus_scale_var))))
+        qw_local1_scale_noncentered = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_local1_scale_noncentered_loc_var,
+            scale=tf.nn.softplus(self.qw_local1_scale_noncentered_softplus_scale_var))))
+
+        qw_local2_scale_variance = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_local2_scale_variance_loc_var,
+            scale=tf.nn.softplus(self.qw_local2_scale_variance_softplus_scale_var))))
+
+        qw_local2_scale_noncentered = yield JDCRoot(Independent(SoftplusNormal(
+            loc=self.qw_local2_scale_noncentered_loc_var,
+            scale=tf.nn.softplus(self.qw_local2_scale_noncentered_softplus_scale_var))))
 
         qw = yield JDCRoot(Independent(tfd.Normal(
             loc=self.qw_loc_var,
             scale=tf.nn.softplus(self.qw_softplus_scale_var))))
+
+        # tf.print("qw quantiles", tfp.stats.percentile(qw, q=[1, 50, 99]))
 
         qx_bias = yield JDCRoot(Independent(tfd.Normal(
             loc=self.qx_bias_loc_var,
@@ -274,7 +321,7 @@ class RNASeqLinearRegression:
         trace = tfp.vi.fit_surrogate_posterior(
             target_log_prob_fn=lambda *args: model.log_prob(args),
             surrogate_posterior=variational_model,
-            optimizer=tf.optimizers.Adam(learning_rate=1e-3),
+            optimizer=tf.optimizers.Adam(learning_rate=2e-3),
             sample_size=1,
             num_steps=niter,
             trace_fn=trace_fn)

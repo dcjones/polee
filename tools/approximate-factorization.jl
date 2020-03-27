@@ -1,3 +1,4 @@
+#!/usr/bin/env julia
 
 # This is an implementation of Salmon style "range factorization" as described
 #

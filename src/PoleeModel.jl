@@ -71,8 +71,8 @@ between highly expressed features.
 
 x should be log expression with shape [num_samples, num_features]
 """
-function estimate_sample_scales(x; upper_quantile=0.90)
-    x_mean = mean(x, dims=1)[1,:]
+function estimate_sample_scales(x; upper_quantile=0.95)
+    x_mean = median(x, dims=1)[1,:]
     high_expr_idx = x_mean .> quantile(x_mean, upper_quantile)
     return median(
         reshape(x_mean[high_expr_idx], (1, sum(high_expr_idx))) .- x[:,high_expr_idx],

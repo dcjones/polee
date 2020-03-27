@@ -38,6 +38,7 @@ function main()
         key = (Xt.rowval[r], Xt.nzval[r])
         counts[key] = get(counts, key, 0) + 1
     end
+    @assert sum(values(counts)) == m
 
     Is = UInt32[]
     Js = UInt32[]

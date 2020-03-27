@@ -129,14 +129,16 @@ class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
 
         x_exp = tf.math.exp(self.x)
 
+        # tf.print("scales", tf.reduce_sum(x_exp, axis=-1))
+
         # jacobian for exp transformation
         ladj += tf.reduce_sum(self.x, axis=-1)
 
-        # jacobian for softmax
-        ladj -= (n-1) * tf.math.log(tf.reduce_sum(x_exp, axis=-1))
-
         # compute softmax of x
         x = x_exp / tf.reduce_sum(x_exp, axis=-1, keepdims=True)
+
+        # jacobian for softmax
+        ladj -= (n-1) * tf.math.log(tf.reduce_sum(x_exp, axis=-1))
 
         # effective length transform
         # --------------------------

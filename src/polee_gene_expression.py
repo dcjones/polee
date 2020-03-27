@@ -21,7 +21,7 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
 
         n = np.max(transcript_idxs)
         num_features = np.max(feature_idxs)
-        num_samples = int(x_gene.shape[1])
+        num_samples = int(x_gene.shape[-2])
 
         # SparseTensor operations don't support batching. We get around that
         # here by flattening the input and using one big blockwise matrix.
@@ -84,8 +84,10 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
 
     # @tf.function
     def _log_prob(self, __ignored__):
-        return self.transcript_likelihood.log_prob(__ignored__) + \
-            noninformative_gene_prior(self.x_gene, self.feature_sizes)
+        # return self.transcript_likelihood.log_prob(__ignored__) + \
+        #     noninformative_gene_prior(self.x_gene, self.feature_sizes)
+        return self.transcript_likelihood.log_prob(__ignored__)
+            # noninformative_gene_prior(self.x_gene, self.feature_sizes)
 
 
 """
@@ -120,14 +122,39 @@ class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
 
     # @tf.function
     def _log_prob(self, __ignored__):
-        x_gene = tf.math.log(tf.nn.softmax(self.x, axis=-1))
+        num_samples = int(self.x.get_shape()[-2])
+        n           = int(self.x.get_shape()[-1])
+
+        ladj = 0.0
+
+        x_exp = tf.math.exp(self.x)
+
+        # jacobian for exp transformation
+        ladj += tf.reduce_sum(self.x, axis=-1)
+
+        # compute softmax of x
+        x = x_exp / tf.reduce_sum(x_exp, axis=-1, keepdims=True)
+
+        # jacobian for softmax
+        ladj -= (n-1) * tf.math.log(tf.reduce_sum(x_exp, axis=-1))
+
+        # back to log-scale
+        x_gene = tf.math.log(x)
+
+        # jacobian for log transform
+        ladj += tf.reduce_sum(-x_gene, axis=-1)
+
+        # x_gene = tf.math.log(tf.nn.softmax(self.x, axis=-1))
 
         feature_likelihood = tfp.distributions.Normal(
             loc=self.loc,
             scale=self.scale)
 
-        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1)
-            # noninformative_gene_prior(x_gene, self.feature_sizes)
+        # return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + \
+        #     noninformative_gene_prior(x_gene, self.feature_sizes)
+
+        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + ladj + \
+            noninformative_gene_prior(x_gene, self.feature_sizes)
 
 
 """

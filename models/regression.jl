@@ -77,7 +77,7 @@ arg_settings.prog = "polee model regression"
         action = :store_true
     "--effect-size"
         metavar = "S"
-        help = "Output the posterior probability of abs log2 fold-change greater than S"
+        help = "Output the posterior probability of abs fold-change greater than S"
         default = nothing
         arg_type = Float64
     "--factors"
@@ -251,9 +251,6 @@ function main()
         sample_scales = estimate_sample_scales(x0_log)
 
         if loaded_samples.log_x0_std !== nothing
-            @show extrema(loaded_samples.log_x0_std)
-            @show extrema(x0_log)
-
             regression = polee_regression_py.RNASeqNormalTranscriptLinearRegression(
                 loaded_samples.variables,
                 x0_log, loaded_samples.log_x0_std,
@@ -273,6 +270,7 @@ function main()
 
         feature_names = String[t.metadata.name for t in ts]
         feature_names_label = "transcript_id"
+
 
         # dump stuff for debugging
         #open("transcript-mean-vs-sd.csv", "w") do output

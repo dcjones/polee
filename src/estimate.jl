@@ -106,7 +106,6 @@ function load_kallisto_estimates_from_specification(
             est_counts = Vector{Float32}(read(input["est_counts"]))
             xs = kallisto_counts_to_proportions(
                 est_counts, efflens, pseudocount, transcript_ids, transcript_idx)
-            push!(xss, xs)
 
             if use_bootstrap
                 bss = Array{Float32, 2}[]
@@ -118,7 +117,11 @@ function load_kallisto_estimates_from_specification(
                     push!(bss, bs)
                 end
 
-                push!(xss_log_stds, max.(1e-4, std(log.(vcat(bss...)), dims=1)))
+                log_bs = log.(vcat(bss...))
+                push!(xss_log_stds, max.(1e-2, std(log_bs, dims=1)))
+                push!(xss, exp.(mean(log_bs, dims=1)))
+            else
+                push!(xss, xs)
             end
         end
     end
@@ -235,7 +238,6 @@ function load_samples_from_specification(
     loaded_samples = load_samples(
         filenames, ts, ts_metadata, batch_size,
         check_gff_hash=check_gff_hash,
-        transforms=transforms,
         using_tensorflow=using_tensorflow)
     println("Sample data loaded")
 
@@ -323,7 +325,7 @@ function load_samples(
         using_tensorflow::Bool=true)
     return load_samples_hdf5(
         filenames, ts, ts_metadata, batch_size,
-        check_gff_hash=check_gff_hash, transforms=transforms,
+        check_gff_hash=check_gff_hash,
         using_tensorflow=using_tensorflow)
 end
 

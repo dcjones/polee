@@ -253,10 +253,11 @@ Transform a n vector `xs` on a simplex, to a `n-1` vector `ys` on a hypercube.
 function inverse_transform!(
         t::PolyaTreeTransform,
         xs::AbstractVector,
-        ys::AbstractVector)
+        ys::AbstractVector{T}) where {T}
     num_nodes = size(t.index, 2)
     n = div(num_nodes + 1, 2)
     k = n - 1 # internal node number
+    ladj = zero(T)
     for i in num_nodes:-1:1
         # leaf node
         output_idx = t.index[1, i]
@@ -269,12 +270,14 @@ function inverse_transform!(
         right_idx = t.index[3, i]
 
         t.us[i] = t.us[left_idx] + t.us[right_idx]
+        ladj -= log(Float32(t.us[i]))
         ys[k] = t.us[left_idx] / t.us[i]
 
         k -= 1
     end
 
     @assert k == 0
+    return ladj
 end
 
 

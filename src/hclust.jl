@@ -79,7 +79,7 @@ end
 struct HClustEdge
     j1::UInt32
     j2::UInt32
-    similarity::Int32 # intersection size
+    similarity::Float32
 end
 
 
@@ -129,6 +129,23 @@ function read_set_intersection_size(rs1::Vector{UInt32}, rs2::Vector{UInt32})
 end
 
 
+function read_set_size_diff(rs1::Vector{UInt32}, rs2::Vector{UInt32})
+    return -1 - abs(length(rs1) - length(rs2))
+end
+
+
+function read_set_relative_intersection_size(rs1::Vector{UInt32}, rs2::Vector{UInt32})
+    if isempty(rs1) && isempty(rs2)
+        return 0.0
+    end
+
+    intersection_size = read_set_intersection_size(rs1, rs2)
+    union_size = length(rs1) + length(rs2) - intersection_size
+
+    return intersection_size / union_size
+end
+
+
 function merge_read_sets(
         rs1::Vector{UInt32}, rs2::Vector{UInt32})
     intersection_size = read_set_intersection_size(rs1, rs2)
@@ -152,6 +169,20 @@ function merge_read_sets(
         end
         k += 1
     end
+
+    while i <= length(rs1)
+        rs_merged[k] = rs1[i]
+        i += 1
+        k += 1
+    end
+
+    while j <= length(rs2)
+        rs_merged[k] = rs2[j]
+        j += 1
+        k += 1
+    end
+
+    @assert length(rs_merged) == k - 1
 
     return rs_merged
 end
@@ -191,7 +222,7 @@ function hclust(X::SparseMatrixCSC)
     neighbors = MultiDict{UInt32, UInt32}()
     for j1 in 1:n
         for j2 in j1+1:min(j1+K, n)
-            similarity = read_set_intersection_size(read_sets[j1], read_sets[j2])
+            similarity = read_set_relative_intersection_size(read_sets[j1], read_sets[j2])
             if similarity > 0
                 push!(queue, HClustEdge(j1, j2, similarity))
             end
@@ -206,12 +237,14 @@ function hclust(X::SparseMatrixCSC)
 
     next_node_idx = hclust_join_edges!(
         queue, nodes, deleted_nodes, read_sets, neighbors,
-        next_node_idx, read_set_intersection_size)
+        next_node_idx, read_set_relative_intersection_size)
     @assert isempty(queue)
 
     remainder_queue = BinaryMinHeap{NodeWithSize}()
     for j in keys(nodes)
-        push!(remainder_queue, NodeWithSize(j, length(read_sets[j])))
+        # add one to the number of reads, subtree size plays a small role
+        # and the tree is a bit more balanaced
+        push!(remainder_queue, NodeWithSize(j, 1 + length(read_sets[j])))
     end
     while length(remainder_queue) > 1
         node1 = pop!(remainder_queue)

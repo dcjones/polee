@@ -43,6 +43,15 @@ arg_settings.prog = "polee model regression"
             file.
             """
         action = :store_true
+    "--gene-pattern"
+        metavar = "regex"
+        help = """
+        A regular expression to extract gene ids from from transcript ids. This
+        is useful when transcriptome alignments are used with no external
+        annotation, but gene names are encoded in the FASTA sequence names.
+        """
+        default = nothing
+        arg_type = String
     "--pseudocount"
         metavar = "C"
         help = "If specified with --point-estimates, add C tpm to each value."
@@ -127,7 +136,8 @@ function main()
         error(string(parsed_args["feature"], " is not a supported feature."))
     end
 
-    ts, ts_metadata = load_transcripts_from_args(parsed_args)
+    ts, ts_metadata = load_transcripts_from_args(
+        parsed_args, gene_pattern=parsed_args["gene-pattern"])
     n = length(ts)
 
     init_python_modules()

@@ -86,7 +86,7 @@ try to determine their location from metadata.
 """
 function load_transcripts_from_args(
         parsed_args, excluded_transcripts=Set{String}();
-        experiment_arg="experiment")
+        gene_pattern=nothing, experiment_arg="experiment")
     spec = YAML.load_file(parsed_args[experiment_arg])
     prep_file_suffix = get(spec, "prep_file_suffix", ".prep.h5")
 
@@ -120,7 +120,7 @@ function load_transcripts_from_args(
         transcripts_filename = parsed_args["annotations"]
     end
 
-    if transcripts_filename === nothing
+    if transcripts_filename === nothing || isempty(transcripts_filename)
         if haskey(parsed_args, "sequences") && parsed_args["sequences"] !== nothing
             sequences_filename = parsed_args["sequences"]
         end
@@ -132,7 +132,7 @@ function load_transcripts_from_args(
         end
 
         return Polee.read_transcripts_from_fasta(
-            sequences_filename, excluded_transcripts)
+            sequences_filename, excluded_transcripts, gene_pattern)
     else
         return Transcripts(
             transcripts_filename, excluded_transcripts)

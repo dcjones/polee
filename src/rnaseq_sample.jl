@@ -189,7 +189,8 @@ end
 """
 Build a Transcripts set assuming each entry in a fasta file is one transcript.
 """
-function read_transcripts_from_fasta(filename, excluded_transcripts)
+function read_transcripts_from_fasta(
+        filename, excluded_transcripts, gene_pattern_str=nothing)
     @tic()
     reader = open(FASTA.Reader, filename)
     entry = eltype(reader)()
@@ -210,6 +211,22 @@ function read_transcripts_from_fasta(filename, excluded_transcripts)
 
     ts = Transcripts(transcripts, true)
     ts_metadata = TranscriptsMetadata()
+
+    if gene_pattern_str !== nothing
+        gene_pattern = Regex(gene_pattern_str)
+        unknown_gene_num = 1
+        for t in ts
+            mat = match(gene_pattern, t.metadata.name)
+            if mat !== nothing
+                gid = isempty(mat.captures) ? mat.match : mat.captures[1]
+                ts_metadata.gene_id[t.metadata.name] = gid
+            else
+                gid = string("unknown-gene-", unknown_gene_num)
+                unknown_gene_num += 1
+                ts_metadata.gene_id[t.metadata.name] = gid
+            end
+        end
+    end
 
     @toc("Reading transcript sequences")
     println("Read ", length(transcripts), " transcripts")

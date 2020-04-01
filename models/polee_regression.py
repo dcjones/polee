@@ -508,7 +508,7 @@ class RNASeqNormalTranscriptLinearRegression(RNASeqLinearRegression):
 
         def surrogate_likelihood_model(qx):
             dummy_likelihood_value = yield JDCRoot(Independent(
-                tfd.Deterministic(tf.zeros([self.num_samples]))))
+                tfd.Deterministic(tf.zeros([self.num_samples, 0]))))
 
         super(RNASeqNormalTranscriptLinearRegression, self).__init__(
             F, x_likelihood_loc, likelihood_model, surrogate_likelihood_model,

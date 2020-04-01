@@ -153,8 +153,9 @@ class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
         # return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + \
         #     noninformative_gene_prior(x_gene, self.feature_sizes)
 
-        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + ladj + \
-            noninformative_gene_prior(x_gene, self.feature_sizes)
+        # return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + ladj
+        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1)
+            # noninformative_gene_prior(x_gene, self.feature_sizes)
 
 
 """

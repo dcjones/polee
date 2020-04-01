@@ -118,7 +118,7 @@ function load_kallisto_estimates_from_specification(
                 end
 
                 log_bs = log.(vcat(bss...))
-                push!(xss_log_stds, max.(1e-2, std(log_bs, dims=1)))
+                push!(xss_log_stds, max.(0.5, std(log_bs, dims=1)))
                 push!(xss, exp.(mean(log_bs, dims=1)))
             else
                 push!(xss, xs)

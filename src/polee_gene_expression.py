@@ -139,7 +139,7 @@ class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
         ladj -= (n-1) * tf.math.log(tf.reduce_sum(x_exp, axis=-1))
 
         # back to log-scale
-        x_gene = tf.math.log(x)
+        x_gene = tf.math.log(x) # [1, num_samples, num_features]
 
         # jacobian for log transform
         ladj += tf.reduce_sum(-x_gene, axis=-1)
@@ -148,13 +148,13 @@ class RNASeqFeatureApproxLikelihoodDist(tfp.distributions.Distribution):
 
         feature_likelihood = tfp.distributions.Normal(
             loc=self.loc,
-            scale=self.scale)
+            scale=self.scale) # [num_samples, num_features]
 
         # return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + \
         #     noninformative_gene_prior(x_gene, self.feature_sizes)
 
         # return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) + ladj
-        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1)
+        return tf.reduce_sum(feature_likelihood.log_prob(x_gene), axis=-1) # [1, num_samples]
             # noninformative_gene_prior(x_gene, self.feature_sizes)
 
 

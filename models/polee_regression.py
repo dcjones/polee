@@ -501,19 +501,17 @@ class RNASeqNormalTranscriptLinearRegression(RNASeqLinearRegression):
         x_bias_mu0 = np.log(1/num_features)
         x_bias_sigma0 = 12.0
 
+        x_likelihood_loc_var = tf.Variable(x_likelihood_loc, trainable=False)
+        x_likelihood_scale_var = tf.Variable(x_likelihood_scale, trainable=False)
+
         def likelihood_model(x):
-            # likelihood = yield tfd.Independent(RNASeqFeatureApproxLikelihoodDist(
-            #     x_likelihood_loc, x_likelihood_scale,
-            #     np.ones([num_features], dtype=np.int), x))
             likelihood = yield tfd.Independent(tfd.Normal(
                 loc=tf.math.log(tf.nn.softmax(x, axis=-1)),
-                scale=x_likelihood_scale))
+                scale=x_likelihood_scale_var))
 
         def surrogate_likelihood_model(qx):
-            # dummy_likelihood_value = yield JDCRoot(Independent(
-            #     tfd.Deterministic(tf.zeros([self.num_samples, 0]))))
             dummy_likelihood_value = yield JDCRoot(Independent(
-                tfd.Deterministic(x_likelihood_loc)))
+                tfd.Deterministic(x_likelihood_loc_var)))
 
         super(RNASeqNormalTranscriptLinearRegression, self).__init__(
             F, x_likelihood_loc, likelihood_model, surrogate_likelihood_model,

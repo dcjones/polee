@@ -86,7 +86,8 @@ try to determine their location from metadata.
 """
 function load_transcripts_from_args(
         parsed_args, excluded_transcripts=Set{String}();
-        gene_pattern=nothing, experiment_arg="experiment")
+        gene_pattern=nothing, gene_annotations=nothing,
+        experiment_arg="experiment")
     spec = YAML.load_file(parsed_args[experiment_arg])
     prep_file_suffix = get(spec, "prep_file_suffix", ".prep.h5")
 
@@ -132,7 +133,7 @@ function load_transcripts_from_args(
         end
 
         return Polee.read_transcripts_from_fasta(
-            sequences_filename, excluded_transcripts, gene_pattern)
+            sequences_filename, excluded_transcripts, gene_annotations, gene_pattern)
     else
         return Transcripts(
             transcripts_filename, excluded_transcripts)

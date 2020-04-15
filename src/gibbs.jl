@@ -127,8 +127,16 @@ function gibbs_sampler(
             aux_group = g_create(output, "aux")
             aux_group["num_bootstrap"]    = Int[size(samples, 1) * size(samples, 2)]
             aux_group["eff_lengths"]      = Vector{Float64}(els)
-            aux_group["lengths"]          = Int[exonic_length(t) for t in ts]
-            aux_group["ids"]              = String[t.metadata.name for t in ts]
+            lens = Array{Int}(undef, length(ts))
+            for t in ts
+                lens[t.metadata.id] = exonic_length(t)
+            end
+            aux_group["lengths"]          = lens
+            tnames = Array{String}(undef, length(ts))
+            for t in ts
+                tnames[t.metadata.id] = t.metadata.name
+            end
+            aux_group["ids"]              = tnames
             aux_group["call"]             = String[join(ARGS, " ")]
             aux_group["index_version"]    = Int[-1]
             aux_group["kallisto_version"] = "polee debug-sample"

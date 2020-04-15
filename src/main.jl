@@ -642,7 +642,11 @@ function polee_sample(parsed_args::Dict{String, Any})
             transcripts_filename, excluded_transcripts)
     end
 
-    tnames = String[t.metadata.name for t in ts]
+    tnames = Array{String}(undef, length(ts))
+    for t in ts
+        tnames[t.metadata.id] = t.metadata.name
+    end
+
     if parsed_args["trim-prefix"] !== nothing
         for (i, tname) in enumerate(tnames)
             tnames[i] = replace(
@@ -717,7 +721,11 @@ function polee_sample(parsed_args::Dict{String, Any})
             aux_group = g_create(output, "aux")
             aux_group["num_bootstrap"]    = Int[num_samples]
             aux_group["eff_lengths"]      = Vector{Float64}(efflens)
-            aux_group["lengths"]          = Int[exonic_length(t) for t in ts]
+            lens = Array{Int}(undef, length(ts))
+            for t in ts
+                lens[t.metadata.id] = exonic_length(t)
+            end
+            aux_group["lengths"]          = lens
             aux_group["ids"]              = tnames
             aux_group["call"]             = String[join(ARGS, " ")]
             aux_group["index_version"]    = Int[-1]
@@ -794,7 +802,10 @@ function polee_debug_optimize(parsed_args::Dict{String, Any})
             parsed_args["sequences"], Set{String}())
     end
 
-    transcript_names = String[t.metadata.name for t in ts]
+    transcript_names = Array{String}(undef, length(ts))
+    for t in ts
+        transcript_names[t.metadata.id] = t.metadata.name
+    end
 
     tpms = expectation_maximization(parsed_args["likelihood-matrix"])
 

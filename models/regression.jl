@@ -52,6 +52,14 @@ arg_settings.prog = "polee model regression"
         """
         default = nothing
         arg_type = String
+    "--gene-annotations"
+        metavar = "filename"
+        help = """
+            YAML file assigning transcripts ids to genes. Useful for doing gene
+            regression with transcriptome alignments.
+        """
+        default = nothing
+        arg_type = String
     "--pseudocount"
         metavar = "C"
         help = "If specified with --point-estimates, add C tpm to each value."
@@ -136,8 +144,15 @@ function main()
         error(string(parsed_args["feature"], " is not a supported feature."))
     end
 
+    if parsed_args["gene-pattern"] !== nothing && parsed_args["gene-annotations"] !== nothing
+        error("At most one of --gene-pattern and --gene-annotations can be given.")
+    end
+
+
     ts, ts_metadata = load_transcripts_from_args(
-        parsed_args, gene_pattern=parsed_args["gene-pattern"])
+        parsed_args,
+        gene_annotations=parsed_args["gene-annotations"],
+        gene_pattern=parsed_args["gene-pattern"])
     n = length(ts)
 
     init_python_modules()
@@ -278,9 +293,11 @@ function main()
 
         qx_loc, qw_loc, qw_scale, qx_bias, qx_scale, = regression.fit(6000)
 
-        feature_names = String[t.metadata.name for t in ts]
+        feature_names = Array{String}(undef, length(ts))
+        for t in ts
+            feature_names[t.metadata.id] = t.metadata.name
+        end
         feature_names_label = "transcript_id"
-
 
         # dump stuff for debugging
         #open("transcript-mean-vs-sd.csv", "w") do output
@@ -347,7 +364,10 @@ function main()
             gene_idxs, transcript_idxs, qw_isoform_loc, qw_isoform_scale,
             qx_isoform_bias_loc, qx_isoform_bias_scale)
 
-        transcript_names = String[t.metadata.name for t in ts]
+        transcript_names = Array{String}(undef, length(ts))
+        for t in ts
+            transcript_names[t.metadata.id] = t.metadata.name
+        end
 
         write_isoform_regression_effects(
             parsed_args["isoform-output"],

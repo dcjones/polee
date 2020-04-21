@@ -76,8 +76,9 @@ class RNASeqLinearRegression:
         self.qw_softplus_scale_var = tf.Variable(
             tf.fill([self.num_factors, self.num_features], 0.0))
 
-        self.qx_bias_loc_var = tf.Variable(
-            tf.reduce_mean(x_init, axis=0))
+        self.x_bias_init = tf.reduce_mean(x_init, axis=0)
+
+        self.qx_bias_loc_var = tf.Variable(self.x_bias_init)
         self.qx_bias_softplus_scale_var = tf.Variable(
             tf.fill([self.num_features], -1.0))
 
@@ -158,7 +159,7 @@ class RNASeqLinearRegression:
             scale=np.float32(self.x_bias_scale0))))
 
         weights = kernel_regression_weights(
-            self.kernel_regression_bandwidth, x_bias, self.x_scale_hinges)
+            self.kernel_regression_bandwidth, self.x_bias_init, self.x_scale_hinges)
 
         F = yield from design_matrix_model()
 
@@ -172,9 +173,9 @@ class RNASeqLinearRegression:
         # posterior.
 
         if self.use_distortion:
-            w_distortion_c = yield Independent(tfd.Normal(
+            w_distortion_c = yield Independent(tfd.Cauchy(
                 loc=tf.zeros([self.num_factors, self.kernel_regression_degree]),
-                scale=1.0))
+                scale=0.1))
 
             w_distortion = tf.matmul(
                 tf.expand_dims(w_distortion_c, 1),

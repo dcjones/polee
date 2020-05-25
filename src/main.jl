@@ -145,6 +145,10 @@ end
     "--dump-bias-training-examples"
         help = "Write training examples collected for use with bias model training."
         action = :store_true
+    "--write-tree-topology"
+        help = "Write the heuristic tree topology to a YAML file"
+        metavar = "tree.yml"
+        default = nothing
     "--num-threads", "-t" # handled by the wrapper script
         metavar = "N"
         help = "Number of threads to use. (Defaults to number of cores.)"
@@ -601,7 +605,8 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
         approximate_likelihood(
             approx, sample, parsed_args["output"],
             gene_noninformative=false,
-            use_efflen_jacobian=!parsed_args["no-efflen-jacobian"])
+            use_efflen_jacobian=!parsed_args["no-efflen-jacobian"],
+            tree_topology_filename=parsed_args["write-tree-topology"])
     end
 end
 

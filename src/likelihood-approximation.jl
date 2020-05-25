@@ -32,7 +32,8 @@ to a file.
 function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String;
                                 gene_noninformative::Bool=false,
-                                use_efflen_jacobian::Bool=true)
+                                use_efflen_jacobian::Bool=true,
+                                tree_topology_filename=nothing)
     @tic()
     if !isa(approximation, LogitSkewNormalPTTApprox)
         @warn "Using alternative approximation. Some features not supported."
@@ -40,7 +41,8 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
     else
         params = approximate_likelihood(
             approximation, sample, gene_noninformative=gene_noninformative,
-            use_efflen_jacobian=use_efflen_jacobian)
+            use_efflen_jacobian=use_efflen_jacobian,
+            tree_topology_filename=tree_topology_filename)
     end
     @toc("Approximating likelihood")
 
@@ -228,6 +230,7 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
                                 sample::RNASeqSample,
                                 ::Val{gradonly}=Val(true);
                                 # ::Val{gradonly}=Val(false);
+                                tree_topology_filename=nothing,
                                 gene_noninformative::Bool=false,
                                 use_efflen_jacobian::Bool=true) where {gradonly}
     X = sample.X
@@ -254,7 +257,41 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
     ss_max_alpha_step = 2e-2
 
     # cluster transcripts for hierachrical stick breaking
-    t = PolyaTreeTransform(X, approx.treemethod)
+    root_ref = HClustNode[]
+    t = PolyaTreeTransform(X, approx.treemethod, root_ref)
+
+    # optionally write tree diagnostics
+    if tree_topology_filename !== nothing && !isempty(root_ref)
+        ts_names = [t.metadata.name for t in sample.ts]
+        ts_gene_names = [
+            get(sample.transcript_metadata.gene_name,
+                get(sample.transcript_metadata.gene_id, t.metadata.name, ""), "")
+            for t in sample.ts]
+
+        open(tree_topology_filename, "w") do output
+            println(output, "nodes:")
+            stack = Tuple{Int,HClustNode}[(1, root_ref[1])]
+            next_i = 2
+            while !isempty(stack)
+                i, node = pop!(stack)
+                println(output, "  - id: node", i)
+                println(output, "    read_count: ", node.read_count)
+                # internal node
+                if node.j == 0
+                    println(output, "    child_jaccard: ", node.child_jaccard)
+                    push!(stack, (next_i, node.left_child))
+                    println(output, "    left: node", next_i)
+                    next_i += 1
+                    push!(stack, (next_i, node.right_child))
+                    println(output, "    right: node", next_i)
+                    next_i += 1
+                else
+                    println(output, "    transcript_id: ", ts_names[node.j])
+                    println(output, "    gene_name: ", ts_gene_names[node.j])
+                end
+            end
+        end
+    end
 
     # Unifom distributed values
     zs0 = Array{Float32}(undef, n-1)

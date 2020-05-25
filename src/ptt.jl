@@ -32,10 +32,14 @@ Heuristically build a PTT based on a sparse data. The defaut method will try
 to define a transform that is able to preserve correlation/anticorrelation
 between dimensions in X.
 """
-function PolyaTreeTransform(X::SparseMatrixCSC, method::Symbol=:cluster)
+function PolyaTreeTransform(
+        X::SparseMatrixCSC, method::Symbol=:cluster, tree_root_ref=nothing)
     m, n = size(X)
     if method == :cluster
         root = hclust(X)
+        if tree_root_ref !== nothing
+            push!(tree_root_ref,root)
+        end
         nodes = order_nodes(root, n)
     elseif method == :random
         nodes = rand_tree_nodes(n)

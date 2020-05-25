@@ -15,6 +15,8 @@ mutable struct HClustNode
     parent_idx::Int32
 
     subtree_size::Int32
+    read_count::UInt32
+    child_jaccard::Float32
 
     # TODO: Would like to delete these values but still used by ilr
     input_value::Float64
@@ -215,6 +217,8 @@ function hclust(X::SparseMatrixCSC)
     for j in 1:n
         nodes[j] = HClustNode(idxs[j])
         read_sets[j] = X.rowval[X.colptr[idxs[j]]:X.colptr[idxs[j]+1]-1]
+        nodes[j].read_count = length(read_sets[j])
+        nodes[j].child_jaccard = 1.0
     end
 
     # add initial edges
@@ -253,6 +257,8 @@ function hclust(X::SparseMatrixCSC)
         k = next_node_idx
         next_node_idx += 1
         nodes[k] = HClustNode(nodes[node1.j], nodes[node2.j])
+        nodes[k].read_count = nodes[node1.j].read_count + nodes[node2.j].read_count
+        nodes[k].child_jaccard = 0.0
         push!(remainder_queue, NodeWithSize(k, node1.size + node2.size))
     end
 
@@ -279,6 +285,8 @@ function hclust_join_edges!(
         read_sets[k] = merge_read_sets(
             read_sets[e.j1], read_sets[e.j2])
         nodes[k] = HClustNode(nodes[e.j1], nodes[e.j2])
+        nodes[k].read_count = length(read_sets[k])
+        nodes[k].child_jaccard = e.similarity
 
         # delete old nodes
         delete!(nodes, e.j1)

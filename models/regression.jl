@@ -373,7 +373,7 @@ function main()
             parsed_args["isoform-output"],
             gene_idxs, transcript_idxs,
             factor_names,
-            gene_ids, transcript_names,
+            gene_ids, gene_names, transcript_names,
             min_effect_sizes, mean_effect_sizes,
             qw_isoform_loc, qx_isoform_bias_loc)
 
@@ -390,8 +390,10 @@ function main()
         # end
 
         # set of variables for output
-        feature_names = gene_ids
-        feature_names_label = "gene_id"
+        # joining ids and names here as hack to output both names
+        feature_names = [string(gene_id, ",", gene_name)
+            for (gene_id, gene_name) in zip(gene_ids, gene_names)]
+        feature_names_label = "gene_id,gene_name"
         qw_loc = qw_gene_loc
         qw_scale = qw_gene_scale
         qx_bias = qx_gene_bias
@@ -574,7 +576,7 @@ end
 function write_isoform_regression_effects(
         output_filename,
         gene_idxs, transcript_idxs,
-        factor_names, gene_ids, transcript_names,
+        factor_names, gene_ids, gene_names, transcript_names,
         min_effect_sizes, mean_effect_sizes,
         qw_isoform_loc, qx_isoform_bias_loc)
 
@@ -589,12 +591,13 @@ function write_isoform_regression_effects(
     # TODO: should we also output prob_de wrt to some effect size?
 
     open(output_filename, "w") do output
-        println(output, "factor,gene_id,transcript_id,mean_effect_size,min_effect_size,w_mean,x_bias")
+        println(output, "factor,gene_id,gene_name,transcript_id,mean_effect_size,min_effect_size,w_mean,x_bias")
         for i in 1:num_factors, j in 1:n
             println(
                 output,
                 factor_names[i], ",",
                 gene_ids[transcript_gene_idx[j]], ",",
+                gene_names[transcript_gene_idx[j]], ",",
                 transcript_names[j], ",",
                 mean_effect_sizes[i, j]/ln2, ",",
                 min_effect_sizes[i, j]/ln2, ",",

@@ -33,20 +33,20 @@ to define a transform that is able to preserve correlation/anticorrelation
 between dimensions in X.
 """
 function PolyaTreeTransform(
-        X::SparseMatrixCSC, method::Symbol=:cluster, tree_root_ref=nothing)
+        X::SparseMatrixCSC, method::Symbol=:cluster, tree_nodes_ref=nothing)
     m, n = size(X)
     if method == :cluster
         root = hclust(X)
-        if tree_root_ref !== nothing
-            push!(tree_root_ref,root)
-        end
         nodes = order_nodes(root, n)
     elseif method == :random
         nodes = rand_tree_nodes(n)
     elseif method == :sequential
-        nodes = rand_list_nodes(n)
+        nodes = list_nodes(n)
     else
         error("$(method) is not a supported Polya tree transform heuristic")
+    end
+    if tree_nodes_ref !== nothing
+        push!(tree_nodes_ref, nodes)
     end
     return PolyaTreeTransform(nodes)
 end

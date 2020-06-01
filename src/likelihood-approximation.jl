@@ -257,41 +257,8 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
     ss_max_alpha_step = 2e-2
 
     # cluster transcripts for hierachrical stick breaking
-    root_ref = HClustNode[]
-    t = PolyaTreeTransform(X, approx.treemethod, root_ref)
-
-    # optionally write tree diagnostics
-    if tree_topology_filename !== nothing && !isempty(root_ref)
-        ts_names = [t.metadata.name for t in sample.ts]
-        ts_gene_names = [
-            get(sample.transcript_metadata.gene_name,
-                get(sample.transcript_metadata.gene_id, t.metadata.name, ""), "")
-            for t in sample.ts]
-
-        open(tree_topology_filename, "w") do output
-            println(output, "nodes:")
-            stack = Tuple{Int,HClustNode}[(1, root_ref[1])]
-            next_i = 2
-            while !isempty(stack)
-                i, node = pop!(stack)
-                println(output, "  - id: node", i)
-                println(output, "    read_count: ", node.read_count)
-                # internal node
-                if node.j == 0
-                    println(output, "    child_jaccard: ", node.child_jaccard)
-                    push!(stack, (next_i, node.left_child))
-                    println(output, "    left: node", next_i)
-                    next_i += 1
-                    push!(stack, (next_i, node.right_child))
-                    println(output, "    right: node", next_i)
-                    next_i += 1
-                else
-                    println(output, "    transcript_id: ", ts_names[node.j])
-                    println(output, "    gene_name: ", ts_gene_names[node.j])
-                end
-            end
-        end
-    end
+    tree_nodes_ref = Vector{HClustNode}[]
+    t = PolyaTreeTransform(X, approx.treemethod, tree_nodes_ref)
 
     # Unifom distributed values
     zs0 = Array{Float32}(undef, n-1)
@@ -432,8 +399,44 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
         next!(prog)
     end
 
-    # return merge(flattened_tree(t),
-    #              Dict{String, Vector}("mu" => mu, "omega" => omega, "alpha" => alpha))
+    # optionally write tree diagnostics
+    if tree_topology_filename !== nothing && !isempty(tree_nodes_ref)
+        ts_names = [t.metadata.name for t in sample.ts]
+        ts_gene_names = [
+            get(sample.transcript_metadata.gene_name,
+                get(sample.transcript_metadata.gene_id, t.metadata.name, ""), "")
+            for t in sample.ts]
+
+        nodes = tree_nodes_ref[1]
+        node_ids = IdDict{HClustNode, Int}()
+        for (i, node) in enumerate(nodes)
+            node_ids[node] = i
+        end
+
+        open(tree_topology_filename, "w") do output
+            println(output, "nodes:")
+            k = 1
+
+            for (i, node) in enumerate(nodes)
+                println(output, "  - id: node", i)
+                println(output, "    read_count: ", node.read_count)
+                # internal node
+                if node.j == 0
+                    println(output, "    mu: ", mu[k])
+                    println(output, "    sigma: ", exp(omega[k]))
+                    println(output, "    alpha: ", alpha[k])
+                    println(output, "    child_jaccard: ", node.child_jaccard)
+                    println(output, "    left: node", node_ids[node.left_child])
+                    println(output, "    right: node", node_ids[node.left_child])
+                    k += 1
+                else
+                    println(output, "    transcript_id: ", ts_names[node.j])
+                    println(output, "    gene_name: ", ts_gene_names[node.j])
+                end
+            end
+        end
+    end
+
     return Dict{String, Vector}(
         "node_parent_idxs" => t.index[4,:],
         "node_js"          => t.index[1,:],

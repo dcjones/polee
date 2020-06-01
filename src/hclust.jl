@@ -474,6 +474,22 @@ function rand_list_nodes(n)
 end
 
 
+function list_nodes(n)
+    stack = [HClustNode(j) for j in 1:n]
+    while length(stack) > 1
+        a = pop!(stack)
+        b = pop!(stack)
+        push!(stack, HClustNode(a, b))
+    end
+
+    root = stack[1]
+
+    nodes = order_nodes(root, n)
+    return nodes
+end
+
+
+
 # Some debugging utilities
 function node_label(node)
     if node.j != 0

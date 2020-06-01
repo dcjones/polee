@@ -1,6 +1,7 @@
 
 
-const mkllib = "/opt/intel/compilers_and_libraries_2019.2.187/linux/mkl/lib/intel64_lin/libmkl_rt.so"
+#const mkllib = "/opt/intel/compilers_and_libraries_2019.2.187/linux/mkl/lib/intel64_lin/libmkl_rt.so"
+const mkllib = "/opt/intel/mkl/lib/intel64/libmkl_rt.so"
 
 const LAPACK_ROW_MAJOR = 101
 const LAPACK_COL_MAJOR = 102

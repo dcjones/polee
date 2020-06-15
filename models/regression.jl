@@ -74,6 +74,13 @@ arg_settings.prog = "polee model regression"
             Output file for isoform regression results when 'gene-isoform'
             regression is used. """
         default = "regression-isoform-coefficients.csv"
+    "--extra-params-output"
+        metavar = "filename"
+        help = """
+            Output some additional parameter values to the given file. Mainly
+            useful for debugging.
+            """
+        default = nothing
     "--output-expression"
         metavar = "filename"
         help = "Output expression estimates to the given file."
@@ -376,6 +383,10 @@ function main()
             gene_ids, gene_names, transcript_names,
             min_effect_sizes, mean_effect_sizes,
             qw_isoform_loc, qx_isoform_bias_loc)
+
+        if parsed_args["extra-params-output"] !== nothing
+            regression.write_other_params(parsed_args["extra-params-output"])
+        end
 
         # TODO: debugging by output point estimates.
         # open("x-point-estimates.csv", "w") do output

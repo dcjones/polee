@@ -800,6 +800,24 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
             qx_isoform_bias_loc, qx_isoform_bias_scale, \
             qx_gene_bias_loc, qx_gene_scale
 
+    """
+    Call after fit() to dump some other parameters to a YML file.
+    """
+    def write_other_params(self, output_filename):
+        with open(output_filename, "w") as output:
+            output.write(
+                "qw_isoform_global_scale_variance_loc_var: {}\n".format(
+                    self.qw_isoform_global_scale_variance_loc_var.numpy()))
+            output.write(
+                "qw_isoform_global_scale_variance_softplus_scale_var: {}\n".format(
+                    self.qw_isoform_global_scale_variance_softplus_scale_var.numpy()))
+            output.write(
+                "qw_isoform_global_scale_noncentered_loc_var: {}\n".format(
+                    self.qw_isoform_global_scale_noncentered_loc_var.numpy()))
+            output.write(
+                "qw_isoform_global_scale_noncentered_softplus_scale_var: {}\n".format(
+                    self.qw_isoform_global_scale_noncentered_softplus_scale_var.numpy()))
+
 
 
 class RNASeqJointLinearRegression:

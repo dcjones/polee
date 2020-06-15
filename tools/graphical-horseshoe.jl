@@ -286,8 +286,8 @@ function sample!(block::GHSBlock, τ2, exclusions)
         end
         symmetrize_from_upper!(Cinv)
 
-        #Cinv_chol = cholesky!(Cinv)
-        Cinv_chol = mkl_cholesky!(Cinv)
+        Cinv_chol = cholesky!(Cinv)
+        # Cinv_chol = mkl_cholesky!(Cinv)
         # Cinv_chol = tf_cholesky(sess, Cinv)
 
         randn!(β)
@@ -491,12 +491,13 @@ function sample_gaussian_graphical_model(
 
         # generate zero-centered randoms
         for block in blocks
+            @show block.p
             randn!(block.z)
             copy!(block.A, block.Σ)
             block.A .*= 1.0f0/n
 
-            #U = cholesky!(block.A).U
-            U = mkl_cholesky!(block.A).U
+            U = cholesky!(block.A).U
+            # U = mkl_cholesky!(block.A).U
             mul!(view(μ, block.span), U, block.z)
         end
 

@@ -256,8 +256,8 @@ function write_transcripts(output_filename, transcripts, metadata)
 
     gene_nums = Polee.assign_gene_nums(transcripts, metadata)
 
-    SQLite.execute!(db, "drop table if exists genes")
-    SQLite.execute!(db,
+    SQLite.execute(db, "drop table if exists genes")
+    SQLite.execute(db,
         """
         create table genes
         (
@@ -270,22 +270,22 @@ function write_transcripts(output_filename, transcripts, metadata)
         """)
 
     ins_stmt = SQLite.Stmt(db, "insert into genes values (?1, ?2, ?3, ?4, ?5)")
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for (gene_id, gene_num) in gene_nums
-        SQLite.bind!(ins_stmt, 1, gene_num)
-        SQLite.bind!(ins_stmt, 2, gene_id)
-        SQLite.bind!(ins_stmt, 3, get(metadata.gene_name, gene_id, ""))
-        SQLite.bind!(ins_stmt, 4, get(metadata.gene_biotype, gene_id, ""))
-        SQLite.bind!(ins_stmt, 5, get(metadata.gene_description, gene_id, ""))
-        SQLite.execute!(ins_stmt)
+        SQLite.execute(ins_stmt, (
+            gene_num, gene_id,
+            get(metadata.gene_name, gene_id, ""),
+            get(metadata.gene_biotype, gene_id, ""),
+            get(metadata.gene_description, gene_id, "")))
+
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
     # Transcript Table
     # ----------------
 
-    SQLite.execute!(db, "drop table if exists transcripts")
-    SQLite.execute!(db,
+    SQLite.execute(db, "drop table if exists transcripts")
+    SQLite.execute(db,
         """
         create table transcripts
         (
@@ -301,28 +301,27 @@ function write_transcripts(output_filename, transcripts, metadata)
         """)
     ins_stmt = SQLite.Stmt(db,
         "insert into transcripts values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for t in transcripts
-        SQLite.bind!(ins_stmt, 1, t.metadata.id)
-        SQLite.bind!(ins_stmt, 2, String(t.metadata.name))
-        SQLite.bind!(ins_stmt, 3, get(metadata.transcript_kind, t.metadata.name, ""))
-        SQLite.bind!(ins_stmt, 4, String(t.seqname))
-        SQLite.bind!(ins_stmt, 5,
+        SQLite.execute(ins_stmt, (
+            t.metadata.id,
+            String(t.metadata.name),
+            get(metadata.transcript_kind, t.metadata.name, ""),
+            String(t.seqname),
             t.strand == STRAND_POS ? 1 :
-            t.strand == STRAND_NEG ? -1 : 0)
-        SQLite.bind!(ins_stmt, 6, gene_nums[metadata.gene_id[t.metadata.name]])
-        SQLite.bind!(ins_stmt, 7, get(metadata.transcript_biotype, t.metadata.name, ""))
-        SQLite.bind!(ins_stmt, 8, Polee.exonic_length(t))
-        SQLite.execute!(ins_stmt)
+            t.strand == STRAND_NEG ? -1 : 0,
+            gene_nums[metadata.gene_id[t.metadata.name]],
+            get(metadata.transcript_biotype, t.metadata.name, ""),
+            Polee.exonic_length(t)))
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
 
     # Exon Table
     # ----------
 
-    SQLite.execute!(db, "drop table if exists exons")
-    SQLite.execute!(db,
+    SQLite.execute(db, "drop table if exists exons")
+    SQLite.execute(db,
         """
         create table exons
         (
@@ -333,16 +332,16 @@ function write_transcripts(output_filename, transcripts, metadata)
         """)
 
     ins_stmt = SQLite.Stmt(db, "insert into exons values (?1, ?2, ?3)")
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for t in transcripts
         for exon in t.metadata.exons
-            SQLite.bind!(ins_stmt, 1, t.metadata.id)
-            SQLite.bind!(ins_stmt, 2, exon.first)
-            SQLite.bind!(ins_stmt, 3, exon.last)
-            SQLite.execute!(ins_stmt)
+            SQLite.execute(ins_stmt, (
+                t.metadata.id,
+                exon.first,
+                exon.last))
         end
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
     return db
 end

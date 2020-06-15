@@ -2,33 +2,28 @@
 # Experiment with fitting gaussian graphical model to determine co-regulation of
 # transcripts, splicing, gene expression, or whatever.
 
-polee_dir = joinpath(dirname(@__FILE__), "..")
-
-import Pkg
-Pkg.activate(polee_dir)
-
-using PyCall
-pushfirst!(PyVector(pyimport("sys")["path"]), dirname(@__FILE__))
-@pyimport coregulation as coregulation_py
-
 import Polee
+
+include(joinpath(dirname(pathof(Polee)), "PoleeModel.jl"))
+using .PoleeModel
+
 import YAML
 using Random
 using Statistics
 using Profile
 using SQLite
+using DBInterface
 using StatsBase
 using InteractiveUtils
 using SIMD
 
 include("graphical-horseshoe.jl")
 
-
 function read_splice_feature_names(num_features)
     db = SQLite.DB("genes.db")
 
     feature_names = Array{String}(undef, num_features)
-    for row in SQLite.Query(db, "select * from splicing_features")
+    for row in DBInterface.execute(db, "select * from splicing_features")
         feature_names[row.feature_num] =
             string(row.type, ":", row.seqname, ":",
                 min(row.included_first, row.excluded_first),
@@ -67,7 +62,7 @@ function read_splice_feature_gene_idxs()
         """
 
     for qry in [qry1, qry2]
-        for row in SQLite.Query(db, qry)
+        for row in DBInterface.execute(db, qry)
             push!(splice_gene_idxs, (row.feature_num, row.gene_num))
         end
     end
@@ -416,14 +411,15 @@ function main(use_point_estimates=false)
         end
 
         transcripts_filename =
-            Polee.read_transcripts_filename_from_prepared(first_sample_file)
+            PoleeModel.read_transcripts_filename_from_prepared(first_sample_file)
         println("Using transcripts file: ", transcripts_filename)
     end
 
-    Polee.init_python_modules()
+    init_python_modules()
+    polee_py = pyimport("polee")
 
     ts, ts_metadata = Polee.Transcripts(transcripts_filename, excluded_transcripts)
-    gene_db = Polee.write_transcripts("genes.db", ts, ts_metadata)
+    gene_db = PoleeModel.write_transcripts("genes.db", ts, ts_metadata)
     n = length(ts)
 
     num_features, gene_idxs, transcript_idxs, gene_ids, gene_names =
@@ -467,8 +463,8 @@ function main(use_point_estimates=false)
     else
         max_num_samples = nothing
         batch_size = nothing
-        loaded_samples = Polee.load_samples_from_specification(
-            spec, ts, ts_metadata, max_num_samples, batch_size)
+        loaded_samples = PoleeModel.load_samples_from_specification(
+            spec, ts, ts_metadata, max_num_samples=max_num_samples, batch_size=batch_size)
 
         num_samples, n = size(loaded_samples.x0_values)
 
@@ -476,14 +472,15 @@ function main(use_point_estimates=false)
         gene_idxs = gene_idxs[p]
         transcript_idxs = transcript_idxs[p]
 
-        sess = Polee.tf[:Session]()
-
-        qx_loc, qx_scale = Polee.polee_py[:estimate_feature_expression](
+        qx_loc, qx_scale = polee_py[:approximate_feature_likelihood](
             loaded_samples.init_feed_dict,
             loaded_samples.variables,
             num_samples, num_features, n,
-            gene_idxs .- 1, transcript_idxs .- 1,
-            sess, sigma0=10.0)
+            gene_idxs .- 1, transcript_idxs .- 1)
+
+        scales = estimate_sample_scales(qx_loc)
+        qx_loc .-= scales
+        @show scales
 
         open("qx_params.csv", "w") do output
             println(output, size(qx_loc, 1), ",", size(qx_loc, 2))
@@ -492,25 +489,15 @@ function main(use_point_estimates=false)
             end
         end
 
-        # free up some space
-        Polee.tf[:reset_default_graph]()
-        sess = Polee.tf[:Session]()
-        Polee.create_tensorflow_variables!(loaded_samples)
-
         (num_features,
         splice_feature_idxs, splice_feature_transcript_idxs,
         splice_antifeature_idxs, splice_antifeature_transcript_idxs) =
-            Polee.splicing_features(ts, ts_metadata, gene_db, alt_ends=false)
+            PoleeModel.splicing_features(ts, ts_metadata, gene_db, alt_ends=false)
 
-        splice_feature_indices = hcat(splice_feature_idxs .- 1, splice_feature_transcript_idxs .- 1)
-        splice_antifeature_indices = hcat(splice_antifeature_idxs .- 1, splice_antifeature_transcript_idxs .- 1)
-
-        qx_splice_loc, qx_splice_scale = Polee.polee_py[:estimate_splicing_log_ratios](
-            loaded_samples.init_feed_dict,
-            loaded_samples.variables,
-            num_samples, num_features, n,
-            splice_feature_indices, splice_antifeature_indices,
-            sess, sigma0=10.0)
+        qx_splice_loc, qx_splice_scale = PoleeModel.approximate_splicing_likelihood(
+                loaded_samples, num_features,
+                splice_feature_idxs, splice_feature_transcript_idxs,
+                splice_antifeature_idxs, splice_antifeature_transcript_idxs)
 
         open("qx_splice_params.csv", "w") do output
             println(output, size(qx_splice_loc, 1), ",", size(qx_splice_loc, 2))
@@ -518,8 +505,6 @@ function main(use_point_estimates=false)
                println(output, i, ",", j, ",", qx_splice_loc[i, j], ",", qx_splice_scale[i, j])
             end
         end
-
-        Polee.tf[:reset_default_graph]()
     end
 
     # splice_labels = [string("splice", i) for i in 1:size(qx_splice_loc, 2)]

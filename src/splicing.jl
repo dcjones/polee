@@ -234,8 +234,8 @@ function write_splicing_features_to_gene_db(
     db, cassette_exons, mutex_exons, alt_donacc_sites, retained_introns,
     alt_fp_ends, alt_tp_ends)
 
-    SQLite.execute!(db, "drop table if exists splicing_features")
-    SQLite.execute!(db,
+    SQLite.execute(db, "drop table if exists splicing_features")
+    SQLite.execute(db,
         """
         create table splicing_features
         (
@@ -249,8 +249,8 @@ function write_splicing_features_to_gene_db(
         )
         """)
 
-    SQLite.execute!(db, "drop table if exists splicing_feature_including_transcripts")
-    SQLite.execute!(db,
+    SQLite.execute(db, "drop table if exists splicing_feature_including_transcripts")
+    SQLite.execute(db,
         """
         create table splicing_feature_including_transcripts
         (
@@ -259,8 +259,8 @@ function write_splicing_features_to_gene_db(
         )
         """)
 
-    SQLite.execute!(db, "drop table if exists splicing_feature_excluding_transcripts")
-    SQLite.execute!(db,
+    SQLite.execute(db, "drop table if exists splicing_feature_excluding_transcripts")
+    SQLite.execute(db,
         """
         create table splicing_feature_excluding_transcripts
         (
@@ -279,63 +279,57 @@ function write_splicing_features_to_gene_db(
     feature_id = 0
 
     # cassette exons
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for (intron, flanks) in  cassette_exons
         feature_id += 1
-        SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "cassette_exon")
-        SQLite.bind!(ins_stmt, 3, intron.seqname)
-        SQLite.bind!(ins_stmt, 4, flanks.metadata[1])
-        SQLite.bind!(ins_stmt, 5, flanks.metadata[2])
-        SQLite.bind!(ins_stmt, 6, flanks.first)
-        SQLite.bind!(ins_stmt, 7, flanks.last)
-        SQLite.execute!(ins_stmt)
-
-        SQLite.bind!(inc_ins_stmt, 1, feature_id)
-        SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.execute(ins_stmt, (
+            feature_id,
+            "cassette_exon",
+            intron.seqname,
+            flanks.metadata[1],
+            flanks.metadata[2],
+            flanks.first,
+            flanks.last))
 
         for id in flanks.metadata[3]
-            SQLite.bind!(inc_ins_stmt, 2, id)
-            SQLite.execute!(inc_ins_stmt)
+            SQLite.execute(inc_ins_stmt, (
+                feature_id, id))
         end
 
         for id in intron.metadata
-            SQLite.bind!(exc_ins_stmt, 2, id)
-            SQLite.execute!(exc_ins_stmt)
+            SQLite.execute(exc_ins_stmt, (
+                feature_id, id))
         end
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
     # mutex exons
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for (exon_a, exon_b) in mutex_exons
         feature_id += 1
-        SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "mutex_exon")
-        SQLite.bind!(ins_stmt, 3, exon_a.seqname)
-        SQLite.bind!(ins_stmt, 4, exon_a.first)
-        SQLite.bind!(ins_stmt, 5, exon_a.last)
-        SQLite.bind!(ins_stmt, 6, exon_b.first)
-        SQLite.bind!(ins_stmt, 7, exon_b.last)
-        SQLite.execute!(ins_stmt)
-
-        SQLite.bind!(inc_ins_stmt, 1, feature_id)
-        SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.execute(ins_stmt, (
+            feature_id,
+            "mutex_exon",
+            exon_a.seqname,
+            exon_a.first,
+            exon_a.last,
+            exon_b.first,
+            exon_b.last))
 
         for id in exon_a.metadata
-            SQLite.bind!(inc_ins_stmt, 2, id)
-            SQLite.execute!(inc_ins_stmt)
+            SQLite.execute(inc_ins_stmt, (
+                feature_id, id))
         end
 
         for id in exon_b.metadata
-            SQLite.bind!(exc_ins_stmt, 2, id)
-            SQLite.execute!(exc_ins_stmt)
+            SQLite.execute(exc_ins_stmt, (
+                feature_id, id))
         end
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
     # alt donor/acceptor sites
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for site in alt_donacc_sites
         feature_id += 1
 
@@ -343,115 +337,104 @@ function write_splicing_features_to_gene_db(
             site.strand == STRAND_POS ? "alt_acceptor_site" : "alt_donor_site" :
             site.strand == STRAND_POS ? "alt_donor_site" : "alt_acceptor_site"
 
-        SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, typ)
-        SQLite.bind!(ins_stmt, 3, site.seqname)
-        SQLite.bind!(ins_stmt, 4, site.first)
-        SQLite.bind!(ins_stmt, 5, site.last)
-        SQLite.bind!(ins_stmt, 6, site.metadata[1])
-        SQLite.bind!(ins_stmt, 7, site.metadata[2])
-        SQLite.execute!(ins_stmt)
-
-        SQLite.bind!(inc_ins_stmt, 1, feature_id)
-        SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.execute(ins_stmt, (
+            feature_id,
+            typ,
+            site.seqname,
+            site.first,
+            site.last,
+            site.metadata[1],
+            site.metadata[2]))
 
         for id in site.metadata[3]
-            SQLite.bind!(inc_ins_stmt, 2, id)
-            SQLite.execute!(inc_ins_stmt)
+            SQLite.execute(inc_ins_stmt, (
+                feature_id, id))
         end
 
         for id in site.metadata[4]
-            SQLite.bind!(exc_ins_stmt, 2, id)
-            SQLite.execute!(exc_ins_stmt)
+            SQLite.execute(exc_ins_stmt, (
+                feature_id, id))
         end
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
     # retained intron
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for retained_intron in retained_introns
         feature_id += 1
 
-        SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "retained_intron")
-        SQLite.bind!(ins_stmt, 3, retained_intron.seqname)
-        SQLite.bind!(ins_stmt, 4, retained_intron.first)
-        SQLite.bind!(ins_stmt, 5, retained_intron.last)
-        SQLite.bind!(ins_stmt, 6, -1)
-        SQLite.bind!(ins_stmt, 7, -1)
-        SQLite.execute!(ins_stmt)
-
-        SQLite.bind!(inc_ins_stmt, 1, feature_id)
-        SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.execute(ins_stmt, (
+            feature_id,
+            "retained_intron",
+            retained_intron.seqname,
+            retained_intron.first,
+            retained_intron.last,
+            -1,
+            -1))
 
         for id in retained_intron.metadata[1]
-            SQLite.bind!(inc_ins_stmt, 2, id)
-            SQLite.execute!(inc_ins_stmt)
+            SQLite.execute(inc_ins_stmt, (
+                feature_id, id))
         end
 
         for id in retained_intron.metadata[2]
-            SQLite.bind!(exc_ins_stmt, 2, id)
-            SQLite.execute!(exc_ins_stmt)
+            SQLite.execute(exc_ins_stmt, (
+                feature_id, id))
         end
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
     # alt 5' ends
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for alt_fp_end in alt_fp_ends
         feature_id += 1
 
-        SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "alt_5p_end")
-        SQLite.bind!(ins_stmt, 3, alt_fp_end.seqname)
-        SQLite.bind!(ins_stmt, 4, alt_fp_end.first)
-        SQLite.bind!(ins_stmt, 5, alt_fp_end.last)
-        SQLite.bind!(ins_stmt, 6, -1)
-        SQLite.bind!(ins_stmt, 7, -1)
-        SQLite.execute!(ins_stmt)
-
-        SQLite.bind!(inc_ins_stmt, 1, feature_id)
-        SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.execute(ins_stmt, (
+            feature_id,
+            "alt_5p_end",
+            alt_fp_end.seqname,
+            alt_fp_end.first,
+            alt_fp_end.last,
+            -1,
+            -1))
 
         for id in alt_fp_end.metadata[3]
-            SQLite.bind!(inc_ins_stmt, 2, id)
-            SQLite.execute!(inc_ins_stmt)
+            SQLite.execute(inc_ins_stmt, (
+                feature_id, id))
         end
 
         for id in alt_fp_end.metadata[4]
-            SQLite.bind!(exc_ins_stmt, 2, id)
-            SQLite.execute!(exc_ins_stmt)
+            SQLite.execute(exc_ins_stmt, (
+                feature_id, id))
         end
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 
     # alt 3' ends
-    SQLite.execute!(db, "begin transaction")
+    SQLite.execute(db, "begin transaction")
     for alt_tp_end in alt_tp_ends
         feature_id += 1
 
-        SQLite.bind!(ins_stmt, 1, feature_id)
-        SQLite.bind!(ins_stmt, 2, "alt_3p_end")
-        SQLite.bind!(ins_stmt, 3, alt_tp_end.seqname)
-        SQLite.bind!(ins_stmt, 4, alt_tp_end.first)
-        SQLite.bind!(ins_stmt, 5, alt_tp_end.last)
-        SQLite.bind!(ins_stmt, 6, -1)
-        SQLite.bind!(ins_stmt, 7, -1)
-        SQLite.execute!(ins_stmt)
-
-        SQLite.bind!(inc_ins_stmt, 1, feature_id)
-        SQLite.bind!(exc_ins_stmt, 1, feature_id)
+        SQLite.execute(ins_stmt, (
+            feature_id,
+            "alt_3p_end",
+            alt_tp_end.seqname,
+            alt_tp_end.first,
+            alt_tp_end.last,
+            -1,
+            -1))
 
         for id in alt_tp_end.metadata[3]
-            SQLite.bind!(inc_ins_stmt, 2, id)
-            SQLite.execute!(inc_ins_stmt)
+            SQLite.execute(inc_ins_stmt, (
+                feature_id, id))
         end
 
         for id in alt_tp_end.metadata[4]
-            SQLite.bind!(exc_ins_stmt, 2, id)
-            SQLite.execute!(exc_ins_stmt)
+            SQLite.execute(exc_ins_stmt, (
+                feature_id, id))
+
         end
     end
-    SQLite.execute!(db, "end transaction")
+    SQLite.execute(db, "end transaction")
 end
 

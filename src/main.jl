@@ -47,7 +47,7 @@ const arg_settings = ArgParseSettings()
 arg_settings.prog = "polee"
 arg_settings.commands_are_required = true
 
-@add_arg_table arg_settings begin
+@add_arg_table! arg_settings begin
     "prep"
         help = "Approximate likelihood for every sample in an experiment."
         action = :command
@@ -71,7 +71,7 @@ arg_settings.commands_are_required = true
         action = :command
 end
 
-@add_arg_table arg_settings["prep"] begin
+@add_arg_table! arg_settings["prep"] begin
     "experiment"
         metavar = "experiment.yml"
         help = "Experiment specification file."
@@ -85,7 +85,7 @@ end
         required = false
 end
 
-@add_arg_table arg_settings["prep-sample"] begin
+@add_arg_table! arg_settings["prep-sample"] begin
     "--output", "-o"
         metavar = "prepared-sample.h5"
         help = "Output filename."
@@ -172,7 +172,7 @@ end
         required = false
 end
 
-@add_arg_table arg_settings["sample"] begin
+@add_arg_table! arg_settings["sample"] begin
     "--output", "-o"
         arg_type = String
         default = "post-mean.csv"
@@ -220,7 +220,7 @@ end
         required = true
 end
 
-@add_arg_table arg_settings["debug-sample"] begin
+@add_arg_table! arg_settings["debug-sample"] begin
     "--output", "-o"
     "--kallisto"
         help = """Output samples in a format compatible with kallisto,
@@ -262,7 +262,7 @@ end
         required = true
 end
 
-@add_arg_table arg_settings["debug-optimize"] begin
+@add_arg_table! arg_settings["debug-optimize"] begin
     "--output", "-o"
         metavar = "estimates.csv"
         default = "estimates.csv"

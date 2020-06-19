@@ -71,7 +71,7 @@ function main()
     test_count = parse(Int, ARGS[5])
     Random.seed!(hash((seed, train_count, test_count)))
     train_filename = ARGS[6]
-    test_filename = ARGS[7]
+    test_filename = length(ARGS) >= 7 ? ARGS[7] : nothing
 
     spec = YAML.load_file(experiment_filename)
 
@@ -165,14 +165,19 @@ function main()
             samples[idx[end-factor_testing_counts[factor_value]+1:end]])
     end
 
-    spec["samples"] = training_samples
-    open(train_filename, "w") do output
-        print_yaml(output, spec)
+    if !isempty(training_samples)
+        spec["samples"] = training_samples
+        @show train_filename
+        open(train_filename, "w") do output
+            print_yaml(output, spec)
+        end
     end
 
-    spec["samples"] = testing_samples
-    open(test_filename, "w") do output
-        print_yaml(output, spec)
+    if !isempty(testing_samples)
+        spec["samples"] = testing_samples
+        open(test_filename, "w") do output
+            print_yaml(output, spec)
+        end
     end
 end
 

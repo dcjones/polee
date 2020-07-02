@@ -5,6 +5,7 @@ module Polee
 using GenomicFeatures
 using BioAlignments
 using BioSequences
+using FASTX
 using DataStructures
 using Distributions
 using HDF5

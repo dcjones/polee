@@ -18,7 +18,7 @@ import SQLite
 
 const arg_settings = ArgParseSettings()
 arg_settings.prog = "polee model regression"
-@add_arg_table arg_settings begin
+@add_arg_table! arg_settings begin
     "--feature"
         metavar = "F"
         action = :store_arg

@@ -18,14 +18,14 @@ function read_transcript_sequences_from_fasta!(ts, filename)
     while tryread!(reader, entry)
         seqname = FASTA.identifier(entry)
         if length(entry.sequence) > 100000
-            ProgressMeter.update!(prog, position(reader.state.stream.source))
+            ProgressMeter.update!(prog, position(reader.state.stream))
         end
 
         if haskey(ts.trees, seqname)
             push!(seen_seqs, seqname)
             entryseq = FASTA.sequence(entry)
             for t in ts.trees[seqname]
-                seq = DNASequence()
+                seq = LongDNASeq()
                 for exon in t.metadata.exons
                     if exon.last <= length(entryseq)
                         append!(seq, entryseq[exon.first:exon.last])
@@ -64,10 +64,10 @@ function read_transcript_sequences_from_twobit!(ts, filename)
         end
 
         for t in tree
-            seq = DNASequence()
+            seq = LongDNASeq()
             for exon in t.metadata.exons
                 if exon.last <= length(refseq)
-                    append!(seq, DNASequence(entryseq[exon.first:exon.last]))
+                    append!(seq, LongDNASeq(entryseq[exon.first:exon.last]))
                 end
             end
             if t.strand == STRAND_NEG

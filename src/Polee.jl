@@ -14,7 +14,7 @@ using StatsBase
 using Nullables
 using Logging
 using SpecialFunctions: beta, digamma # used by kumaraswamy
-import XAM: BAM
+import XAM: BAM, SAM
 import GFF3
 import IntervalTrees
 import SHA

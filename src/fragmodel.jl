@@ -307,8 +307,8 @@ function BiasedFragModel(
         open("bias-foreground.csv", "w") do output
             for example in bias_foreground_examples
                 println(
-                    output, DNASequence(example.left_seq),
-                    ',', DNASequence(example.right_seq),
+                    output, LongDNASeq(example.left_seq),
+                    ',', LongDNASeq(example.right_seq),
                     ',', example.frag_gc,
                     ',', example.tpdist,
                     ',', example.fpdist,
@@ -324,8 +324,8 @@ function BiasedFragModel(
         open("bias-background.csv", "w") do output
             for example in bias_background_examples
                 println(
-                    output, DNASequence(example.left_seq),
-                    ',', DNASequence(example.right_seq),
+                    output, LongDNASeq(example.left_seq),
+                    ',', LongDNASeq(example.right_seq),
                     ',', example.frag_gc,
                     ',', example.tpdist,
                     ',', example.fpdist,

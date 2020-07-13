@@ -2,14 +2,14 @@
 # Polee
 
 Polee is an alternative methodology for the analysis of RNA-Seq data. A lot
-of RNA-Seq analysis does not consider the full likelihood, but instead takes
+of RNA-Seq analyses do not consider the full likelihood, but instead take
 a two-step approach of first estimating transcript or gene expression then
 treating those estimates as observations in subsequent analysis. This is more
 efficient than a full probabilistic model encompassing all the reads in the
 experiment, but does not fully account for uncertainty. To overcome this
-shortcoming we make a compact and efficient approximation of the likelihood
-function, and substitute it in place of the real thing. The end result is
-more accurate analysis of RNA-Seq (e.g. differential expression) while
+shortcoming Polee makes a compact and efficient approximation of the likelihood
+function, and substitutes it in place of the real thing. The end result is
+more accurate analysis of RNA-Seq (e.g., differential expression) while
 remaining tractable on inexpensive computers.
 
 
@@ -20,17 +20,19 @@ primarily as a command line script, so there are a couple extra steps involved.
 
 First install the julia package like so
 ```julia
-using Pkg
+import Pkg
 Pkg.add(PackageSpec(name="Polee", url="https://github.com/dcjones/polee.git"))
 ```
 
 Then install the command line script. By default this will put it in
 `$HOME/bin`, but an alternative path can be passed to the `install_polee_script` function.
 ```julia
-using Polee
-install_polee_script()
-```
+import Polee
+Polee.install()
 
+# Install to an alternative location
+Polee.install("/usr/local/bin")
+```
 
 # Using
 
@@ -72,6 +74,23 @@ Polee models are implemented in TensorFlow. You should have the the
 tensorflow python library installed. They are faster with GPU, but this isn't
 at all necessary.
 
+TensorFlow is called from Julia through the [PyCall](https://github.com/JuliaPy/PyCall.jl)
+package, so TensorFlow has to be installed for the same version of python being
+used by PyCall.
+
+Polee also uses a custom TensorFlow operation written in C++. If all goes well this will get
+built automatically when needed.
+
+This can fail if no C++ compiler is installed or if you have a weird version
+of g++ (e.g., in some versions of CentOS). In the latter case, you might see
+an error like
+```
+tensorflow.python.framework.errors_impl.NotFoundError: ./hsb_ops.so: undefined symbol: _ZN10tensorflow12OpDefBuilder5InputESs
+```
+The only way to resolve this seems to be installing a non-weird, relatively
+recent version of g++.
+
+
 ### Writing experiment specification
 
 To give models a (potentially large) list of samples along with accompanying
@@ -111,7 +130,7 @@ samples. Each sample has a `file` entry pointing to the file that the
 `prep-sample` command produced. Each sample also a has a `name`, and list of
 named `factors` that we might want to regress over.
 
-### Calling transcript differential expression
+### Detecting differential transcript expression
 
 With samples prepared and listed in a YAML file (let's call it
 `experiment.yml`), we can detect differential expression.
@@ -154,17 +173,26 @@ default confidence, but it can be modified with the
 `--min-effect-size-coverage 0.25` the results will report a minimum effect
 size at 75%.
 
-The `lower_credible` and `upper_credible` give a credible interval on the log2 fold-change. By default this is a 95% credible interval, but can be changes with
-the `--lower-credible` and `--upper-credible` options.
+The `lower_credible` and `upper_credible` give a credible interval on the
+log2 fold-change. By default this is a 95% credible interval, but can be
+changes with the `--lower-credible` and `--upper-credible` options.
 
-### Other features
+### Detecting differential gene expression and isoform usage
 
-Gene differential expression and regression can also be run by passing the
-`--feature gene` option. Somewhat experimental, there are also regression
-models to look at splicing in particular. The `gene-isoform` features does
-simultaneous regression over gene expression and isoform mixture, and
-`splice-feature` will look specifically at differential splicing features
-like cassette exons. More documentation on these methods will be forthcoming.
+Passing `--feature gene-isoform` to the regression model considers
+simultaneously changes in gene expression and isoform usage. If genome
+alignments and a GFF3 file were used, assignments of transcripts to genes
+uses those annotations. If transcriptome alignmennts were used, you can use the
+the `--gene-annotations` or `--gene-pattern` to define genes.
+
+This regression model has two outputs. The file name given to `--output` will
+be gene differential expression, which looks much like the output from
+transcript regression.
+
+The second file output to `--isoform-output` will give the output of
+regression on isoform usage, independent of gene expression. This part of the
+model is essentiall logistic regression, so effect sizes will be on a logit scale,
+and be relative to the other isoforms of the gene.
 
 # Interoperating with sleuth
 

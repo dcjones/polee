@@ -29,8 +29,6 @@ using Random
 # using Profile
 # using InteractiveUtils
 
-export install_polee_script
-
 """
 More convenient interface to Bio.jl read! functions.
 """
@@ -69,7 +67,7 @@ copy the script to \$HOME/bin.
 
 By default it will not overwrite an existing file. Pass 'force=true' to overwrite.
 """
-function install_polee_script(dest_path=joinpath(ENV["HOME"], "bin"); force=false)
+function install(dest_path=joinpath(ENV["HOME"], "bin"); force=false)
     src = joinpath(dirname(pathof(Polee)), "..", "polee")
     dest = joinpath(dest_path, "polee")
     cp(src, dest, force=force)

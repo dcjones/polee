@@ -288,7 +288,7 @@ end
 end
 
 
-function main(args=nothing)
+function main(args::Union{Nothing, Dict{String, Any}}=nothing)
     if args === nothing
         parsed_args = parse_args(arg_settings)
     else

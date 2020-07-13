@@ -29,6 +29,7 @@ using Random
 # using Profile
 # using InteractiveUtils
 
+
 """
 More convenient interface to Bio.jl read! functions.
 """
@@ -98,5 +99,7 @@ include("evaluate.jl")
 include("approx-sampler.jl")
 
 include("main.jl")
+
+include("PoleeModel.jl")
 
 end # module Polee

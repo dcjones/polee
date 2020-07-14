@@ -1,5 +1,4 @@
 
 import Polee
-using Polee.PoleeModel
 
-PoleeModel.Regression.main()
+Polee.Regression.main()

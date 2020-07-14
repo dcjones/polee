@@ -101,5 +101,6 @@ include("approx-sampler.jl")
 include("main.jl")
 
 include("PoleeModel.jl")
+include("regression.jl")
 
 end # module Polee

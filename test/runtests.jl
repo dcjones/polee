@@ -143,11 +143,12 @@ end
 
 @testset "Transcript Regression" begin
     args = String[
-        "model", "regression",
-        "--feature", "transcripts",
+        "--feature", "transcript",
         "--factors", "tissue",
-        "dataset/experiment.yml"]
-    Polee.main(args)
+        "experiment.yml"]
+    cd("dataset")
+    Polee.Regression.main(args)
+    cd("..")
 end
 
 # TODO: some tests for Transcripts

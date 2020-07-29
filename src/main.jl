@@ -108,6 +108,9 @@ end
     "--tree-method"
         help = "Tree building heurustic for polya tree transform. (Don't mess with this either)"
         default = "cluster"
+    "--ptt-tree"
+        help = "Use an existing tree topology"
+        default = nothing
     "--no-bias"
         help = "Disable bias correction model."
         action = :store_true
@@ -606,7 +609,8 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
             approx, sample, parsed_args["output"],
             gene_noninformative=false,
             use_efflen_jacobian=!parsed_args["no-efflen-jacobian"],
-            tree_topology_filename=parsed_args["write-tree-topology"])
+            tree_topology_input_filename=parsed_args["ptt-tree"],
+            tree_topology_output_filename=parsed_args["write-tree-topology"])
     end
 end
 

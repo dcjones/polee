@@ -33,7 +33,8 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
                                 sample::RNASeqSample, output_filename::String;
                                 gene_noninformative::Bool=false,
                                 use_efflen_jacobian::Bool=true,
-                                tree_topology_filename=nothing)
+                                tree_topology_input_filename=nothing,
+                                tree_topology_output_filename=nothing)
     @tic()
     if !isa(approximation, LogitSkewNormalPTTApprox)
         @warn "Using alternative approximation. Some features not supported."
@@ -42,7 +43,8 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
         params = approximate_likelihood(
             approximation, sample, gene_noninformative=gene_noninformative,
             use_efflen_jacobian=use_efflen_jacobian,
-            tree_topology_filename=tree_topology_filename)
+            tree_topology_input_filename=tree_topology_input_filename,
+            tree_topology_output_filename=tree_topology_output_filename)
     end
     @toc("Approximating likelihood")
 
@@ -229,8 +231,8 @@ end
 function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
                                 sample::RNASeqSample,
                                 ::Val{gradonly}=Val(true);
-                                # ::Val{gradonly}=Val(false);
-                                tree_topology_filename=nothing,
+                                tree_topology_input_filename=nothing,
+                                tree_topology_output_filename=nothing,
                                 gene_noninformative::Bool=false,
                                 use_efflen_jacobian::Bool=true) where {gradonly}
     X = sample.X
@@ -258,7 +260,16 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
 
     # cluster transcripts for hierachrical stick breaking
     tree_nodes_ref = Vector{HClustNode}[]
-    t = PolyaTreeTransform(X, approx.treemethod, tree_nodes_ref)
+
+    if tree_topology_input_filename !== nothing
+        input = h5open(tree_topology_input_filename)
+        t = PolyaTreeTransform(
+            read(input["node_parent_idxs"]),
+            read(input["node_js"]))
+        close(input)
+    else
+        t = PolyaTreeTransform(X, approx.treemethod, tree_nodes_ref)
+    end
 
     # Unifom distributed values
     zs0 = Array{Float32}(undef, n-1)
@@ -400,7 +411,7 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
     end
 
     # optionally write tree diagnostics
-    if tree_topology_filename !== nothing && !isempty(tree_nodes_ref)
+    if tree_topology_output_filename !== nothing && !isempty(tree_nodes_ref)
         ts_names = [t.metadata.name for t in sample.ts]
         ts_gene_names = [
             get(sample.transcript_metadata.gene_name,
@@ -413,7 +424,7 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
             node_ids[node] = i
         end
 
-        open(tree_topology_filename, "w") do output
+        open(tree_topology_output_filename, "w") do output
             println(output, "nodes:")
             k = 1
 

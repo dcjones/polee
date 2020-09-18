@@ -21,7 +21,7 @@ primarily as a command line script, so there are a couple extra steps involved.
 First install the julia package like so
 ```julia
 import Pkg
-Pkg.add(PackageSpec(name="Polee", url="https://github.com/dcjones/polee.git"))
+Pkg.add(Pkg.PackageSpec(name="Polee", url="https://github.com/dcjones/polee.git"))
 ```
 
 Then install the command line script. By default this will put it in

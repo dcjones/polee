@@ -14,6 +14,7 @@ using StatsBase
 using Nullables
 using Logging
 using SpecialFunctions: beta, digamma # used by kumaraswamy
+using SQLite
 import XAM: BAM, SAM
 import GFF3
 import IntervalTrees

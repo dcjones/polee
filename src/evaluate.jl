@@ -288,10 +288,11 @@ end
 function read_transcript_gene_nums(genes_db_filename)
     db = SQLite.DB(genes_db_filename)
 
-    results = SQLite.query(db, "select transcript_num, gene_num from transcripts")
+    results = DBInterface.execute(db, "select transcript_num, gene_num from transcripts")
     transcript_gene_num = Dict{Int, Int}()
-    for (transcript_num, gene_num) in zip(results[:transcript_num], results[:gene_num])
-        transcript_gene_num[get(transcript_num)] = get(gene_num)
+    #for (transcript_num, gene_num) in zip(results[:transcript_num], results[:gene_num])
+    for (transcript_num, gene_num) in results
+        transcript_gene_num[transcript_num] = gene_num
     end
 
     return transcript_gene_num

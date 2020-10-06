@@ -1,9 +1,6 @@
 
-import Pkg; Pkg.activate(joinpath(@__DIR__, ".."))
 import Polee
-
-include(joinpath(dirname(pathof(Polee)), "PoleeModel.jl"))
-using .PoleeModel
+using Polee.PoleeModel
 
 using ArgParse
 using YAML
@@ -18,7 +15,6 @@ using LinearAlgebra: I
 using HDF5
 
 include("kallisto.jl")
-
 
 const arg_settings = ArgParseSettings()
 arg_settings.prog = "polee model classify"

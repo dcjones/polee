@@ -256,6 +256,11 @@ end
     "--no-efflen"
         help = "Do not do effective length transformation."
         action = :store_true
+    "--seed"
+        metavar = "N"
+        help = "RNG seed"
+        default = 123456789
+        arg_type = Int
     "likelihood-matrix"
         metavar = "likelihood-matrix.h5"
         help = """
@@ -778,6 +783,8 @@ function polee_debug_sample(parsed_args::Dict{String, Any})
         ts, ts_metadata = read_transcripts_from_fasta(
             parsed_args["sequences"], Set{String}())
     end
+
+    Random.seed!(parsed_args["seed"])
 
     output_filename =
         parsed_args["output"] !== nothing ? parsed_args["output"] :

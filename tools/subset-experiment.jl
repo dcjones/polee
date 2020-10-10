@@ -62,9 +62,11 @@ function main()
 
     samples_subset = Any[]
     for sample in spec["samples"]
-        if haskey(sample, "factors") && haskey(sample["factors"], factor) &&
-                sample["factors"][factor] ∈ values
-            push!(samples_subset, sample)
+        if haskey(sample, "factors") && haskey(sample["factors"], factor)
+            value = string(sample["factors"][factor])
+            if value ∈ values
+                push!(samples_subset, sample)
+            end
         end
     end
 

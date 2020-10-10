@@ -16,8 +16,7 @@ class RNASeqPCA(polee_regression.RNASeqLinearRegression):
             self, vars, x_init,
             sample_scales, use_point_estimates,
             latent_dimensionality=2,
-            kernel_regression_degree=15, kernel_regression_bandwidth=1.0,
-            niter=6000):
+            kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
 
         self.latent_dimensionality = latent_dimensionality
         num_samples = x_init.shape[0]
@@ -45,7 +44,7 @@ class RNASeqPCA(polee_regression.RNASeqLinearRegression):
         super(RNASeqPCA, self).__init__(
             self.qz_loc_var, x_init, likelihood_model, surrogate_likelihood_model,
             x_bias_mu0, x_bias_sigma0, x_scale_hinges, sample_scales,
-            use_point_estimates,
+            True, 1e-3, use_point_estimates,
             kernel_regression_degree, kernel_regression_bandwidth)
 
         self.qw_loc_var.assign(0.01 * tf.random.normal([self.num_factors, self.num_features]))
@@ -98,3 +97,83 @@ class RNASeqPCA(polee_regression.RNASeqLinearRegression):
     """
     def generalize(sels):
         pass
+
+
+class RNASeqIsoformPCA(polee_regression.RNASeqGeneIsoformLinearRegression):
+    def __init__(
+            self,
+            vars, feature_idxs, transcript_idxs, x_gene_init, x_isoform_init,
+            feature_sizes, sample_scales, use_point_estimates,
+            use_distortion, scale_penalty, latent_dimensionality=2,
+            kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
+
+        self.latent_dimensionality = latent_dimensionality
+        num_samples = x_gene_init.shape[0]
+        # num_features = x_init.shape[1]
+
+        self.qz_isoform_loc_var = tf.Variable(tf.zeros([num_samples, latent_dimensionality]))
+        # self.qz_isoform_softplus_scale_var = tf.Variable(tf.fill([num_samples, latent_dimensionality], -1.0))
+
+        # To focus on isoforms, we use a high dimensionality latent space for gene expression
+        self.gene_latent_dimensionality = 20
+        self.qz_gene_loc_var = tf.Variable(tf.zeros([num_samples, self.gene_latent_dimensionality]))
+        # self.qz_gene_softplus_scale_var = tf.Variable(tf.fill([num_samples, self.gene_latent_dimensionality], -1.0))
+
+        super(RNASeqIsoformPCA, self).__init__(
+            vars,
+            feature_idxs, transcript_idxs,
+            x_gene_init, x_isoform_init,
+            feature_sizes,
+            self.qz_gene_loc_var, self.qz_isoform_loc_var,
+            sample_scales,
+            use_distortion, scale_penalty,
+            use_point_estimates,
+            kernel_regression_degree, kernel_regression_bandwidth)
+
+    def latent_space_model_fn(self):
+        z_isoform = yield JDCRoot(Independent(tfd.Normal(
+            loc=tf.zeros([self.num_samples, self.latent_dimensionality]),
+            scale=1.0)))
+
+        z_gene = yield JDCRoot(Independent(tfd.Normal(
+            loc=tf.zeros([self.num_samples, self.gene_latent_dimensionality]),
+            scale=1.0)))
+
+        return z_gene
+
+    def surrogate_latent_space_model_fn(self, qz_gene_loc_var, qz_isoform_loc_var):
+        qz_isoform = yield JDCRoot(Independent(tfd.Deterministic(loc=qz_isoform_loc_var)))
+        qz_gene = yield JDCRoot(Independent(tfd.Deterministic(loc=qz_gene_loc_var)))
+
+    def fit(self, niter):
+        model = tfd.JointDistributionCoroutine(
+            lambda: self.model_fn(
+                self.latent_space_model_fn,
+                self.likelihood_model,
+                self.sample_scales))
+
+        variational_model = tfd.JointDistributionCoroutine(
+            lambda: self.variational_model_fn(
+                lambda: self.surrogate_latent_space_model_fn(
+                    self.qz_gene_loc_var,
+                    self.qz_isoform_loc_var),
+                self.surrogate_likelihood_model))
+
+        step_num = tf.Variable(1, trainable=False)
+
+        @tf.function
+        def trace_fn(loss, grad, vars):
+            if tf.math.mod(step_num, 200) == 0:
+                tf.print("[", step_num, "/", niter, "]  loss: ", loss, sep='')
+            step_num.assign(step_num + 1)
+            return loss
+
+        trace = tfp.vi.fit_surrogate_posterior(
+            target_log_prob_fn=lambda *args: model.log_prob(args),
+            surrogate_posterior=variational_model,
+            optimizer=tf.optimizers.Adam(learning_rate=1e-3),
+            sample_size=1,
+            num_steps=niter,
+            trace_fn=trace_fn)
+
+        return (self.qz_isoform_loc_var.numpy(), self.qw_isoform_loc_var.numpy())

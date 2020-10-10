@@ -361,7 +361,7 @@ module Regression
             regression = polee_regression_py.RNASeqGeneIsoformLinearRegression(
                     loaded_samples.variables,
                     gene_idxs, transcript_idxs, x_gene_init, x_isoform_init,
-                    gene_sizes, factor_matrix, sample_scales,
+                    gene_sizes, factor_matrix, factor_matrix, sample_scales,
                     !parsed_args["no-distortion"], parsed_args["scale-penalty"],
                     use_point_estimates)
 

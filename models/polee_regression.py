@@ -178,8 +178,8 @@ class RNASeqLinearRegression:
                 scale=0.1))
 
             w_distortion = tf.matmul(
-                tf.expand_dims(w_distortion_c, 1),
-                tf.expand_dims(weights, 0)) # [num_factors, num_features]
+                w_distortion_c,
+                weights)
 
             x_loc = tf.matmul(F, w + w_distortion) + x_bias
         else:
@@ -654,7 +654,7 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
         feature_idxs, transcript_idxs,
         x_gene_init, x_isoform_init,
         feature_sizes,
-        F_arr, sample_scales,
+        F_gene_arr, F_isoform_arr, sample_scales,
         use_distortion, scale_penalty,
         use_point_estimates,
         kernel_regression_degree=15, kernel_regression_bandwidth=1.0):
@@ -663,8 +663,18 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
         num_features = x_gene_init.shape[1]
         n = np.max(transcript_idxs)
 
-        F = tf.constant(F_arr, dtype=tf.float32)
-        num_factors = int(F.shape[1])
+        if isinstance(F_gene_arr, tf.Variable):
+            F_gene = F_gene_arr
+        else:
+            F_gene = tf.constant(F_gene_arr, dtype=tf.float32)
+
+        if isinstance(F_isoform_arr, tf.Variable):
+            F_isoform = F_isoform_arr
+        else:
+            F_isoform = tf.constant(F_isoform_arr, dtype=tf.float32)
+
+        num_gene_factors = int(F_gene.shape[1])
+        num_isoform_factors = int(F_isoform.shape[1])
 
         x_gene_init_mean = np.mean(x_gene_init, axis=0)
         x_gene_scale_hinges = tf.constant(
@@ -684,15 +694,15 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
             w_isoform_global_scale = w_isoform_global_scale_noncentered * tf.sqrt(w_isoform_global_scale_variance)
 
             w_isoform_local_scale_variance = yield JDCRoot(Independent(tfd.InverseGamma(
-                concentration=tf.fill([num_factors, n], 0.5),
-                scale=tf.fill([num_factors, n], 0.5))))
+                concentration=tf.fill([num_isoform_factors, n], 0.5),
+                scale=tf.fill([num_isoform_factors, n], 0.5))))
             w_isoform_local_scale_noncentered = yield JDCRoot(Independent(tfd.HalfNormal(
-                scale=tf.ones([num_factors, n]))))
+                scale=tf.ones([num_isoform_factors, n]))))
             w_isoform_local_scale = w_isoform_local_scale_noncentered * tf.sqrt(w_isoform_local_scale_variance)
 
             # isoform mixture regression coefficients
             w_isoform = yield Independent(tfd.Normal(
-                loc=tf.zeros([num_factors, n]),
+                loc=tf.zeros([num_isoform_factors, n]),
                 # scale=w_isoform_local_scale * w_isoform_global_scale))
                 scale=w_isoform_local_scale))
                 # scale=w_isoform_global_scale))
@@ -701,13 +711,15 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
                 loc=tf.zeros([n]),
                 scale=100.0)))
 
-            x_isoform_loc = x_isoform_bias + tf.matmul(F, w_isoform)
+            x_isoform_loc = x_isoform_bias + tf.matmul(F_isoform, w_isoform)
 
             x_isoform = yield JDCRoot(Independent(tfd.Normal(
                 loc=x_isoform_loc,
                 scale=tf.fill([num_samples, n], 1.0))))
 
             if not use_point_estimates:
+                print(x_gene)
+                print(x_isoform)
                 likelihood = yield tfd.Independent(RNASeqGeneApproxLikelihoodDist(
                     vars, feature_idxs, transcript_idxs, feature_sizes, x_gene, x_isoform))
 
@@ -718,19 +730,19 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
         self.qw_isoform_global_scale_noncentered_softplus_scale_var = tf.Variable(-1.0)
 
         self.qw_isoform_local_scale_variance_loc_var = tf.Variable(
-            tf.fill([num_factors, n], 0.0))
+            tf.fill([num_isoform_factors, n], 0.0))
         self.qw_isoform_local_scale_variance_softplus_scale_var = tf.Variable(
-            tf.fill([num_factors, n], -1.0))
+            tf.fill([num_isoform_factors, n], -1.0))
 
         self.qw_isoform_local_scale_noncentered_loc_var = tf.Variable(
-            tf.fill([num_factors, n], 0.0))
+            tf.fill([num_isoform_factors, n], 0.0))
         self.qw_isoform_local_scale_noncentered_softplus_scale_var = tf.Variable(
-            tf.fill([num_factors, n], -1.0))
+            tf.fill([num_isoform_factors, n], -1.0))
 
         self.qw_isoform_loc_var = tf.Variable(
-            tf.fill([num_factors, n], 0.0))
+            tf.fill([num_isoform_factors, n], 0.0))
         self.qw_isoform_softplus_scale_var = tf.Variable(
-            tf.fill([num_factors, n], -2.0))
+            tf.fill([num_isoform_factors, n], -2.0))
 
         self.qx_isoform_bias_loc_var = tf.Variable(np.mean(x_isoform_init, axis=0, keepdims=True))
         self.qx_isoform_bias_softplus_scale_var = tf.Variable(tf.fill([1, n], -2.0))
@@ -778,7 +790,7 @@ class RNASeqGeneIsoformLinearRegression(RNASeqLinearRegression):
                     tfd.Deterministic(tf.zeros([num_samples, 0]))))
 
         super(RNASeqGeneIsoformLinearRegression, self).__init__(
-            F, x_gene_init, likelihood_model, surrogate_likelihood_model,
+            F_gene, x_gene_init, likelihood_model, surrogate_likelihood_model,
             x_gene_bias_mu0, x_gene_bias_sigma0, x_gene_scale_hinges, sample_scales,
             use_distortion, scale_penalty, use_point_estimates,
             kernel_regression_degree, kernel_regression_bandwidth)

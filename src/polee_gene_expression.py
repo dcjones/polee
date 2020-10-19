@@ -46,14 +46,14 @@ class RNASeqGeneApproxLikelihoodDist(tfp.distributions.Distribution):
             values=x_isoform_flat_exp,
             dense_shape=[num_samples*n, num_samples*num_features])
 
-        x_flat_normalizer = tf.sparse.sparse_dense_matmul(
+        self.x_flat_normalizer = tf.sparse.sparse_dense_matmul(
                 x_isoform_matrix_exp,
                 tf.ones([n*num_samples, 1]),
                 adjoint_a=True)
 
         x_flat_exp = tf.sparse.sparse_dense_matmul(
                 x_isoform_matrix_exp,
-                x_gene_flat_exp / x_flat_normalizer)
+                x_gene_flat_exp / self.x_flat_normalizer)
         x_flat = tf.math.log(x_flat_exp)
 
         x = tf.reshape(x_flat, [1, num_samples, n])

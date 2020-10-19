@@ -72,6 +72,16 @@ module Regression
                 Output file for isoform regression results when 'gene-isoform'
                 regression is used. """
             default = "regression-isoform-coefficients.csv"
+        "--aitchison-distance-output"
+            metavar = "filename"
+            help = """
+                Compute aitchison distance, to test for overall isoform composition
+                changes.
+                """
+        "--aitchison-distance-effect-size"
+            metavar = "S"
+            default = 1.0
+            arg_type = Float64
         "--extra-params-output"
             metavar = "filename"
             help = """
@@ -102,6 +112,18 @@ module Regression
             help = "Output the posterior probability of abs fold-change greater than S"
             default = nothing
             arg_type = Float64
+        "--isoform-effect-size"
+            metavar = "S"
+            help = "Output the posterior probability of abs fold-change greater than S"
+            default = nothing
+            arg_type = Float64
+        # TODO: delete this when done debugging
+        "--x-isoform-init-output"
+            default = nothing
+            arg_type = String
+        "--x-gene-init-output"
+            default = nothing
+            arg_type = String
         "--factors"
             help = """
                 Comma-separated list of factors to regress on. (Default: use all factors)
@@ -353,8 +375,46 @@ module Regression
                 gene_idxs, transcript_idxs,
                 loaded_samples.x0_values, num_samples, num_features, n)
 
-            # @show x_isoform_init[1:200]
-            # exit()
+            if parsed_args["x-isoform-init-output"] !== nothing
+                transcript_names = Array{String}(undef, length(ts))
+                for t in ts
+                    transcript_names[t.metadata.id] = t.metadata.name
+                end
+
+                open(parsed_args["x-isoform-init-output"], "w") do output
+                    print(output, "transcript_id")
+                    for i in 1:num_samples
+                        print(output, ",x", i)
+                    end
+                    println(output)
+
+                    for j in 1:n
+                        print(output, transcript_names[j])
+                        for i in 1:num_samples
+                            print(output, ",", exp.(x_isoform_init[i, j]))
+                        end
+                        println(output)
+                    end
+                end
+            end
+
+            if parsed_args["x-gene-init-output"] !== nothing
+                open(parsed_args["x-gene-init-output"], "w") do output
+                    print(output, "gene_id")
+                    for i in 1:num_samples
+                        print(output, ",x", i)
+                    end
+                    println(output)
+
+                    for j in 1:num_features
+                        print(output, gene_ids[j])
+                        for i in 1:num_samples
+                            print(output, ",", exp.(x_gene_init[i, j]))
+                        end
+                        println(output)
+                    end
+                end
+            end
 
             sample_scales = estimate_sample_scales(log.(loaded_samples.x0_values), upper_quantile=0.95)
 
@@ -366,12 +426,49 @@ module Regression
                     use_point_estimates)
 
             qw_gene_loc, qw_gene_scale, qw_isoform_loc, qw_isoform_scale,
-                qx_isoform_bias_loc, qx_isoform_bias_scale,
-                qx_gene_bias, qx_gene_scale = regression.fit(10000)
+                qx_isoform_bias_loc, qx_isoform_bias_scale, qx_isoform_scale,
+                qx_gene_bias, qx_gene_scale,
+                qx_gene_loc_factor_est = regression.fit(1000)
 
-            min_effect_sizes, mean_effect_sizes = estimate_isoform_effect_sizes(
-                gene_idxs, transcript_idxs, qw_isoform_loc, qw_isoform_scale,
-                qx_isoform_bias_loc, qx_isoform_bias_scale)
+            println("estimating effect sizes...")
+            effect_size = log(abs(parsed_args["isoform-effect-size"]))
+            min_effect_sizes, mean_effect_sizes, prob_de,
+            aitchison_min_effect_sizes, aitchison_mean_effect_sizes, aitchison_prob_de =
+                estimate_isoform_effect_sizes(
+                    gene_idxs, transcript_idxs,
+                    effect_size,
+                    parsed_args["aitchison-distance-effect-size"],
+                    qw_isoform_loc, qw_isoform_scale,
+                    qx_isoform_bias_loc, qx_isoform_bias_scale,
+                    qx_gene_loc_factor_est)
+            println("done.")
+
+            # TODO: Trying to estimate effects the old fashioned way
+            # dist = TDist(10.0)
+            # ln2 = log(2f0)
+            # effect_size = log(abs(parsed_args["isoform-effect-size"]))
+            # num_factors = size(qw_isoform_loc, 1)
+            # for i in 1:num_factors
+            #     for j in 1:n
+            #         prob_down = cdf(dist, (-effect_size - qw_isoform_loc[i,j]) / qw_isoform_scale[i,j])
+            #         prob_up = ccdf(dist, (effect_size - qw_isoform_loc[i,j]) / qw_isoform_scale[i,j])
+            #         prob_de[i, j] = max(prob_down, prob_up)
+
+            #         min_effect_sizes[i,j] = find_minimum_effect_size(
+            #             qw_isoform_loc[i,j], qw_isoform_scale[i,j],
+            #             0.1)/ln2
+            #     end
+            # end
+
+            if parsed_args["aitchison-distance-output"] !== nothing
+                write_aitchison_results(
+                    parsed_args["aitchison-distance-output"],
+                    factor_names,
+                    gene_ids,
+                    gene_names, aitchison_min_effect_sizes,
+                    aitchison_mean_effect_sizes,
+                    aitchison_prob_de)
+            end
 
             transcript_names = Array{String}(undef, length(ts))
             for t in ts
@@ -383,8 +480,8 @@ module Regression
                 gene_idxs, transcript_idxs,
                 factor_names,
                 gene_ids, gene_names, transcript_names,
-                min_effect_sizes, mean_effect_sizes,
-                qw_isoform_loc, qx_isoform_bias_loc)
+                min_effect_sizes, mean_effect_sizes, prob_de,
+                qw_isoform_loc, qx_isoform_bias_loc, qx_isoform_scale)
 
             if parsed_args["extra-params-output"] !== nothing
                 regression.write_other_params(parsed_args["extra-params-output"])
@@ -538,7 +635,7 @@ module Regression
         open(output_filename, "w") do output
             print(
                 output, "factor,", feature_names_label,
-                ",min_effect_size,post_mean_effect,lower_credible,upper_credible")
+                ",min_effect_size,mean_effect_size,lower_credible,upper_credible")
             if effect_size !== nothing
                 print(output, ",prob_de,prob_down_de,prob_up_de")
                 effect_size = log(abs(effect_size))
@@ -590,8 +687,8 @@ module Regression
             output_filename,
             gene_idxs, transcript_idxs,
             factor_names, gene_ids, gene_names, transcript_names,
-            min_effect_sizes, mean_effect_sizes,
-            qw_isoform_loc, qx_isoform_bias_loc)
+            min_effect_sizes, mean_effect_sizes, prob_de,
+            qw_isoform_loc, qx_isoform_bias_loc, qx_isoform_scale)
 
         transcript_gene_idx = Dict{Int, Int}()
         for (gene_idx, transcript_idx) in zip(gene_idxs, transcript_idxs)
@@ -601,29 +698,81 @@ module Regression
         num_factors, n = size(min_effect_sizes)
         ln2 = log(2f0)
 
-        # TODO: should we also output prob_de wrt to some effect size?
-
         open(output_filename, "w") do output
-            println(output, "factor,gene_id,gene_name,transcript_id,mean_effect_size,min_effect_size,w_mean,x_bias")
+            print(output, "factor,gene_id,gene_name,transcript_id,mean_effect_size,min_effect_size")
+            if prob_de !== nothing
+                print(output, ",prob_de")
+            end
+            println(output, ",w_mean,x_bias,x_scale")
             for i in 1:num_factors, j in 1:n
-                println(
+                print(
                     output,
-                    factor_names[i], ",",
-                    gene_ids[transcript_gene_idx[j]], ",",
-                    gene_names[transcript_gene_idx[j]], ",",
-                    transcript_names[j], ",",
-                    mean_effect_sizes[i, j]/ln2, ",",
-                    min_effect_sizes[i, j]/ln2, ",",
-                    qw_isoform_loc[i,j], ",",
-                    qx_isoform_bias_loc[j])
+                    factor_names[i],
+                    ",", gene_ids[transcript_gene_idx[j]],
+                    ",", gene_names[transcript_gene_idx[j]],
+                    ",", transcript_names[j],
+                    ",", mean_effect_sizes[i, j],
+                    ",", min_effect_sizes[i, j])
+
+                if prob_de !== nothing
+                    print(output, ",", prob_de[i, j])
+                end
+
+                println(
+                    output, ",", qw_isoform_loc[i,j],
+                    ",", qx_isoform_bias_loc[j],
+                    ",", qx_isoform_scale[j])
             end
         end
     end
 
+
+    function write_aitchison_results(
+            output_filename, factor_names, gene_ids, gene_names,
+            min_effect_sizes, mean_effect_sizes, prob_de)
+
+        num_factors, num_genes = size(min_effect_sizes)
+
+        open(output_filename, "w") do output
+            print(output, "factor,gene_id,gene_name,mean_effect_size,min_effect_size")
+            if prob_de !== nothing
+                print(output, ",prob_de")
+            end
+            println(output)
+            for i in 1:num_factors, j in 1:num_genes
+                print(
+                    output,
+                    factor_names[i],
+                    ",", gene_ids[j],
+                    ",", gene_names[j],
+                    ",", mean_effect_sizes[i, j],
+                    ",", min_effect_sizes[i, j])
+                if prob_de !== nothing
+                    print(output, ",", prob_de[i, j])
+                end
+                println(output)
+            end
+        end
+    end
+
+
     function estimate_isoform_effect_sizes(
             gene_idxs, transcript_idxs,
-            qw_loc, qw_scale, qx_bias_loc, qx_bias_scale;
-            niter=100, target_coverage=0.1)
+            effect_size, aitchison_effect_size,
+            qw_loc, qw_scale, qx_bias_loc, qx_bias_scale,
+            qx_gene_loc_factor_est;
+            niter=1000, target_coverage=0.1)
+
+        # [num_samples, num_features]
+        qx_gene_loc_factor_est = exp.(qx_gene_loc_factor_est)
+        qx_gene_loc_factor_est ./= sum(qx_gene_loc_factor_est, dims=2)
+
+        num_factors, n = size(qw_loc)
+
+        transcript_gene_idx = zeros(Int, n)
+        for (gene_idx, transcript_idx) in zip(gene_idxs, transcript_idxs)
+            transcript_gene_idx[transcript_idx] = gene_idx
+        end
 
         gene_transcript_idxs = Dict{Int, Vector{Int}}()
         for (gene_idx, transcript_idx) in zip(gene_idxs, transcript_idxs)
@@ -636,14 +785,20 @@ module Regression
         for (gene_idx, transcript_idx) in zip(gene_idxs, transcript_idxs)
             index[transcript_idx] = gene_transcript_idxs[gene_idx]
         end
-
-        num_factors, n = size(qw_loc)
+        num_genes = maximum(gene_idxs)
 
         x = zeros(Float64, n)
         x_proportion = zeros(Float64, n)
+        x_alt_proportion = zeros(Float64, n)
         w = zeros(Float64, (num_factors, n))
 
+        expr = zeros(Float64, n)
+
         effect_size_samples = zeros(Float32, (num_factors, n, niter))
+        aitchison_effect_size_samples = zeros(Float32, (num_factors, num_genes, niter))
+
+        mean_effect_sizes = zeros(Float64, (num_factors, n))
+        prob_de = zeros(Float64, (num_factors, n))
 
         for iter in 1:niter
             # draw sample from x_bias posterior
@@ -668,22 +823,47 @@ module Regression
                 w[i, j] = randn() * qw_scale[i,j] + qw_loc[i,j]
             end
 
-            # compute effect size for each coefficient
-            for i in 1:num_factors, j in 1:n
-                numer = exp(x[j] + w[i,j])
-                denom = numer
-                for k in index[j]
-                    if k != j
-                        denom += exp(x[k])
+            for i in 1:num_factors
+                for (gene_idx, transcript_idxs) in gene_transcript_idxs
+                    denom = 0.0
+                    for j in transcript_idxs
+                        denom += exp(x[j] + w[i,j])
+                    end
+
+                    for j in transcript_idxs
+                        x_alt_proportion[j] = exp(x[j] + w[i,j]) / denom
                     end
                 end
-                x_alt_proportion = numer/denom
 
-                # need to compare to baseline proportion now
-                effect_size_samples[i, j, iter] =
-                    log(x_alt_proportion) .- log(x_proportion[j])
+                # compute difference effect sizes
+                for j in 1:n
+                    gene_idx = transcript_gene_idx[j]
+                    expr = x_proportion[j] * qx_gene_loc_factor_est[i, gene_idx]
+                    expr_alt = x_alt_proportion[j] * qx_gene_loc_factor_est[i, gene_idx]
+                    effect_size_samples[i, j, iter] = log(x_alt_proportion[j]) - log(x_proportion[j])
+
+                    if effect_size !== nothing
+                        # prob_de[i, j] += (effect_size_samples[i, j, iter] > effect_size) &&
+                        #     (expr > min_expr || expr_alt > min_expr)
+                        prob_de[i, j] += (effect_size_samples[i, j, iter] > effect_size)
+                    end
+                end
+
+                # compute aitchison distances
+                for (gene_idx, transcript_idxs) in gene_transcript_idxs
+                    aitchison_effect_size_samples[i, gene_idx, iter] =
+                        aitchison_distance(
+                            x_proportion[transcript_idxs],
+                            x_alt_proportion[transcript_idxs])
+                end
+
+                if effect_size !== nothing
+
+                end
             end
         end
+
+        prob_de ./= niter
 
         min_effect_sizes = Array{Float32}(undef, (num_factors, n))
         for i in 1:num_factors, j in 1:n
@@ -691,9 +871,39 @@ module Regression
                 (@view effect_size_samples[i, j, :]), target_coverage)
         end
 
+        # if effect_size !== nothing
+        #     prob_de = Array{Float32}(undef, (num_factors, n))
+        #     for i in 1:num_factors, j in 1:n
+        #         prob_de[i,j] = sum(abs.(@view effect_size_samples[i, j, :]) .> effect_size) / niter
+        #     end
+
+        # else
+        #     prob_de = nothing
+        # end
+
         mean_effect_sizes = mean(effect_size_samples, dims=3)
 
-        return min_effect_sizes, mean_effect_sizes
+        # aitchison effects
+
+        aitchison_min_effect_sizes = Array{Float32}(undef, (num_factors, num_genes))
+        for i in 1:num_factors, j in 1:num_genes
+            aitchison_min_effect_sizes[i,j] = find_minimum_effect_size_from_samples(
+                (@view aitchison_effect_size_samples[i, j, :]), target_coverage)
+        end
+
+        if aitchison_effect_size !== nothing
+            aitchison_prob_de = Array{Float32}(undef, (num_factors, num_genes))
+            for i in 1:num_factors, j in 1:num_genes
+                aitchison_prob_de[i,j] = sum(abs.(@view aitchison_effect_size_samples[i, j, :]) .> aitchison_effect_size) / niter
+            end
+        else
+            aitchison_prob_de = nothing
+        end
+
+        aitchison_mean_effect_sizes = mean(aitchison_effect_size_samples, dims=3)
+
+        return min_effect_sizes, mean_effect_sizes, prob_de,
+            aitchison_min_effect_sizes, aitchison_mean_effect_sizes, aitchison_prob_de
     end
 
 
@@ -702,6 +912,35 @@ module Regression
         return xs[clamp(round(Int, target_coverage * length(xs)), 1, length(xs))]
     end
 
+
+    function aitchison_distance(xs, ys)
+        @assert length(xs) == length(ys)
+        n = length(xs)
+
+        # log geometric mean
+        lgx = 0.0
+        for x in xs
+            lgx += log(x)
+        end
+        lgx /= n
+
+        lgy = 0.0
+        for y in ys
+            lgy += log(y)
+        end
+        lgy /= n
+
+        d = 0.0
+        for (x, y) in zip(xs, ys)
+            d += ((log(x) - lgx) - (log(y) - lgy))^2
+        end
+        # TODO: testing if scaling by n makes it more comporable across
+        # compositions.
+        # d = sqrt(d)
+        d = sqrt(d/n)
+
+        return d
+    end
 
     function write_splice_feature_regression_effects(
             output_filename, factor_names, qw_loc, qw_scale, gene_db,

@@ -428,7 +428,7 @@ module Regression
             qw_gene_loc, qw_gene_scale, qw_isoform_loc, qw_isoform_scale,
                 qx_isoform_bias_loc, qx_isoform_bias_scale, qx_isoform_scale,
                 qx_gene_bias, qx_gene_scale,
-                qx_gene_loc_factor_est = regression.fit(1000)
+                qx_gene_loc_factor_est = regression.fit(6000)
 
             println("estimating effect sizes...")
             effect_size = log(abs(parsed_args["isoform-effect-size"]))

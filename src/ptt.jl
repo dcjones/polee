@@ -116,7 +116,6 @@ function PolyaTreeTransform(
 end
 
 
-
 """
 Transform an n-1 vector `ys` in a hypercube, to a n vector `xs` in a simplex
 using an Polya Tree Transform t. If `compute_ladj` compute and return the

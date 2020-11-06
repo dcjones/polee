@@ -32,6 +32,10 @@ function inv!(xs::Vector{T}, m) where {T}
 end
 
 
+# TODO: Ok, we need an alternative log_likelihood function
+# which will compute gradients in a frule/rrule
+
+
 # assumes a flat prior on π
 function log_likelihood(
         frag_probs, log_frag_probs,

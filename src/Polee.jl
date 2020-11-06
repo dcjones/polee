@@ -21,6 +21,7 @@ import GFF3
 import IntervalTrees
 import SHA
 import YAML
+import ChainRules
 
 using Base64: base64encode, base64decode
 using SparseArrays: findnz, sparse, SparseMatrixCSC

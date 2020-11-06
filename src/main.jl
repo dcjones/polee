@@ -5,6 +5,8 @@ using ArgParse
 function select_approx_method(method_name::String, tree_method::Symbol)
     if method_name == "optimize"
         return OptimizePTTApprox()
+    elseif method_name == "beta"
+        return BetaPTTApprox()
     elseif method_name == "logistic_normal"
         return LogisticNormalApprox()
     elseif method_name == "kumaraswamy_ptt"

@@ -36,15 +36,15 @@ function approximate_likelihood(approximation::LikelihoodApproximation,
                                 tree_topology_input_filename=nothing,
                                 tree_topology_output_filename=nothing)
     @tic()
-    if !isa(approximation, LogitSkewNormalPTTApprox)
-        @warn "Using alternative approximation. Some features not supported."
-        params = approximate_likelihood(approximation, sample)
-    else
+    if isa(approximation, LogitSkewNormalPTTApprox) || isa(approximation, BetaPTTApprox)
         params = approximate_likelihood(
             approximation, sample, gene_noninformative=gene_noninformative,
             use_efflen_jacobian=use_efflen_jacobian,
             tree_topology_input_filename=tree_topology_input_filename,
             tree_topology_output_filename=tree_topology_output_filename)
+    else
+        @warn "Using alternative approximation. Some features not supported."
+        params = approximate_likelihood(approximation, sample)
     end
     @toc("Approximating likelihood")
 
@@ -627,4 +627,176 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
 
     return params
 end
+
+
+struct BetaPTTApprox <: LikelihoodApproximation end
+
+
+function approximate_likelihood(approx::BetaPTTApprox,
+                                sample::RNASeqSample,
+                                ::Val{gradonly}=Val(true);
+                                tree_topology_input_filename=nothing,
+                                tree_topology_output_filename=nothing,
+                                gene_noninformative::Bool=false,
+                                use_efflen_jacobian::Bool=true) where {gradonly}
+    X = sample.X
+
+    efflens = sample.effective_lengths
+
+    m, n = size(X)
+    Xt = SparseMatrixCSC(transpose(X))
+    model = Model(m, n)
+
+    if tree_topology_input_filename !== nothing
+        input = h5open(tree_topology_input_filename)
+        t = PolyaTreeTransform(
+            read(input["node_parent_idxs"]),
+            read(input["node_js"]))
+        close(input)
+    else
+        error("Fixed tree must be provided with Beta-PTT approximation.")
+    end
+
+    αs, βs, free_params_indexes = init_beta_params(X, t)
+
+    @show extrema(αs)
+    @show extrema(βs)
+
+    # TODO: Ok, now we have to go through split the sample into disjoint chunks
+    # based on the tree. So we want to build a tree structure which has the
+    # same topology as the ptt, but each node tracks the number of reads
+    # shared between the left and right branch.
+
+
+    # TODO: What do I need to make this work?
+    #
+    #   1. Need to be able to take gradients of likelihood function
+    #      (which means a custom adjoint for our matrix-vector multiply)
+    #      Mainly that means writing an adjoint for our parallel sparse
+    #      matrix multiply.
+    #
+    #   2. See if we can use ADAM from Flux instead of our own
+    #      This means moving the monte carlo loss estimate to a separate function
+    #      mainly.
+    #   3. Ultimately, see if we can set branches of the tree without reads
+    #      to their anylitical solution.
+    #   4. See if we can test for convergence rather than use a fixed number
+    #      of samples.
+    #   5. See if we can do GPU training. Though, it may not help much with this.
+
+
+    # Actually there is an anylitical solution for any node where
+    # children don't share reads. We really ought to exploit that.
+    #
+    # Given a tree topology, we need to go through and 
+    #
+    # Let's figure 
+
+
+    for step_num in 1:LIKAP_NUM_STEPS
+
+    end
+end
+
+
+
+"""
+Non-allocating way of checking !isempty(intersect(a, b))
+"""
+function has_intersection(a::Set{T}, b::Set{T}) where {T}
+    if length(a) < length(b)
+        for x in a
+            if x ∈ b
+                return true
+            end
+        end
+    else
+        for x in b
+            if x ∈ a
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+
+"""
+Find initial beta params, and see which ones need to be optimized over.
+"""
+function init_beta_params(X::SparseMatrixCSC, t::PolyaTreeTransform)
+
+    # traverse the tree up from the leaves
+    m, n = size(X)
+    num_nodes = size(t.index, 2)
+    subtree_size = zeros(Int, num_nodes)
+    subtree_read_sets = Dict{Int, Set{Int}}()
+
+    αs = zeros(Float32, n-1)
+    βs = zeros(Float32, n-1)
+
+    # indexes of params that are not fixed and need to be optimized
+    free_params_indexes = Int[]
+
+    # just to keep track of whether the root had intersecting children
+
+    k = n -1
+    for i in num_nodes:-1:1
+        # leaf node
+        output_idx = t.index[1, i]
+        if output_idx != 0
+            # build set of compatible read indexes
+            r = X.colptr[output_idx]:X.colptr[output_idx+1]-1
+            subtree_read_sets[i] = Set{Int}(l for l in r)
+            subtree_size[i] = 1
+            continue
+        end
+
+        # internal node
+
+        left_idx = t.index[2, i]
+        right_idx = t.index[3, i]
+
+        ml = subtree_size[left_idx]
+        mr = subtree_size[right_idx]
+        subtree_size[i] = ml + mr
+
+        subtree_read_set_l = subtree_read_sets[left_idx]
+        subtree_read_set_r = subtree_read_sets[right_idx]
+
+        # If child subtrees are disjoint, these are the correct KL minimizing
+        # parameters. If they aren't disjoint, this is at least a reasonable
+        # starting point.
+        αs[k] = ml + length(subtree_read_set_l)
+        βs[k] = mr + length(subtree_read_set_r)
+
+        if has_intersection(subtree_read_set_l, subtree_read_set_r)
+            push!(free_params_indexes, i)
+        end
+
+        # keep track of the read set
+        # ok to overwrite sets because we don't need them after climbing the
+        # tree
+        if length(subtree_read_set_l) > length(subtree_read_set_r)
+            union!(subtree_read_set_l, subtree_read_set_r)
+            subtree_read_sets[i] = subtree_read_set_l
+        else
+            union!(subtree_read_set_r, subtree_read_set_l)
+            subtree_read_sets[i] = subtree_read_set_r
+        end
+
+        # no longer need these
+        delete!(subtree_read_sets, left_idx)
+        delete!(subtree_read_sets, right_idx)
+
+        k -= 1
+    end
+
+    return αs, βs, free_params_indexes
+end
+
+
+
+
 

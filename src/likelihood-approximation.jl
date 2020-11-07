@@ -659,8 +659,18 @@ function approximate_likelihood(approx::BetaPTTApprox,
 
     αs, βs, free_params_indexes = init_beta_params(X, t)
 
-    @show extrema(αs)
-    @show extrema(βs)
+    dists = [Beta(α, β) for (α, β) in zip(αs, βs)]
+    ys = Float32[rand(dist) for dist in dists]
+
+    # TODO: just testing gradients with this
+    function obj(ys)
+        xs, ladj = transform(t, ys)
+        return sum(log.(xs)) + ladj
+    end
+
+    # TODO: This shouldn't be a 
+    @show gradient(obj, ys)
+    @show gradient(obj, ys)
 
     # TODO: Ok, now we have to go through split the sample into disjoint chunks
     # based on the tree. So we want to build a tree structure which has the

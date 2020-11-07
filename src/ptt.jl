@@ -116,6 +116,97 @@ function PolyaTreeTransform(
 end
 
 
+# TODO: I also compute the ladj on the forward pass. How should this work?
+# Return the transformed vector along with ladj it a tuple?
+
+function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
+    n = length(ys) + 1
+    xs = Vector{T}(undef, n)
+    num_nodes = size(t.index, 2)
+    ladj = zero(T)
+    t.us[1] = one(T)
+    k = 1 # internal node count
+    for i in 1:num_nodes
+        # leaf node
+        output_idx = t.index[1, i]
+        if output_idx != 0
+            xs[output_idx] = t.us[i]
+            xs[output_idx] = max(xs[output_idx], 1e-16)
+            continue
+        end
+
+        # internal node
+        left_idx = t.index[2, i]
+        right_idx = t.index[3, i]
+
+        t.us[left_idx] = ys[k] * t.us[i]
+        t.us[right_idx] = (1 - ys[k]) * t.us[i]
+
+        ladj += log(t.us[i])
+
+        k += 1
+    end
+    @assert k == length(ys) + 1
+    @assert isfinite(ladj)
+
+    return xs, ladj
+end
+
+
+function ChainRules.rrule(::typeof(transform), t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
+    xs, ladj = transform(t, ys)
+
+    function ptt_transform_pullback(x̄)
+        x_grad = x̄[1]
+        ladj_grad = x̄[2]
+        n = length(xs)
+        y_grad = Vector{T}(undef, n-1)
+
+        num_nodes = size(t.index, 2)
+        n = div(num_nodes + 1, 2)
+        k = n - 1 # internal node number
+        for i in num_nodes:-1:1
+            # leaf node
+            output_idx = t.index[1, i]
+            if output_idx != 0
+                t.gradients[1, i] = x_grad[output_idx]
+                t.gradients[2, i] = zero(T)
+                continue
+            end
+
+            left_idx = t.index[2, i]
+            right_idx = t.index[3, i]
+
+            left_grad = t.gradients[1, left_idx]
+            left_ladj_grad = t.gradients[2, left_idx] * ladj_grad
+
+            right_grad = t.gradients[1, right_idx]
+            right_ladj_grad = t.gradients[2, right_idx] * ladj_grad
+
+            # get derivative wrt y by multiplying children's derivatives by y's
+            # contribution to their input values
+            y_grad[k] = t.us[i] *
+                ((left_grad + left_ladj_grad) - (right_grad + right_ladj_grad))
+
+            # store derivative wrt this nodes input_value
+            t.gradients[1, i] =
+                ys[k] * left_grad + (1 - ys[k]) * right_grad
+
+            # store ladj derivative wrt to input_value
+            t.gradients[2, i] =
+                1/t.us[i] + ys[k] * left_ladj_grad + (1 - ys[k]) * right_ladj_grad
+
+            k -= 1
+        end
+
+        return NO_FIELDS, Zero(), y_grad
+    end
+
+    return (xs, ladj), ptt_transform_pullback
+end
+
+
+
 """
 Transform an n-1 vector `ys` in a hypercube, to a n vector `xs` in a simplex
 using an Polya Tree Transform t. If `compute_ladj` compute and return the

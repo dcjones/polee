@@ -6,6 +6,7 @@ using GenomicFeatures
 using BioAlignments
 using BioSequences
 using FASTX
+using ChainRules
 using DataStructures
 using Distributions
 using HDF5
@@ -21,7 +22,6 @@ import GFF3
 import IntervalTrees
 import SHA
 import YAML
-import ChainRules
 
 using Base64: base64encode, base64decode
 using SparseArrays: findnz, sparse, SparseMatrixCSC
@@ -29,6 +29,7 @@ using Dates: now
 using Printf: @printf, @sprintf
 using Statistics
 using Random
+using Zygote
 # using Profile
 # using InteractiveUtils
 

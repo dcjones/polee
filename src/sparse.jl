@@ -6,6 +6,8 @@
 Multithreaded version of At_mul_B!
 """
 function pAt_mul_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector) where {S,T,I}
+    @assert length(x) == size(A, 1)
+    @assert length(y) == size(A, 2)
     colptr = A.colptr
     rowval = A.rowval
     nzval = A.nzval
@@ -26,6 +28,8 @@ end
 
 # multiply by 1./x instead of x
 function pAt_mulinv_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector) where {S,T,I}
+    @assert length(x) == size(A, 1)
+    @assert length(y) == size(A, 2)
     colptr = A.colptr
     rowval = A.rowval
     nzval = A.nzval
@@ -42,3 +46,26 @@ function pAt_mulinv_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector) where {
         end
     end
 end
+
+
+function pAt_mul_B(A::SparseMatrixCSC, At::SparseMatrixCSC, x::Vector{T}) where {T}
+    y = Vector{T}(undef, size(A, 2))
+    pAt_mul_B!(y, A, x)
+    return y
+end
+
+
+function ChainRules.rrule(::typeof(pAt_mul_B), A::SparseMatrixCSC, At::SparseMatrixCSC, x::Vector)
+    @show size(A)
+    @show size(At)
+    @show size(x)
+    y = pAt_mul_B(A, At, x)
+
+    function pullback(ȳ)
+        @show size(ȳ)
+        return NO_FIELDS, Zero(), Zero(), pAt_mul_B(At, A, ȳ)
+    end
+
+    return y, pullback
+end
+

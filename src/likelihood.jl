@@ -3,6 +3,8 @@ struct Model
     m::Int # number of fragments
     n::Int # number of transcripts
 
+    # TODO: Can these be Float32?
+
     # work vector for computing posterior log prob
     frag_probs::Vector{Float64}
 
@@ -32,8 +34,10 @@ function inv!(xs::Vector{T}, m) where {T}
 end
 
 
-# TODO: Ok, we need an alternative log_likelihood function
-# which will compute gradients in a frule/rrule
+function log_likelihood(X::SparseMatrixCSC, Xt::SparseMatrixCSC, xs::Vector)
+    frag_probs = pAt_mul_B(Xt, X, xs)
+    return sum(log.(frag_probs))
+end
 
 
 # assumes a flat prior on π

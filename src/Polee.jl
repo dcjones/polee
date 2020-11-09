@@ -15,6 +15,7 @@ using StatsBase
 using Nullables
 using Logging
 using SpecialFunctions: beta, digamma # used by kumaraswamy
+using SpecialFunctions: lgamma # used by gamma adjoint
 using SQLite
 using CodecZlib
 import XAM: BAM, SAM
@@ -30,6 +31,7 @@ using Printf: @printf, @sprintf
 using Statistics
 using Random
 using Zygote
+using ZygoteRules
 # using Profile
 # using InteractiveUtils
 
@@ -104,6 +106,7 @@ include("approx-sampler.jl")
 include("kmersketch.jl")
 include("kmercluster.jl")
 include("salmon.jl")
+include("gamma_adjoint.jl")
 
 include("main.jl")
 

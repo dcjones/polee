@@ -662,15 +662,29 @@ function approximate_likelihood(approx::BetaPTTApprox,
     dists = [Beta(α, β) for (α, β) in zip(αs, βs)]
     ys = Float32[rand(dist) for dist in dists]
 
-    # TODO: just testing gradients with this
-    function obj(ys)
-        xs, ladj = transform(t, ys)
-        return sum(log.(xs)) + ladj
-    end
+    # TODO: I think it's too much work and will end up being slower.
+    # What we should do is use the existing gradient calculations for ptt
+    # and likelihood, then use forwarddiff to handle betas.
+    #
+    # Let's see if we can use Flux optimization though.
+    #
+    # Let's write a function to compute elbo and its gradients, then get
+    # Flux to do the optimization.
 
-    # TODO: This shouldn't be a 
-    @show gradient(obj, ys)
-    @show gradient(obj, ys)
+
+    # # TODO: just testing gradients with this
+    # function obj(ys)
+    #     xs, ladj = transform(t, ys)
+    #     return sum(log.(xs)) + ladj
+    # end
+
+    # # TODO: This shouldn't be a 
+    # @show typeof(gradient(obj, ys))
+    # @show size(gradient(obj, ys))
+
+    @show gradient(beta_sample_elbo, t, X, Xt, αs, βs)
+    @time gradient(beta_sample_elbo, t, X, Xt, αs, βs)
+
 
     # TODO: Ok, now we have to go through split the sample into disjoint chunks
     # based on the tree. So we want to build a tree structure which has the
@@ -708,6 +722,30 @@ function approximate_likelihood(approx::BetaPTTApprox,
     end
 end
 
+
+
+# TODO: Let's do this the straightforward way then try to optimize when we
+# find out how slow it is, then optimize with custom adjoints.
+
+"""
+Stochastic estimate of ELBO
+"""
+function beta_sample_elbo(
+        t::PolyaTreeTransform, X::SparseMatrixCSC,
+        Xt::SparseMatrixCSC, αs::Vector, βs::Vector)
+    ysbuf = Zygote.Buffer(αs)
+    for i in 1:length(αs)
+        ysbuf[i] = Float32(rand(Beta(Float64(αs[i]), Float64(βs[i]))))
+    end
+    ys = copy(ysbuf)
+
+    # ys = Float32[rand(Beta(α, β)) for (α, β) in zip(αs, βs)]
+
+    xs, ladj = transform(t, ys)
+    lp = log_likelihood(X, Xt, xs)
+    return lp + ladj
+    return ladj
+end
 
 
 """

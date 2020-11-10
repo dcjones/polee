@@ -12,17 +12,11 @@ function _gamma_inc_lower(p::T, x::T) where {T<:Real}
         throw(DomainError(p, "p > 0 required for gamma_inc"))
     end
 
-    # elimit = T(-88.0)
-    # oflo = T(1.0e37)
-    # plimit = T(1000.0)
-    # tol = T(1.0e-14)
-    # xbig = T(1.0e8)
-
-    elimit = -88.0
-    oflo = 1.0e37
-    plimit = 1000.0
-    tol = 1.0e-14
-    xbig = 1.0e8
+    elimit = T(-88.0)
+    oflo = T(1.0e37)
+    plimit = T(1000.0)
+    tol = T(1.0e-14)
+    xbig = T(1.0e8)
 
     if x < zero(T)
         throw(DomainError(x, "x >= 0 required for gamma_inc"))
@@ -115,6 +109,44 @@ end
 
 ZygoteRules.@adjoint function Distributions.rand(rng::AbstractRNG, d::Gamma{T}) where {T<:Real}
     z = rand(rng, d)
+    function rand_gamma_pullback(c)
+        y = z/d.θ
+        ∂α, ∂y = gradient(αy -> Zygote.forwarddiff(_gamma_inc_lower, αy), SA[d.α, y])[1]
+        return (
+            nothing,
+            (α=(-d.θ*∂α/∂y)*c,
+             θ=y*c))
+    end
+    return z, rand_gamma_pullback
+end
+
+
+
+# This code is taken from Distributions but adapted to generate Float32
+# rands to hopefuling speed things up.
+
+f32rand(d::Beta{Float32}) = f32rand(Random.GLOBAL_RNG, d)
+
+function f32rand(rng::AbstractRNG, d::Beta{Float32})
+    (α, β) = params(d)
+    g1 = f32rand(rng, Gamma(α, one(Float32)))
+    g2 = f32rand(rng, Gamma(β, one(Float32)))
+    return g1 / (g1 + g2)
+end
+
+
+function rand_beta(rng::AbstractRNG, α::Float32, β::Float32)
+    g1 = f32rand(rng, Gamma(α, one(Float32)))
+    g2 = f32rand(rng, Gamma(β, one(Float32)))
+    return g1 / (g1 + g2)
+end
+
+# TODO: try to speed things up further by adapting the gamma code for f32
+f32rand(rng::AbstractRNG, d::Gamma{Float32}) = Float32(rand(rng, d))
+
+
+ZygoteRules.@adjoint function f32rand(rng::AbstractRNG, d::Gamma{T}) where {T<:Real}
+    z = f32rand(rng, d)
     function rand_gamma_pullback(c)
         y = z/d.θ
         ∂α, ∂y = gradient(αy -> Zygote.forwarddiff(_gamma_inc_lower, αy), SA[d.α, y])[1]

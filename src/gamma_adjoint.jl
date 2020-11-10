@@ -13,7 +13,8 @@ function _gamma_inc_lower(p::T, x::T) where {T<:Real}
     end
 
     elimit = T(-88.0)
-    oflo = T(1.0e37)
+
+    # oflo = T(1.0e37)
     plimit = T(1000.0)
     tol = T(1.0e-14)
     xbig = T(1.0e8)
@@ -125,35 +126,76 @@ end
 # This code is taken from Distributions but adapted to generate Float32
 # rands to hopefuling speed things up.
 
-f32rand(d::Beta{Float32}) = f32rand(Random.GLOBAL_RNG, d)
+# f32rand(d::Beta{Float32}) = f32rand(Random.GLOBAL_RNG, d)
 
-function f32rand(rng::AbstractRNG, d::Beta{Float32})
-    (α, β) = params(d)
-    g1 = f32rand(rng, Gamma(α, one(Float32)))
-    g2 = f32rand(rng, Gamma(β, one(Float32)))
-    return g1 / (g1 + g2)
+# function f32rand(rng::AbstractRNG, d::Beta{Float32})
+#     (α, β) = params(d)
+#     g1 = f32rand(rng, Gamma(α, one(Float32)))
+#     g2 = f32rand(rng, Gamma(β, one(Float32)))
+#     return g1 / (g1 + g2)
+# end
+
+
+# function rand_beta(rng::AbstractRNG, α::Float32, β::Float32)
+#     g1 = f32rand(rng, Gamma(α, one(Float32)))
+#     g2 = f32rand(rng, Gamma(β, one(Float32)))
+#     return g1 / (g1 + g2)
+# end
+
+# # TODO: try to speed things up further by adapting the gamma code for f32
+# f32rand(rng::AbstractRNG, d::Gamma{Float32}) = Float32(rand(rng, d))
+
+
+# ZygoteRules.@adjoint function f32rand(rng::AbstractRNG, d::Gamma{T}) where {T<:Real}
+#     z = f32rand(rng, d)
+#     function rand_gamma_pullback(c)
+#         y = z/d.θ
+#         ∂α, ∂y = gradient(αy -> Zygote.forwarddiff(_gamma_inc_lower, αy), SA[d.α, y])[1]
+#         return (
+#             nothing,
+#             (α=(-d.θ*∂α/∂y)*c,
+#              θ=y*c))
+#     end
+#     return z, rand_gamma_pullback
+# end
+
+
+function rand_betas(αs::Vector{Float32}, βs::Vector{Float32})
+    us = rand_gamma1s(αs)
+    vs = rand_gamma1s(βs)
+    return us ./ (us .+ vs)
 end
 
 
-function rand_beta(rng::AbstractRNG, α::Float32, β::Float32)
-    g1 = f32rand(rng, Gamma(α, one(Float32)))
-    g2 = f32rand(rng, Gamma(β, one(Float32)))
-    return g1 / (g1 + g2)
-end
-
-# TODO: try to speed things up further by adapting the gamma code for f32
-f32rand(rng::AbstractRNG, d::Gamma{Float32}) = Float32(rand(rng, d))
-
-
-ZygoteRules.@adjoint function f32rand(rng::AbstractRNG, d::Gamma{T}) where {T<:Real}
-    z = f32rand(rng, d)
-    function rand_gamma_pullback(c)
-        y = z/d.θ
-        ∂α, ∂y = gradient(αy -> Zygote.forwarddiff(_gamma_inc_lower, αy), SA[d.α, y])[1]
-        return (
-            nothing,
-            (α=(-d.θ*∂α/∂y)*c,
-             θ=y*c))
+function rand_gamma1s(αs::Vector{Float32})
+    n = length(αs)
+    us = Vector{Float32}(undef, n)
+    Threads.@threads for i in 1:n
+        us[i] = rand_gamma1(αs[i])
     end
-    return z, rand_gamma_pullback
+    return us
+end
+
+
+function rand_gamma1(α::Float32)
+    Float32(rand(Gamma(α, 1.0f0)))
+end
+
+
+ZygoteRules.@adjoint function rand_gamma1s(αs::Vector{Float32})
+    xs = rand_gamma1s(αs)
+
+    function rand_gamma1s_pullback(x̄)
+        n = length(xs)
+        ∂αs = Vector{Float32}(undef, n)
+        Threads.@threads for i in 1:n
+            dα, dy = gradient(
+                αy -> Zygote.forwarddiff(_gamma_inc_lower, αy),
+                SA[Float64(αs[i]), Float64(xs[i])])[1]
+            ∂αs[i] = -dα/dy*x̄[i]
+        end
+        return (∂αs,)
+    end
+
+    return xs, rand_gamma1s_pullback
 end

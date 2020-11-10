@@ -50,7 +50,7 @@ function _gamma_inc_lower(p::T, x::T) where {T<:Real}
     # Use Pearson's series expansion
     if x <= one(T) || x < p
         value = zero(T)
-        arg = p*log(x) - x - lgamma(p + one(T))
+        arg = p*log(x) - x - NaNMath.lgamma(p + one(T))
         c = one(T)
         value = one(T)
         a = p
@@ -69,7 +69,7 @@ function _gamma_inc_lower(p::T, x::T) where {T<:Real}
 
     # Use a continued fraction expansion
     else
-        arg = p*log(x) - x - lgamma(p)
+        arg = p*log(x) - x - NaNMath.lgamma(p)
         a = one(T) - p
         b = a + x + one(T)
         c = zero(T)
@@ -117,7 +117,7 @@ ZygoteRules.@adjoint function Distributions.rand(rng::AbstractRNG, d::Gamma{T}) 
     z = rand(rng, d)
     function rand_gamma_pullback(c)
         y = z/d.θ
-        ∂α, ∂y = ForwardDiff2.DI(_gamma_inc_lower)(SA[d.α, y])
+        ∂α, ∂y = gradient(αy -> Zygote.forwarddiff(_gamma_inc_lower, αy), SA[d.α, y])[1]
         return (
             nothing,
             (α=(-d.θ*∂α/∂y)*c,

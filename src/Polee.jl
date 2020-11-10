@@ -32,8 +32,8 @@ using Random
 using ChainRules
 using Zygote
 using ZygoteRules
-using ForwardDiff2
 using StaticArrays
+import NaNMath
 
 
 # using Profile

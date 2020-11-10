@@ -153,7 +153,7 @@ function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
 end
 
 
-function ChainRules.rrule(::typeof(transform), t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
+Zygote.@adjoint function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
     xs, ladj = transform(t, ys)
 
     function ptt_transform_pullback(x̄)
@@ -199,7 +199,7 @@ function ChainRules.rrule(::typeof(transform), t::PolyaTreeTransform{T}, ys::Vec
             k -= 1
         end
 
-        return NO_FIELDS, Zero(), y_grad
+        return nothing, y_grad
     end
 
     return (xs, ladj), ptt_transform_pullback

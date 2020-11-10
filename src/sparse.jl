@@ -5,14 +5,15 @@
 """
 Multithreaded version of At_mul_B!
 """
-function pAt_mul_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector) where {S,T,I}
+function pAt_mul_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::AbstractVector) where {S,T,I}
     @assert length(x) == size(A, 1)
     @assert length(y) == size(A, 2)
     colptr = A.colptr
     rowval = A.rowval
     nzval = A.nzval
 
-    Threads.@threads for j in 1:length(y)
+    # Threads.@threads for j in 1:length(y)
+    for j in 1:length(y)
         @inbounds begin
             tmp = zero(T)
             for k_ in colptr[j]:colptr[j+1]-1
@@ -48,24 +49,29 @@ function pAt_mulinv_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::Vector) where {
 end
 
 
-function pAt_mul_B(A::SparseMatrixCSC, At::SparseMatrixCSC, x::Vector{T}) where {T}
+function pAt_mul_B(A::SparseMatrixCSC, At::SparseMatrixCSC, x::AbstractVector{T}) where {T}
     y = Vector{T}(undef, size(A, 2))
     pAt_mul_B!(y, A, x)
     return y
 end
 
 
-function ChainRules.rrule(::typeof(pAt_mul_B), A::SparseMatrixCSC, At::SparseMatrixCSC, x::Vector)
-    @show size(A)
-    @show size(At)
-    @show size(x)
+ZygoteRules.@adjoint function pAt_mul_B(A::SparseMatrixCSC, At::SparseMatrixCSC, x::Vector{T}) where {T}
     y = pAt_mul_B(A, At, x)
-
     function pullback(ȳ)
-        @show size(ȳ)
-        return NO_FIELDS, Zero(), Zero(), pAt_mul_B(At, A, ȳ)
+        return nothing, nothing, pAt_mul_B(At, A, ȳ)
     end
 
     return y, pullback
 end
 
+# function ChainRules.rrule(::typeof(pAt_mul_B), A::SparseMatrixCSC, At::SparseMatrixCSC, x::Vector)
+#     println("HERE")
+#     y = pAt_mul_B(A, At, x)
+
+#     function pullback(ȳ)
+#         return NO_FIELDS, Zero(), Zero(), pAt_mul_B(At, A, ȳ)
+#     end
+
+#     return y, pullback
+# end

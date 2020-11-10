@@ -682,6 +682,8 @@ function approximate_likelihood(approx::BetaPTTApprox,
     # @show typeof(gradient(obj, ys))
     # @show size(gradient(obj, ys))
 
+    @show length(free_params_indexes)
+
     @show gradient(beta_sample_elbo, t, X, Xt, αs, βs)
     @time gradient(beta_sample_elbo, t, X, Xt, αs, βs)
 
@@ -796,7 +798,7 @@ function init_beta_params(X::SparseMatrixCSC, t::PolyaTreeTransform)
         if output_idx != 0
             # build set of compatible read indexes
             r = X.colptr[output_idx]:X.colptr[output_idx+1]-1
-            subtree_read_sets[i] = Set{Int}(l for l in r)
+            subtree_read_sets[i] = Set{Int}(X.rowval[l] for l in r)
             subtree_size[i] = 1
             continue
         end

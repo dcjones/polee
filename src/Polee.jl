@@ -6,7 +6,6 @@ using GenomicFeatures
 using BioAlignments
 using BioSequences
 using FASTX
-using ChainRules
 using DataStructures
 using Distributions
 using HDF5
@@ -30,8 +29,13 @@ using Dates: now
 using Printf: @printf, @sprintf
 using Statistics
 using Random
+using ChainRules
 using Zygote
 using ZygoteRules
+using ForwardDiff2
+using StaticArrays
+
+
 # using Profile
 # using InteractiveUtils
 

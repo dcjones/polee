@@ -3,16 +3,26 @@
 """
 This is essentially gamma_inc(p, x)[1] from SpecialFunctions, but amenable to AD.
 """
+function _gamma_inc_lower(px::AbstractVector{T}) where {T<:Real}
+    return _gamma_inc_lower(px[1], px[2])
+end
+
 function _gamma_inc_lower(p::T, x::T) where {T<:Real}
     if p <= zero(T)
         throw(DomainError(p, "p > 0 required for gamma_inc"))
     end
 
-    elimit = T(-88.0)
-    oflo = T(1.0e37)
-    plimit = T(1000.0)
-    tol = T(1.0e-14)
-    xbig = T(1.0e8)
+    # elimit = T(-88.0)
+    # oflo = T(1.0e37)
+    # plimit = T(1000.0)
+    # tol = T(1.0e-14)
+    # xbig = T(1.0e8)
+
+    elimit = -88.0
+    oflo = 1.0e37
+    plimit = 1000.0
+    tol = 1.0e-14
+    xbig = 1.0e8
 
     if x < zero(T)
         throw(DomainError(x, "x >= 0 required for gamma_inc"))
@@ -107,9 +117,9 @@ ZygoteRules.@adjoint function Distributions.rand(rng::AbstractRNG, d::Gamma{T}) 
     z = rand(rng, d)
     function rand_gamma_pullback(c)
         y = z/d.θ
-        ∂α, ∂y = gradient(_gamma_inc_lower, d.α, y)
+        ∂α, ∂y = ForwardDiff2.DI(_gamma_inc_lower)(SA[d.α, y])
         return (
-            DoesNotExist(),
+            nothing,
             (α=(-d.θ*∂α/∂y)*c,
              θ=y*c))
     end

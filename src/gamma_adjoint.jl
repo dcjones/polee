@@ -2,6 +2,8 @@
 
 """
 This is essentially gamma_inc(p, x)[1] from SpecialFunctions, but amenable to AD.
+
+Note that this can run into numerical issues if T != Float64.
 """
 function _gamma_inc_lower(px::AbstractVector{T}) where {T<:Real}
     return _gamma_inc_lower(px[1], px[2])
@@ -13,8 +15,7 @@ function _gamma_inc_lower(p::T, x::T) where {T<:Real}
     end
 
     elimit = T(-88.0)
-
-    # oflo = T(1.0e37)
+    oflo = T(1.0e37)
     plimit = T(1000.0)
     tol = T(1.0e-14)
     xbig = T(1.0e8)
@@ -160,16 +161,23 @@ end
 # end
 
 
-function rand_betas(αs::Vector{Float32}, βs::Vector{Float32})
+# TODO: This method is unstable for small values of α and β
+# We maybe have to use the full version.
+
+function rand_betas(αs::Vector, βs::Vector)
     us = rand_gamma1s(αs)
     vs = rand_gamma1s(βs)
+    eps = 1e-16
+
+    us = clamp.(us, eps, 1 - eps)
+    vs = clamp.(vs, eps, 1 - eps)
     return us ./ (us .+ vs)
 end
 
 
-function rand_gamma1s(αs::Vector{Float32})
+function rand_gamma1s(αs::Vector)
     n = length(αs)
-    us = Vector{Float32}(undef, n)
+    us = Vector{Float64}(undef, n)
     Threads.@threads for i in 1:n
         us[i] = rand_gamma1(αs[i])
     end
@@ -177,12 +185,12 @@ function rand_gamma1s(αs::Vector{Float32})
 end
 
 
-function rand_gamma1(α::Float32)
-    Float32(rand(Gamma(α, 1.0f0)))
+function rand_gamma1(α)
+    rand(Gamma(α, 1.0))
 end
 
 
-ZygoteRules.@adjoint function rand_gamma1s(αs::Vector{Float32})
+ZygoteRules.@adjoint function rand_gamma1s(αs::Vector)
     xs = rand_gamma1s(αs)
 
     function rand_gamma1s_pullback(x̄)
@@ -192,10 +200,49 @@ ZygoteRules.@adjoint function rand_gamma1s(αs::Vector{Float32})
             dα, dy = gradient(
                 αy -> Zygote.forwarddiff(_gamma_inc_lower, αy),
                 SA[Float64(αs[i]), Float64(xs[i])])[1]
-            ∂αs[i] = -dα/dy*x̄[i]
+            ∂αs[i] = iszero(x̄[i]) ? zero(Float32) : -dα/dy*x̄[i]
+            if !isfinite(∂αs[i])
+                @show (∂αs[i], αs[i], dα, dy, x̄[i], xs[i])
+                error()
+            end
         end
         return (∂αs,)
     end
 
     return xs, rand_gamma1s_pullback
 end
+
+
+# TODO: Putting this here because I don't have a better place. We'll need to
+# reorganize once we figure some things out.
+
+
+"""
+Pathwise derivative of a random variable z ~ Gamma(α, 1), wrt to α.
+"""
+function gamma1_grad(z, α)
+    ∂α, ∂y = gradient(
+        αy -> Zygote.forwarddiff(_gamma_inc_lower, αy),
+        SA[Float64(α), Float64(z)])[1]
+    return -∂α/∂y
+end
+
+
+"""
+Beta distribution entropy.
+"""
+function beta_entropy(α, β)
+    return entropy(Beta(α, β))
+end
+
+
+"""
+Gradient of beta distribution entropy.
+"""
+function beta_entropy_grad(α, β)
+    c = (α + β - 2) * trigamma(α + β)
+    ∂α = c - (α - 1) * trigamma(α)
+    ∂β = c - (β - 1) * trigamma(β)
+    return (∂α, ∂β)
+end
+

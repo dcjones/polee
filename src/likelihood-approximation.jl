@@ -657,96 +657,75 @@ function approximate_likelihood(approx::BetaPTTApprox,
         error("Fixed tree must be provided with Beta-PTT approximation.")
     end
 
-    αs, βs, free_params_indexes = init_beta_params(X, t)
-
-    dists = [Beta(α, β) for (α, β) in zip(αs, βs)]
-    ys = Float32[rand(dist) for dist in dists]
-
-    # TODO: I think it's too much work and will end up being slower.
-    # What we should do is use the existing gradient calculations for ptt
-    # and likelihood, then use forwarddiff to handle betas.
-    #
-    # Let's see if we can use Flux optimization though.
-    #
-    # Let's write a function to compute elbo and its gradients, then get
-    # Flux to do the optimization.
-
-
-    # # TODO: just testing gradients with this
-    # function obj(ys)
-    #     xs, ladj = transform(t, ys)
-    #     return sum(log.(xs)) + ladj
-    # end
-
-    # # TODO: This shouldn't be a 
-    # @show typeof(gradient(obj, ys))
-    # @show size(gradient(obj, ys))
-
+    αs_log, βs_log, free_params_indexes = init_beta_params(X, t)
     @show length(free_params_indexes)
 
-    @show gradient(beta_sample_elbo, t, X, Xt, αs, βs)
-    @time gradient(beta_sample_elbo, t, X, Xt, αs, βs)
+    ADAM_LEARNING_RATE = 1e-1
+    opt = Flux.Optimise.ADAM(ADAM_LEARNING_RATE)
 
-
-    # TODO: Ok, now we have to go through split the sample into disjoint chunks
-    # based on the tree. So we want to build a tree structure which has the
-    # same topology as the ptt, but each node tracks the number of reads
-    # shared between the left and right branch.
-
-
-    # TODO: What do I need to make this work?
-    #
-    #   1. Need to be able to take gradients of likelihood function
-    #      (which means a custom adjoint for our matrix-vector multiply)
-    #      Mainly that means writing an adjoint for our parallel sparse
-    #      matrix multiply.
-    #
-    #   2. See if we can use ADAM from Flux instead of our own
-    #      This means moving the monte carlo loss estimate to a separate function
-    #      mainly.
-    #   3. Ultimately, see if we can set branches of the tree without reads
-    #      to their anylitical solution.
-    #   4. See if we can test for convergence rather than use a fixed number
-    #      of samples.
-    #   5. See if we can do GPU training. Though, it may not help much with this.
-
-
-    # Actually there is an anylitical solution for any node where
-    # children don't share reads. We really ought to exploit that.
-    #
-    # Given a tree topology, we need to go through and 
-    #
-    # Let's figure 
-
+    # free parameters and gradients
+    αs_log_free = Vector{Float32}(undef, length(free_params_indexes))
+    βs_log_free = Vector{Float32}(undef, length(free_params_indexes))
+    ∂αs_log_free = Vector{Float32}(undef, length(free_params_indexes))
+    ∂βs_log_free = Vector{Float32}(undef, length(free_params_indexes))
 
     for step_num in 1:LIKAP_NUM_STEPS
+        if step_num % 10 == 0
+            # TODO: check for convergence here
+            println("elbo = ", beta_sample_elbo(
+                t, X, Xt, αs_log, βs_log))
+        end
 
+        _, _, _, ∂α_log, ∂β_log = gradient(
+            beta_sample_elbo, t, X, Xt, αs_log, βs_log)
+
+        @show quantile(exp.(αs_log), [0.0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0])
+        @show quantile(exp.(βs_log), [0.0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0])
+
+        for (i,j) in enumerate(free_params_indexes)
+            αs_log_free[i] = αs_log[j]
+            βs_log_free[i] = βs_log[j]
+            ∂αs_log_free[i] = ∂α_log[j]
+            ∂βs_log_free[i] = ∂β_log[j]
+        end
+
+        @show extrema(∂αs_log_free)
+        @show extrema(∂βs_log_free)
+
+        Flux.Optimise.update!(opt, αs_log_free, ∂αs_log_free)
+        Flux.Optimise.update!(opt, βs_log_free, ∂βs_log_free)
+
+        for (i,j) in enumerate(free_params_indexes)
+            αs_log[j] = αs_log_free[i]
+            βs_log[j] = βs_log_free[i]
+        end
     end
+
+    return Dict{String, Vector}(
+        "node_parent_idxs" => t.index[4,:],
+        "node_js"          => t.index[1,:],
+        "alpha"            => exp.(αs_log),
+        "beta"             => exp.(βs_log))
 end
 
 
-
-# TODO: Let's do this the straightforward way then try to optimize when we
-# find out how slow it is, then optimize with custom adjoints.
 
 """
 Stochastic estimate of ELBO
 """
 function beta_sample_elbo(
         t::PolyaTreeTransform, X::SparseMatrixCSC,
-        Xt::SparseMatrixCSC, αs::Vector, βs::Vector)
-    ysbuf = Zygote.Buffer(αs)
-    for i in 1:length(αs)
-        ysbuf[i] = Float32(rand(Beta(Float64(αs[i]), Float64(βs[i]))))
-    end
-    ys = copy(ysbuf)
+        Xt::SparseMatrixCSC, αs_log::Vector, βs_log::Vector)
 
-    # ys = Float32[rand(Beta(α, β)) for (α, β) in zip(αs, βs)]
-
+    ys = rand_betas(exp.(αs_log), exp.(βs_log))
+    @show extrema(ys)
+    # return sum((ys .- 0.5).^2) # TODO: Let's see if we can optimize anything
+    # @show extrema(ys)
     xs, ladj = transform(t, ys)
+    @show ladj
     lp = log_likelihood(X, Xt, xs)
-    return lp + ladj
-    return ladj
+    @show lp
+    return -lp - ladj
 end
 
 
@@ -818,11 +797,11 @@ function init_beta_params(X::SparseMatrixCSC, t::PolyaTreeTransform)
         # If child subtrees are disjoint, these are the correct KL minimizing
         # parameters. If they aren't disjoint, this is at least a reasonable
         # starting point.
-        αs[k] = ml + length(subtree_read_set_l)
-        βs[k] = mr + length(subtree_read_set_r)
+        αs[k] = ml + length(setdiff(subtree_read_set_l, subtree_read_set_r))
+        βs[k] = mr + length(setdiff(subtree_read_set_r, subtree_read_set_l))
 
         if has_intersection(subtree_read_set_l, subtree_read_set_r)
-            push!(free_params_indexes, i)
+            push!(free_params_indexes, k)
         end
 
         # keep track of the read set
@@ -843,7 +822,7 @@ function init_beta_params(X::SparseMatrixCSC, t::PolyaTreeTransform)
         k -= 1
     end
 
-    return αs, βs, free_params_indexes
+    return log.(αs), log.(βs), free_params_indexes
 end
 
 

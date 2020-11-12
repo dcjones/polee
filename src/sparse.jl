@@ -12,8 +12,7 @@ function pAt_mul_B!(y::Vector{S}, A::SparseMatrixCSC{T,I}, x::AbstractVector) wh
     rowval = A.rowval
     nzval = A.nzval
 
-    # Threads.@threads for j in 1:length(y)
-    for j in 1:length(y)
+    Threads.@threads for j in 1:length(y)
         @inbounds begin
             tmp = zero(T)
             for k_ in colptr[j]:colptr[j+1]-1

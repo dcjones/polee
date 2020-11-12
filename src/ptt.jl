@@ -119,7 +119,7 @@ end
 # TODO: I also compute the ladj on the forward pass. How should this work?
 # Return the transformed vector along with ladj it a tuple?
 
-function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
+function transform(t::PolyaTreeTransform{T}, ys::AbstractVector) where {T}
     n = length(ys) + 1
     xs = Vector{T}(undef, n)
     num_nodes = size(t.index, 2)
@@ -131,7 +131,7 @@ function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
         output_idx = t.index[1, i]
         if output_idx != 0
             xs[output_idx] = t.us[i]
-            xs[output_idx] = max(xs[output_idx], 1e-16)
+            # xs[output_idx] = max(xs[output_idx], 1e-16)
             continue
         end
 
@@ -139,10 +139,14 @@ function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
         left_idx = t.index[2, i]
         right_idx = t.index[3, i]
 
-        t.us[left_idx] = ys[k] * t.us[i]
-        t.us[right_idx] = (1 - ys[k]) * t.us[i]
+        t.us[left_idx] = max(ys[k] * t.us[i], 1e-16)
+        t.us[right_idx] = max((1 - ys[k]) * t.us[i], 1e-16)
 
         ladj += log(t.us[i])
+        if !isfinite(ladj)
+            @show (i, ladj, t.us[i], ys[k])
+            error()
+        end
 
         k += 1
     end
@@ -153,7 +157,7 @@ function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
 end
 
 
-Zygote.@adjoint function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) where {T}
+Zygote.@adjoint function transform(t::PolyaTreeTransform{T}, ys::AbstractVector) where {T}
     xs, ladj = transform(t, ys)
 
     function ptt_transform_pullback(x̄)
@@ -171,6 +175,10 @@ Zygote.@adjoint function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) wher
             if output_idx != 0
                 t.gradients[1, i] = x_grad[output_idx]
                 t.gradients[2, i] = zero(T)
+                if !isfinite(t.gradients[1, i])
+                    @show t.gradients[1, i]
+                    error()
+                end
                 continue
             end
 
@@ -187,6 +195,9 @@ Zygote.@adjoint function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) wher
             # contribution to their input values
             y_grad[k] = t.us[i] *
                 ((left_grad + left_ladj_grad) - (right_grad + right_ladj_grad))
+            if !isfinite(y_grad[k])
+                @show (t.us[i], left_grad, left_ladj_grad, right_grad, right_ladj_grad)
+            end
 
             # store derivative wrt this nodes input_value
             t.gradients[1, i] =
@@ -195,6 +206,10 @@ Zygote.@adjoint function transform(t::PolyaTreeTransform{T}, ys::Vector{T}) wher
             # store ladj derivative wrt to input_value
             t.gradients[2, i] =
                 1/t.us[i] + ys[k] * left_ladj_grad + (1 - ys[k]) * right_ladj_grad
+
+            if !isfinite(t.gradients[2, i])
+                @show (t.gradients[2, i], t.us[i], ys[k], left_ladj_grad, right_ladj_grad)
+            end
 
             k -= 1
         end

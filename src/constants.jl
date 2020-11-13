@@ -62,7 +62,7 @@ const ADAM_RV = 0.9
 const ADAM_RM = 0.7
 
 const LIKAP_NUM_STEPS = 500
-const LIKAP_NUM_MC_SAMPLES = 6
+const LIKAP_NUM_MC_SAMPLES = 1
 
 
 # Parameters to InverseGamma priors on variance parameters

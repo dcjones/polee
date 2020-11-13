@@ -660,45 +660,190 @@ function approximate_likelihood(approx::BetaPTTApprox,
     αs_log, βs_log, free_params_indexes = init_beta_params(X, t)
     @show length(free_params_indexes)
 
-    ADAM_LEARNING_RATE = 1e-1
-    opt = Flux.Optimise.ADAM(ADAM_LEARNING_RATE)
+    # ADAM_LEARNING_RATE = 1e-1
+    # opt = Flux.Optimise.ADAM(ADAM_LEARNING_RATE)
 
-    # free parameters and gradients
-    αs_log_free = Vector{Float32}(undef, length(free_params_indexes))
-    βs_log_free = Vector{Float32}(undef, length(free_params_indexes))
-    ∂αs_log_free = Vector{Float32}(undef, length(free_params_indexes))
-    ∂βs_log_free = Vector{Float32}(undef, length(free_params_indexes))
+    αs = Array{Float64}(undef, n-1)
+    βs = Array{Float64}(undef, n-1)
 
+    eps = 1e-14
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float64}(undef, n)
+    y_grad = Array{Float64}(undef, n-1)
+    x_grad = Array{Float64}(undef, n)
+
+    α_grad = Array{Float64}(undef, n-1)
+    β_grad = Array{Float64}(undef, n-1)
+
+    α_log_grad = Array{Float64}(undef, n-1)
+    β_log_grad = Array{Float64}(undef, n-1)
+    entropies = Array{Float64}(undef, n-1)
+
+    # gradient running mean
+    m_α = Array{Float64}(undef, n-1)
+    m_β = Array{Float64}(undef, n-1)
+
+    # gradient running variances
+    v_α = Array{Float64}(undef, n-1)
+    v_β = Array{Float64}(undef, n-1)
+
+    # step size clamp
+    ss_max_α_step = Inf
+    ss_max_β_step = Inf
+
+    # random gammas used to generate a random beta
+    us = Array{Float64}(undef, n-1)
+    vs = Array{Float64}(undef, n-1)
+    u_grad = Array{Float64}(undef, n-1)
+    v_grad = Array{Float64}(undef, n-1)
+
+    elbo0 = NaN
+
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
     for step_num in 1:LIKAP_NUM_STEPS
-        if step_num % 10 == 0
-            # TODO: check for convergence here
-            println("elbo = ", beta_sample_elbo(
-                t, X, Xt, αs_log, βs_log))
+        learning_rate = adam_learning_rate(step_num - 1)
+
+        fill!(α_log_grad, 0.0f0)
+        fill!(β_log_grad, 0.0f0)
+        elbo = 0.0
+
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
+            fill!(α_grad, 0.0)
+            fill!(β_grad, 0.0)
+            fill!(x_grad, 0.0)
+            fill!(y_grad, 0.0)
+            fill!(u_grad, 0.0)
+            fill!(v_grad, 0.0)
+
+            entropy = 0.0
+            # @show extrema(αs_log)
+            #  @show extrema(βs_log)
+            Threads.@threads for i in 1:n-1
+                α = αs[i] = exp(αs_log[i])
+                β = βs[i] = exp(βs_log[i])
+                # ys[i] = clamp(rand(Beta(α, β)), eps, 1-eps)
+                us[i] = rand_gamma1(α)
+                vs[i] = rand_gamma1(β)
+                ys[i] = clamp(us[i] / (us[i] + vs[i]), eps, 1-eps)
+
+                entropies[i] = beta_entropy(α, β)
+                ∂α, ∂β = beta_entropy_grad(α, β)
+                α_grad[i] += ∂α
+                β_grad[i] += ∂β
+            end
+            entropy = sum(entropies)
+
+            # @show extrema(α_grad)
+            # @show extrema(β_grad)
+
+            ptt_ladj = transform!(t, ys, xs, Val(true))
+            xs = clamp!(xs, eps, 1 - eps)
+
+            lp = log_likelihood(
+                model.frag_probs, model.log_frag_probs,
+                X, Xt, xs, x_grad, Val(false))
+
+            # clip these gradients since they can go nuts if we start from
+            # a really low prob initialization
+            clamp!(x_grad, -1e9, 1e9)
+
+            # @show extrema(x_grad)
+
+            elbo += lp + ptt_ladj + entropy
+            @show (lp, ptt_ladj, entropy)
+
+            # Backprop through ptt
+            transform_gradients!(t, ys, y_grad, x_grad)
+
+            # @show extrema(y_grad)
+
+            # backprop through beta generation
+            Threads.@threads for i in free_params_indexes
+            # Threads.@threads for i in 1:n-1
+                c = (us[i] + vs[i])^2
+                u_grad[i] = (vs[i] / c) * y_grad[i]
+                v_grad[i] = -(us[i] / c) * y_grad[i]
+                α_grad[i] += gamma1_grad(us[i], αs[i]) * u_grad[i]
+                β_grad[i] += gamma1_grad(vs[i], βs[i]) * v_grad[i]
+
+                α_log_grad[i] += αs[i] * α_grad[i]
+                β_log_grad[i] += βs[i] * β_grad[i]
+            end
+
+            # @show extrema(u_grad)
+            # @show extrema(v_grad)
+            # @show extrema(α_grad)
+            # @show extrema(β_grad)
         end
 
-        _, _, _, ∂α_log, ∂β_log = gradient(
-            beta_sample_elbo, t, X, Xt, αs_log, βs_log)
-
-        @show quantile(exp.(αs_log), [0.0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0])
-        @show quantile(exp.(βs_log), [0.0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0])
-
-        for (i,j) in enumerate(free_params_indexes)
-            αs_log_free[i] = αs_log[j]
-            βs_log_free[i] = βs_log[j]
-            ∂αs_log_free[i] = ∂α_log[j]
-            ∂βs_log_free[i] = ∂β_log[j]
+        elbo /= LIKAP_NUM_MC_SAMPLES
+        if isnan(elbo0)
+            elbo0 = elbo
         end
 
-        @show extrema(∂αs_log_free)
-        @show extrema(∂βs_log_free)
+        @show elbo
+        @show elbo/elbo0
 
-        Flux.Optimise.update!(opt, αs_log_free, ∂αs_log_free)
-        Flux.Optimise.update!(opt, βs_log_free, ∂βs_log_free)
+        @assert isfinite(elbo)
 
-        for (i,j) in enumerate(free_params_indexes)
-            αs_log[j] = αs_log_free[i]
-            βs_log[j] = βs_log_free[i]
+        all_finite = true
+        for i in 1:n-1
+            α_log_grad[i] /= LIKAP_NUM_MC_SAMPLES
+            β_log_grad[i] /= LIKAP_NUM_MC_SAMPLES
+            all_finite &= isfinite(α_grad[i]) && isfinite(β_grad[i])
         end
+        @assert all_finite
+
+        # TODO: Only bother doing updates on non-fixed params.
+        # We can probably just avoid coputing gradients for these to the extent
+        # possible.
+
+        adam_update_mv!(m_α, v_α, α_log_grad, step_num)
+        adam_update_mv!(m_β, v_β, β_log_grad, step_num)
+
+        adam_update_params!(αs_log, m_α, v_α, learning_rate, step_num, ss_max_α_step)
+        adam_update_params!(βs_log, m_β, v_β, learning_rate, step_num, ss_max_β_step)
+
+        # @show extrema(α_log_grad)
+        # @show extrema(β_log_grad)
+
+        # @show extrema(αs_log)
+        # @show extrema(βs_log)
+
+        next!(prog)
+
+        # TODO: Ok, we're going to do manual backprop. It's just too slow
+        # otherwise.
+
+        # if step_num % 10 == 0
+        #     # TODO: check for convergence here
+        #     println("elbo = ", beta_sample_elbo(
+        #         t, X, Xt, αs_log, βs_log))
+        # end
+
+        # _, _, _, ∂α_log, ∂β_log = gradient(
+        #     beta_sample_elbo, t, X, Xt, αs_log, βs_log)
+
+        # @show quantile(exp.(αs_log), [0.0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0])
+        # @show quantile(exp.(βs_log), [0.0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0])
+
+        # for (i,j) in enumerate(free_params_indexes)
+        #     αs_log_free[i] = αs_log[j]
+        #     βs_log_free[i] = βs_log[j]
+        #     ∂αs_log_free[i] = ∂α_log[j]
+        #     ∂βs_log_free[i] = ∂β_log[j]
+        # end
+
+        # @show extrema(∂αs_log_free)
+        # @show extrema(∂βs_log_free)
+
+        # Flux.Optimise.update!(opt, αs_log_free, ∂αs_log_free)
+        # Flux.Optimise.update!(opt, βs_log_free, ∂βs_log_free)
+
+        # for (i,j) in enumerate(free_params_indexes)
+        #     αs_log[j] = αs_log_free[i]
+        #     βs_log[j] = βs_log_free[i]
+        # end
     end
 
     return Dict{String, Vector}(

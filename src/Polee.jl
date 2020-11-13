@@ -14,7 +14,7 @@ using StatsBase
 using Nullables
 using Logging
 using SpecialFunctions: beta, digamma # used by kumaraswamy
-using SpecialFunctions: lgamma # used by gamma adjoint
+using SpecialFunctions: trigamma, lgamma # used by gamma adjoint
 using SQLite
 using CodecZlib
 import XAM: BAM, SAM

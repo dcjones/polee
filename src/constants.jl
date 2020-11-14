@@ -52,6 +52,7 @@ const LIKAP_Y_EPS = 1e-10
 
 const ADAM_INITIAL_LEARNING_RATE = 1.0
 const ADAM_LEARNING_RATE_DECAY = 2e-2
+# const ADAM_LEARNING_RATE_DECAY = 0.0
 
 # Don't let learning rate decay below this number
 const ADAM_MIN_LEARNING_RATE = 1e-3
@@ -62,8 +63,8 @@ const ADAM_RV = 0.9
 const ADAM_RM = 0.7
 
 const LIKAP_NUM_STEPS = 500
-const LIKAP_NUM_MC_SAMPLES = 1
-
+# const LIKAP_NUM_STEPS = 100
+const LIKAP_NUM_MC_SAMPLES = 6
 
 # Parameters to InverseGamma priors on variance parameters
 # const SIGMA_ALPHA0 = 0.1

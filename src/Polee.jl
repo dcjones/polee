@@ -34,7 +34,6 @@ using Zygote
 using ZygoteRules
 using StaticArrays
 import NaNMath
-import Flux
 
 
 # using Profile

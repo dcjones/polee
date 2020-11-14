@@ -221,10 +221,10 @@ end
 Pathwise derivative of a random variable z ~ Gamma(α, 1), wrt to α.
 """
 function gamma1_grad(z, α)
-    ∂α, ∂y = gradient(
-        αy -> Zygote.forwarddiff(_gamma_inc_lower, αy),
+    ∂α, ∂z = gradient(
+        αz -> Zygote.forwarddiff(_gamma_inc_lower, αz),
         SA[Float64(α), Float64(z)])[1]
-    return -∂α/∂y
+    return -∂α/∂z
 end
 
 

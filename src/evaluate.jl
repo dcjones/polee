@@ -22,7 +22,8 @@ function sample_likap(input_filename::String, num_samples)
         "KumaraswamyHSBApprox"     => KumaraswamyPTTApprox,
         "KumaraswamyPTTApprox"     => KumaraswamyPTTApprox,
         "NormalILRApprox"          => NormalILRApprox,
-        "NormalALRApprox"          => NormalALRApprox )
+        "NormalALRApprox"          => NormalALRApprox,
+        "BetaPTTApprox"            => BetaPTTApprox)
 
     return sample_likap(typenames[approx_type_name], input, num_samples)
 end
@@ -139,6 +140,44 @@ function sample_likap(approx_type::Type{LogitSkewNormalPTTApprox},
 
         sinh_asinh_transform!(alpha, zs0, zs, Val(true))
         logit_normal_transform!(mu, sigma, zs, ys, Val(true))
+        ys = clamp!(ys, eps, 1 - eps)
+        transform!(t, ys, xs, Val(true))
+        xs = clamp!(xs, eps, 1 - eps)
+
+        for j in 1:n
+            xs[j] /= effective_lengths[j]
+        end
+        xs ./= sum(xs)
+
+        samples[i,:] = xs
+    end
+
+    return samples
+end
+
+
+function sample_likap(approx_type::Type{BetaPTTApprox},
+                      input, num_samples)
+    αs = read(input["alpha"])
+    βs = read(input["beta"])
+
+    effective_lengths = read(input["effective_lengths"])
+    t = PolyaTreeTransform(
+        read(input["node_parent_idxs"]),
+        read(input["node_js"]))
+    close(input)
+    n = length(αs) + 1
+
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float32}(undef, n)
+    samples = Array{Float32}(undef, (num_samples, n))
+    eps = 1e-14
+
+    for i in 1:num_samples
+        for j in 1:n-1
+            ys[j] = rand(Beta(αs[j], βs[j]))
+        end
+
         ys = clamp!(ys, eps, 1 - eps)
         transform!(t, ys, xs, Val(true))
         xs = clamp!(xs, eps, 1 - eps)

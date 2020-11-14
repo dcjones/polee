@@ -450,7 +450,9 @@ function approximate_likelihood(approx::KumaraswamyPTTApprox,
             xs = clamp!(xs, LIKAP_Y_EPS, 1 - LIKAP_Y_EPS)
 
             lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val(gradonly))
+                                X, Xt, xs, x_grad, Val(false))
+                                # Val(gradonly))
+            @show lp
             elbo = lp + kum_ladj + hsb_ladj
 
             transform_gradients!(t, ys, y_grad, x_grad)

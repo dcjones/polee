@@ -17,7 +17,7 @@ function _gamma_inc_lower(p::T, x::T) where {T<:Real}
     elimit = T(-88.0)
     oflo = T(1.0e37)
     plimit = T(1000.0)
-    tol = T(1.0e-14)
+    tol = T(1.0e-8)
     xbig = T(1.0e8)
 
     if x < zero(T)
@@ -221,10 +221,8 @@ end
 Pathwise derivative of a random variable z ~ Gamma(α, 1), wrt to α.
 """
 function gamma1_grad(z, α)
-    ∂α, ∂z = gradient(
-        αz -> Zygote.forwarddiff(_gamma_inc_lower, αz),
-        SA[Float64(α), Float64(z)])[1]
-    return -∂α/∂z
+    _, ∂αz = Zygote.forward_jacobian(_gamma_inc_lower, SA[Float64(α), Float64(z)])
+    return -∂αz[1]/∂αz[2]
 end
 
 

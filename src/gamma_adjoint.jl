@@ -221,8 +221,10 @@ end
 Pathwise derivative of a random variable z ~ Gamma(α, 1), wrt to α.
 """
 function gamma1_grad(z, α)
-    _, ∂αz = Zygote.forward_jacobian(_gamma_inc_lower, SA[Float64(α), Float64(z)])
-    return -∂αz[1]/∂αz[2]
+    ∂α, ∂z = _gamma_inc_lower(
+        Zygote.Dual(Float64(α), 1, 0),
+        Zygote.Dual(Float64(z), 0, 1)).partials
+    return -∂α/∂z
 end
 
 

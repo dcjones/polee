@@ -32,7 +32,6 @@ using Random
 using ChainRules
 using Zygote
 using ZygoteRules
-using StaticArrays
 import NaNMath
 
 

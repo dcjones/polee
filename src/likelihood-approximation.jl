@@ -657,10 +657,7 @@ function approximate_likelihood(approx::BetaPTTApprox,
         error("Fixed tree must be provided with Beta-PTT approximation.")
     end
 
-    αs_log, βs_log, free_params_indexes = init_beta_params(X, t)
-    # fill!(αs_log, 0.0)
-    # fill!(βs_log, 0.0)
-    @show length(free_params_indexes)
+    αs_log, βs_log = init_beta_params(X, t)
 
     # ADAM_LEARNING_RATE = 1e-1
     # opt = Flux.Optimise.ADAM(ADAM_LEARNING_RATE)
@@ -668,7 +665,7 @@ function approximate_likelihood(approx::BetaPTTApprox,
     αs = Array{Float64}(undef, n-1)
     βs = Array{Float64}(undef, n-1)
 
-    eps = 1e-10
+    eps = 1e-14
     ys = Array{Float64}(undef, n-1)
     xs = Array{Float64}(undef, n)
     y_grad = Array{Float64}(undef, n-1)
@@ -717,8 +714,8 @@ function approximate_likelihood(approx::BetaPTTApprox,
             fill!(x_grad, 0.0)
             fill!(y_grad, 0.0)
 
-            @show extrema(αs_log)
-            @show extrema(βs_log)
+            # @show extrema(αs_log)
+            # @show extrema(βs_log)
             Threads.@threads for i in 1:n-1
                 α = αs[i] = exp(αs_log[i])
                 β = βs[i] = exp(βs_log[i])
@@ -740,23 +737,16 @@ function approximate_likelihood(approx::BetaPTTApprox,
                 model.frag_probs, model.log_frag_probs,
                 X, Xt, xs, x_grad, Val(false))
 
-            @show lp
-
-            @show extrema(x_grad)
-
-            # # clip these gradients since they can go nuts if we start from
-            # # a really low prob initialization
-            # clamp!(x_grad, -1e9, 1e9)
+            # @show lp
 
             elbo += lp + ptt_ladj + entropy
 
             # Backprop through ptt
             transform_gradients!(t, ys, y_grad, x_grad)
 
-            @show extrema(y_grad)
+            # @show extrema(y_grad)
 
             # backprop through beta generation
-            # Threads.@threads for i in free_params_indexes
             Threads.@threads for i in 1:n-1
                 c = (us[i] + vs[i])^2
                 u_grad = (vs[i] / c) * y_grad[i]
@@ -775,8 +765,8 @@ function approximate_likelihood(approx::BetaPTTApprox,
             max_elbo = elbo
         end
 
-        @show elbo
-        @show elbo - max_elbo
+        # @show elbo
+        # @show elbo - max_elbo
         if elbo > max_elbo
             max_elbo = elbo
             no_improvement_count = 0
@@ -800,6 +790,21 @@ function approximate_likelihood(approx::BetaPTTApprox,
 
         next!(prog)
     end
+
+    # open("fixed-params-change.csv", "w") do out
+    #     println(out, "alpha,beta,alpha_init,beta_init,fixed")
+    #     αs_log_init, βs_log_init, _ = init_beta_params(X, t)
+    #     fpi_set = Set(free_params_indexes)
+    #     for i in 1:n-1
+    #         α = round(exp(αs_log[i]), digits=2)
+    #         β = round(exp(βs_log[i]), digits=2)
+    #         α_init = round(exp(αs_log_init[i]), digits=2)
+    #         β_init = round(exp(βs_log_init[i]), digits=2)
+    #         println(
+    #             out, α, ",", β, ",", α_init, ",", β_init, ",",
+    #             i ∈ fpi_set ? "fixed" : "free")
+    #     end
+    # end
 
     return Dict{String, Vector}(
         "node_parent_idxs" => t.index[4,:],
@@ -845,11 +850,8 @@ function init_beta_params(X::SparseMatrixCSC, t::PolyaTreeTransform)
     subtree_size = zeros(Int, num_nodes)
     subtree_read_sets = Dict{Int, Set{Int}}()
 
-    αs = zeros(Float32, n-1)
-    βs = zeros(Float32, n-1)
-
-    # indexes of params that are not fixed and need to be optimized
-    free_params_indexes = Int[]
+    αs = zeros(Float64, n-1)
+    βs = zeros(Float64, n-1)
 
     # just to keep track of whether the root had intersecting children
 
@@ -877,18 +879,11 @@ function init_beta_params(X::SparseMatrixCSC, t::PolyaTreeTransform)
         subtree_read_set_l = subtree_read_sets[left_idx]
         subtree_read_set_r = subtree_read_sets[right_idx]
 
-        # If child subtrees are disjoint, these are the correct KL minimizing
-        # parameters. If they aren't disjoint, this is at least a reasonable
-        # starting point.
+        # If there's complete subcompositional independence, then these are
+        # the correct KL minimizing values. Otherwise, they are just pretty
+        # good initializations.
         αs[k] = ml + length(setdiff(subtree_read_set_l, subtree_read_set_r))
         βs[k] = mr + length(setdiff(subtree_read_set_r, subtree_read_set_l))
-        # TODO: testing a chill initialization
-        # αs[k] = ml
-        # βs[k] = mr
-
-        if has_intersection(subtree_read_set_l, subtree_read_set_r)
-            push!(free_params_indexes, k)
-        end
 
         # keep track of the read set
         # ok to overwrite sets because we don't need them after climbing the
@@ -908,6 +903,6 @@ function init_beta_params(X::SparseMatrixCSC, t::PolyaTreeTransform)
         k -= 1
     end
 
-    return log.(αs), log.(βs), free_params_indexes
+    return log.(αs), log.(βs)
 end
 

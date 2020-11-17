@@ -54,6 +54,9 @@ arg_settings.commands_are_required = true
     "prep-sample"
         help = "Approximate likelihood for one sample."
         action = :command
+    "fit-tree"
+        help = "Build a fixed Polya tree transformation from transcript sequences"
+        action = :command
     "sample"
         help = "Sample from approximate likelihood."
         action = :command
@@ -174,6 +177,24 @@ end
         genome alignments are used"""
         required = false
 end
+
+
+@add_arg_table! arg_settings["fit-tree"] begin
+    "--output", "-o"
+        metavar = "polee-transform.h5"
+        help = "Output tree"
+        default = "polee-transform.h5"
+    "genome_filename"
+        metavar = "sequences.fa"
+        help = "Reference sequences in FASTA format."
+        required = true
+    "annotations_filename"
+        metavar = "annotations.gff3"
+        help = """Transcript annotation filename in GFF3 format, if
+        genomic sequences are used"""
+        required = false
+end
+
 
 @add_arg_table! arg_settings["sample"] begin
     "--output", "-o"
@@ -309,6 +330,8 @@ function main(args=nothing)
         polee_prep(command_args)
     elseif command == "prep-sample"
         polee_prep_sample(command_args)
+    elseif command == "fit-tree"
+        polee_fit_tree(command_args)
     elseif command == "sample"
         polee_sample(command_args)
     elseif command == "debug-sample"
@@ -559,6 +582,34 @@ function polee_prep(parsed_args::Dict{String, Any})
             no_bias=no_bias)
 
         approximate_likelihood(approximation, sample, output_file)
+    end
+end
+
+
+"""
+Handle 'polee fit-tree' command.
+"""
+function polee_fit_tree(parsed_args::Dict{String, Any})
+    if parsed_args["annotations_filename"] === nothing
+        @debug "No transcript annotations file, assuming sequences are transcriptome."
+        ts, ts_metadata = Polee.read_transcripts_from_fasta(
+            parsed_args["genome_filename"], Set{String}())
+    else
+        ts, ts_metadata = Polee.Transcripts(parsed_args["annotations_filename"])
+        Polee.read_transcript_sequences!(ts_tree, parsed_args["genome_filename"])
+    end
+
+    parent_idxs, node_js = build_polya_tree_transformation(ts)
+
+    h5open(parsed_args["output"], "w") do output
+        output["node_parent_idxs"] = parent_idxs
+        output["node_js"] = node_js
+        output["transcript_ids"] = String[t.metadata.name for t in ts]
+
+        g = g_create(output, "metadata")
+        attrs(g)["version"] = PREPARED_TRANSFORMATION_FORMAT_VERSION
+        attrs(g)["date"] = string(now())
+        attrs(g)["args"] = join(ARGS, ' ')
     end
 end
 

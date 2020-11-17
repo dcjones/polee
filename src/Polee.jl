@@ -98,6 +98,8 @@ include("additive_log_ratios.jl")
 include("sequences.jl")
 include("evaluate.jl")
 include("approx-sampler.jl")
+include("kmersketch.jl")
+include("kmercluster.jl")
 
 include("main.jl")
 

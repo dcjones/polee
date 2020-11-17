@@ -11,6 +11,9 @@ const INFORMATIVE_PRIOR = false
 # the approximated likelihood function or its serialization format.
 const PREPARED_SAMPLE_FORMAT_VERSION = 2
 
+# Increment this whenever we introduce breaking changes to the tree format.
+const PREPARED_TRANSFORMATION_FORMAT_VERSION = 1
+
 
 # mask of flags we care about
 const USED_BAM_FLAGS =
@@ -81,3 +84,6 @@ const BIAS_NUM_FREQ_BINS = 4
 # (larger number is more accurate but slower)
 const BIAS_EFFLEN_NUM_FRAGLENS = 200
 
+# Parameters of the sketch data structure used for k-mer based clustering.
+const KMER_CLUSTER_K = 32
+const KMER_CLUSTER_H = 200

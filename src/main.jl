@@ -57,6 +57,9 @@ arg_settings.commands_are_required = true
     "fit-tree"
         help = "Build a fixed Polya tree transformation from transcript sequences"
         action = :command
+    "prep-salmon"
+        help = "Approximate likelihood using 'salmon quant' output."
+        action = :command
     "sample"
         help = "Sample from approximate likelihood."
         action = :command
@@ -196,6 +199,43 @@ end
 end
 
 
+@add_arg_table! arg_settings["prep-salmon"] begin
+    "--output", "-o"
+        metavar = "prepared-sample.h5"
+        help = "Output filename."
+        default = "prepared-sample.h5"
+    "--seed"
+        metavar = "N"
+        help = "RNG seed"
+        default = 123456789
+        arg_type = Int
+    "--verbose"
+        help = "Print some additional diagnostic output."
+        action = :store_true
+    "--approx-method"
+        help = "Likelihood approximation method. (Don't mess with this)"
+        default = "logit_skew_normal_ptt"
+    "--no-efflen-jacobian"
+        help = """
+            By default the likelihood function includes the jacobian
+            determinant of the effective length adjustment, so it is a function
+            over transcript expression, rather that length weighted expression.
+            This option excludes that jacobian determinant factor.
+        """
+        action = :store_true
+    "--num-threads", "-t" # handled by the wrapper script
+        metavar = "N"
+        help = "Number of threads to use. (Defaults to number of cores.)"
+        required = false
+    "ptt_filename"
+        metavar = "transform.h5"
+        required = true
+    "salmon_dir"
+        metavar = "salmon_quant_dir"
+        required = true
+end
+
+
 @add_arg_table! arg_settings["sample"] begin
     "--output", "-o"
         arg_type = String
@@ -328,10 +368,12 @@ function main(args=nothing)
     command_args = parsed_args[command]::Dict{String, Any}
     if command == "prep"
         polee_prep(command_args)
-    elseif command == "prep-sample"
-        polee_prep_sample(command_args)
+    elseif command == "prep-salmon"
+        polee_prep_salmon(command_args)
     elseif command == "fit-tree"
         polee_fit_tree(command_args)
+    elseif command == "prep-sample"
+        polee_prep_sample(command_args)
     elseif command == "sample"
         polee_sample(command_args)
     elseif command == "debug-sample"
@@ -668,6 +710,39 @@ function polee_prep_sample(parsed_args::Dict{String, Any})
             tree_topology_input_filename=parsed_args["ptt-tree"],
             tree_topology_output_filename=parsed_args["write-tree-topology"])
     end
+end
+
+
+"""
+Handle 'polee prep-salmon' command.
+"""
+function polee_prep_salmon(parsed_args::Dict{String, Any})
+    if parsed_args["verbose"]
+        global_logger(ConsoleLogger(stderr, Logging.Debug))
+    end
+
+    approx = select_approx_method(parsed_args["approx-method"], :static)
+    Random.seed!(parsed_args["seed"])
+
+    # load ptt
+    input = h5open(parsed_args["ptt_filename"])
+    if read(attrs(input["metadata"])["version"]) != PREPARED_TRANSFORMATION_FORMAT_VERSION
+        error("Version mismatch. The transformation was fit with a different version of polee.")
+    end
+
+    t = PolyaTreeTransform(
+        read(input["node_parent_idxs"]),
+        read(input["node_js"]))
+    transcript_ids = read(input["transcript_ids"])
+    close(input)
+
+    X, ks, efflens = load_salmon_likelihood(
+        parsed_args["salmon_dir"], transcript_ids)
+
+    approximate_likelihood(
+        approx, t, X, ks, efflens,
+        parsed_args["output"],
+        use_efflen_jacobian=!parsed_args["no-efflen-jacobian"])
 end
 
 

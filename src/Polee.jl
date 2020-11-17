@@ -15,6 +15,7 @@ using Nullables
 using Logging
 using SpecialFunctions: beta, digamma # used by kumaraswamy
 using SQLite
+using CodecZlib
 import XAM: BAM, SAM
 import GFF3
 import IntervalTrees
@@ -100,6 +101,7 @@ include("evaluate.jl")
 include("approx-sampler.jl")
 include("kmersketch.jl")
 include("kmercluster.jl")
+include("salmon.jl")
 
 include("main.jl")
 

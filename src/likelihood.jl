@@ -56,6 +56,35 @@ function log_likelihood(
 end
 
 
+function factored_log_likelihood(
+        frag_probs, log_frag_probs,
+        X::SparseMatrixCSC, Xt::SparseMatrixCSC, ks::Vector{Int},
+        xs, x_grad,
+        ::Val{gradonly}) where {gradonly}
+    m, n = size(X)
+
+    # conditional fragment probabilities
+    pAt_mul_B!(frag_probs, Xt, xs)
+
+    # log likelihood
+    lp = 0.0
+    if !gradonly
+        log!(log_frag_probs, frag_probs, m)
+        log_frag_probs .*= ks
+        lp = sum(log_frag_probs)
+        @assert isfinite(lp)
+    end
+
+    Threads.@threads for i in 1:m
+        frag_probs[i] = ks[i] / frag_probs[i]
+    end
+
+    pAt_mul_B!(x_grad, X, frag_probs)
+
+    return lp
+end
+
+
 # prior probability correction: without this, there is an implicit
 # assumption of a uniform prior over effective length weighted expression
 # values. We actually want to assume a uniform prior over unweighted

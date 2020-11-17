@@ -175,7 +175,7 @@ function sample_likap(approx_type::Type{BetaPTTApprox},
 
     for i in 1:num_samples
         for j in 1:n-1
-            ys[j] = rand(Beta(αs[j], βs[j]))
+            ys[j] = rand(Beta(Float64(αs[j]), Float64(βs[j])))
         end
 
         ys = clamp!(ys, eps, 1 - eps)

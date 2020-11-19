@@ -384,14 +384,13 @@ function approximate_likelihood(
         next!(prog)
     end
 
-    # TODO: Eventually we should not write the tree to the approximation
-    # We need to make sure the tensorflow stuff works with a single fixed tree
-    # first though.
-
     params = Dict{String, Vector}(
-        "node_parent_idxs" => t.index[4,:],
-        "node_js"          => t.index[1,:],
         "mu" => mu, "omega" => omega, "alpha" => alpha)
+
+    if tree_topology_input_filename === nothing
+        params["node_parent_idxs"] = t.index[4,:]
+        params["node_js"] = t.index[1,:]
+    end
 
     write_approximation(
         output_filename, m, n, efflens, params, typeof(approx), "", "", "", "")
@@ -618,9 +617,14 @@ function approximate_likelihood(approx::LogitSkewNormalPTTApprox,
         end
     end
 
-    return Dict{String, Vector}(
-        "node_parent_idxs" => t.index[4,:],
-        "node_js"          => t.index[1,:],
+    params = Dict{String, Vector}(
         "mu" => mu, "omega" => omega, "alpha" => alpha)
+
+    if tree_topology_input_filename === nothing
+        params["node_parent_idxs"] = t.index[4,:]
+        params["node_js"] = t.index[1,:]
+    end
+
+    return params
 end
 

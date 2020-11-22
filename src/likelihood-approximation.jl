@@ -339,8 +339,9 @@ function approximate_likelihood(
             hsb_ladj = transform!(t, ys, xs, Val(false))
             xs = clamp!(xs, eps, 1 - eps)
 
-            lp = log_likelihood(model.frag_probs, model.log_frag_probs,
-                                X, Xt, xs, x_grad, Val(true))
+            lp = factored_log_likelihood(
+                model.frag_probs, model.log_frag_probs,
+                X, Xt, ks, xs, x_grad, Val(true))
 
             if use_efflen_jacobian
                 lp += effective_length_jacobian_adjustment!(efflens, xs, xls, x_grad)

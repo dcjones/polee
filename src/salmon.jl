@@ -11,16 +11,6 @@ function load_salmon_likelihood(salmon_dir::String, transcript_ids::Vector{Strin
         tid_map[tid] = i
     end
 
-    # get effective lengths from quant.sf
-    quant_filename = joinpath(salmon_dir, "quant.sf")
-    efflens = Float32[]
-    open(quant_filename) do input
-        readline(input) # header
-        for line in eachline(input)
-            push!(efflens, parse(Float32, split(line, '\t')[3]))
-        end
-    end
-
     # get transcript_ids and probabilities from aux_info/eq_classes.txt.gz
     eqc_filename = joinpath(salmon_dir, "aux_info", "eq_classes.txt.gz")
     salmon_transcript_ids = String[]
@@ -33,6 +23,7 @@ function load_salmon_likelihood(salmon_dir::String, transcript_ids::Vector{Strin
     J = Int[]
     V = Float32[]
     ks = Int[]
+    efflens = Float32[]
 
     open(eqc_filename) do input
         stream = GzipDecompressorStream(input)
@@ -48,6 +39,17 @@ function load_salmon_likelihood(salmon_dir::String, transcript_ids::Vector{Strin
                 'salmon index' and 'polee fit-tree' were used with different sets of transcripts.
                 You may need to run 'salmon index' with '--keepDuplicates'.
                 """)
+        end
+
+        # get effective lengths from quant.sf
+        quant_filename = joinpath(salmon_dir, "quant.sf")
+        resize!(efflens, n)
+        open(quant_filename) do input
+            readline(input) # header
+            for line in eachline(input)
+                row = split(line, '\t')
+                efflens[tid_map[row[1]]] = parse(Float32, row[3])
+            end
         end
 
         for i in 1:m

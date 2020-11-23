@@ -263,6 +263,10 @@ end
         metavar = "sequences.fa"
         help = ""
         required = false
+    "--transformation"
+        metavar = "polee-transform.h5"
+        default = nothing
+        required = false
     "--trim-prefix"
         metavar = "prefix"
         help = """Trim the given prefix from transcripts identifiers when
@@ -759,12 +763,22 @@ function polee_sample(parsed_args::Dict{String, Any})
     transcripts_filename = read(attrs(input_metadata)["gfffilename"])
     sequences_filename = read(attrs(input_metadata)["fafilename"])
     close(input_metadata)
+    transformation_filename = nothing
+
+    if parsed_args["transformation"] !== nothing
+        transformation_filename = parsed_args["transformation"]
+    end
 
     if parsed_args["annotations"] !== nothing
         transcripts_filename = parsed_args["annotations"]
     end
 
-    if isempty(transcripts_filename)
+    if transformation_filename !== nothing
+        transform_input = h5open(transformation_filename)
+        tnames = read(transform_input["transcript_ids"])
+        close(transform_input)
+
+    elseif isempty(transcripts_filename)
         if parsed_args["sequences"] !== nothing
             sequences_filename = parsed_args["sequences"]
         end
@@ -777,15 +791,21 @@ function polee_sample(parsed_args::Dict{String, Any})
 
         ts, ts_metadata = read_transcripts_from_fasta(
             sequences_filename, excluded_transcripts)
+
+        tnames = Array{String}(undef, length(ts))
+        for t in ts
+            tnames[t.metadata.id] = t.metadata.name
+        end
     else
         ts, ts_metadata = Transcripts(
             transcripts_filename, excluded_transcripts)
+
+        tnames = Array{String}(undef, length(ts))
+        for t in ts
+            tnames[t.metadata.id] = t.metadata.name
+        end
     end
 
-    tnames = Array{String}(undef, length(ts))
-    for t in ts
-        tnames[t.metadata.id] = t.metadata.name
-    end
 
     if parsed_args["trim-prefix"] !== nothing
         for (i, tname) in enumerate(tnames)
@@ -794,7 +814,7 @@ function polee_sample(parsed_args::Dict{String, Any})
         end
     end
 
-    n = length(ts)
+    n = length(tnames)
 
     node_parent_idxs = read(input["node_parent_idxs"])
     node_js          = read(input["node_js"])
@@ -883,7 +903,7 @@ function polee_sample(parsed_args::Dict{String, Any})
 
         open(parsed_args["output"], "w") do output
             println(output, "transcript_id,tpm")
-            for (j, t) in enumerate(ts)
+            for j in 1:n
                 println(output, tnames[j], ",", 1e6*post_mean[j])
             end
         end

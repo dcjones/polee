@@ -58,16 +58,13 @@ function load_salmon_likelihood(salmon_dir::String, transcript_ids::Vector{Strin
         row = split(readline(stream), '\t')
         nval = parse(Int, row[1])
 
+        push!(ks, parse(Int, row[1+2*nval+1]))
+
         for j in 1:nval
             push!(I, i)
-            push!(J, tid_map[salmon_transcript_ids[parse(Int, row[1+j])]])
-        end
-
-        for j in 1:nval
+            push!(J, tid_map[salmon_transcript_ids[1+parse(Int, row[1+j])]])
             push!(V, parse(Float32, row[1+nval+j]))
         end
-
-        push!(ks, parse(Int, row[1+2*nval+1]))
 
         if length(row) < 2 + 2*nval
             error("Missing likelihood data. Please run salmon quand with '-d'")

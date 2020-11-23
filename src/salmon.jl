@@ -25,55 +25,58 @@ function load_salmon_likelihood(salmon_dir::String, transcript_ids::Vector{Strin
     ks = Int[]
     efflens = Float32[]
 
-    open(eqc_filename) do input
-        stream = GzipDecompressorStream(input)
-        n = parse(Int, readline(stream))
-        m = parse(Int, readline(stream))
-        for i in 1:n
-            push!(salmon_transcript_ids, readline(stream))
-        end
+    input = open(eqc_filename)
 
-        if Set(salmon_transcript_ids) != Set(transcript_ids)
-            error(
-                """
-                'salmon index' and 'polee fit-tree' were used with different sets of transcripts.
-                You may need to run 'salmon index' with '--keepDuplicates'.
-                """)
-        end
+    stream = GzipDecompressorStream(input)
+    n = parse(Int, readline(stream))
+    m = parse(Int, readline(stream))
+    for i in 1:n
+        push!(salmon_transcript_ids, readline(stream))
+    end
 
-        # get effective lengths from quant.sf
-        quant_filename = joinpath(salmon_dir, "quant.sf")
-        resize!(efflens, n)
-        open(quant_filename) do input
-            readline(input) # header
-            for line in eachline(input)
-                row = split(line, '\t')
-                efflens[tid_map[row[1]]] = parse(Float32, row[3])
-            end
-        end
+    if Set(salmon_transcript_ids) != Set(transcript_ids)
+        error(
+            """
+            'salmon index' and 'polee fit-tree' were used with different sets of transcripts.
+            You may need to run 'salmon index' with '--keepDuplicates'.
+            """)
+    end
 
-        for i in 1:m
-            row = split(readline(stream), '\t')
-            nval = parse(Int, row[1])
-
-            for j in 1:nval
-                push!(I, i)
-                push!(J, tid_map[salmon_transcript_ids[parse(Int, row[1+j])]])
-            end
-
-            for j in 1:nval
-                push!(V, parse(Float32, row[1+nval+j]))
-            end
-
-            push!(ks, parse(Int, row[1+2*nval+1]))
-
-            if length(row) < 2 + 2*nval
-                error("Missing likelihood data. Please run salmon quand with '-d'")
-            end
+    # get effective lengths from quant.sf
+    quant_filename = joinpath(salmon_dir, "quant.sf")
+    resize!(efflens, n)
+    open(quant_filename) do input
+        readline(input) # header
+        for line in eachline(input)
+            row = split(line, '\t')
+            efflens[tid_map[row[1]]] = parse(Float32, row[3])
         end
     end
 
-    X = sparse(I, J, V)
+    l = 1
+    for i in 1:m
+        row = split(readline(stream), '\t')
+        nval = parse(Int, row[1])
+
+        for j in 1:nval
+            push!(I, i)
+            push!(J, tid_map[salmon_transcript_ids[parse(Int, row[1+j])]])
+        end
+
+        for j in 1:nval
+            push!(V, parse(Float32, row[1+nval+j]))
+        end
+
+        push!(ks, parse(Int, row[1+2*nval+1]))
+
+        if length(row) < 2 + 2*nval
+            error("Missing likelihood data. Please run salmon quand with '-d'")
+        end
+    end
+
+    close(input)
+
+    X = sparse(I, J, V, m, n)
     return X, ks, efflens
 end
 

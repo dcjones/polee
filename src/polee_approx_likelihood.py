@@ -72,6 +72,177 @@ def rnaseq_approx_likelihood_sampler_from_vars(num_samples, n, vars):
 
 
 """
+Approximated RNA-Seq likelihood using a shared transformation.
+"""
+class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
+    def __init__(self, x, efflens,
+                 la_mu,
+                 la_sigma,
+                 la_alpha,
+                 left_index,
+                 right_index,
+                 leaf_index,
+                 name="RNASeqSharedPTTApproxLikelihood"):
+        self.x           = x
+        self.efflens     = efflens
+        self.mu          = la_mu
+        self.sigma       = la_sigma
+        self.alpha       = la_alpha
+
+        # I don't actually need these vars after this
+        # left_index  = left_index.numpy()
+        # right_index = right_index.numpy()
+        # leaf_index  = leaf_index.numpy()
+
+        parameters = dict(locals())
+
+        num_nodes = left_index.shape[-1]
+        n = (num_nodes+1)//2
+
+        # construct sparse matrix to compute internal intermediate values from cumsum
+
+        indexes = np.zeros([2*(n-1), 2], np.int)
+        values = np.zeros([2*(n-1)], np.float64)
+
+        # for each internal node we need to know its min and max leaf child
+        min_leaf_index = np.zeros([num_nodes], np.int)
+        max_leaf_index = np.zeros([num_nodes], np.int)
+
+        for i in range(n-1, num_nodes):
+            min_leaf_index[i] = i - (n-1)
+            max_leaf_index[i] = i - (n-1)
+
+        for i in range(n-2, -1, -1):
+            min_leaf_index[i] = min_leaf_index[left_index[0, i]]
+            max_leaf_index[i] = max_leaf_index[right_index[0, i]]
+
+        # build sparse matrix for internal nodes
+        for i in range(n-1):
+            indexes[2*i+1, 0] = i
+            indexes[2*i+1, 1] = max_leaf_index[i]
+            values[2*i+1] = 1.0
+
+            if min_leaf_index[i] > 0:
+                indexes[2*i, 0] = i
+                indexes[2*i, 1] = min_leaf_index[i]-1
+                values[2*i] = -1.0
+            else:
+                # we don't need this entry, easier to just set it do arbitrary
+                # index and zero than to try to remove it
+                indexes[2*i, 0] = i
+                indexes[2*i, 1] = max_leaf_index[i]
+                values[2*i] = 0.0
+
+        self.cumsum_to_internal_intermediate_mat = tf.sparse.SparseTensor(
+            indexes, values, [n-1, n])
+
+        super(RNASeqSharedPTTApproxLikelihoodDist, self).__init__(
+              dtype=self.x.dtype,
+              reparameterization_type=tfp.distributions.FULLY_REPARAMETERIZED,
+              validate_args=False,
+              allow_nan_stats=False,
+              parameters=parameters,
+              name=name)
+
+    def _event_shape(self):
+        # return tf.TensorShape([self.x.get_shape()[-1]])
+        return tf.TensorShape([])
+
+    def _batch_shape(self):
+        return self.x.get_shape()[:-1]
+
+    def _sample_n(self, N, seed=None):
+        shape = (N,) + self._batch_shape()
+        return tf.zeros(shape)
+
+    # @tf.function
+    def _log_prob(self, __ignored__):
+        num_samples = int(self.x.get_shape()[-2])
+        n           = int(self.x.get_shape()[-1])
+        num_nodes   = 2*n - 1
+
+        mu    = self.mu
+        sigma = self.sigma
+        alpha = self.alpha
+
+        # log absolute determinant of the jacobian
+        ladj = 0.0
+
+        x_exp = tf.math.exp(self.x)
+
+        # jacobian for exp transformation
+        ladj += tf.reduce_sum(self.x, axis=-1)
+
+        # compute softmax of x
+        x = x_exp / tf.reduce_sum(x_exp, axis=-1, keepdims=True)
+
+        # jacobian for softmax (softmax is not a bijection, so this is not imprecise)
+        ladj -= (n-1) * tf.math.log(tf.reduce_sum(x_exp, axis=-1))
+
+        # effective length transform
+        # --------------------------
+
+        x_scaled = x * self.efflens
+        x_scaled_sum = tf.reduce_sum(x_scaled, axis=-1, keepdims=True)
+        x_efflen = x_scaled / x_scaled_sum
+
+        ladj += tf.expand_dims(tf.reduce_sum(tf.math.log(self.efflens), axis=-1), axis=0) - \
+                tf.reshape(tf.math.log(x_scaled_sum), [1, num_samples])
+
+        # Inverse ptt
+        # -----------
+
+        # TODO: VERY IMPORTANT! For this to work, we need to use leaf_indxes to
+        # permute the last dimension of x_efflen into the right order.
+
+        C = tf.math.cumsum(tf.cast(x_efflen, tf.float64), axis=-1)
+
+        # compute internal intermediate values
+        y = tf.sparse.sparse_dense_matmul(
+            self.cumsum_to_internal_intermediate_mat, tf.squeeze(C, axis=0), adjoint_b=True)
+
+        y = tf.cast(U, tf.float32) # [n-1, num_samples]
+        y = tf.transpose(U) # [num_samples, n-1]
+
+        # Logit
+        # -----
+
+        y_log = tf.math.log(y)
+        y_1mlog = tf.math.log1p(-y)
+
+        y_logit = tf.cast(y_log - y_1mlog, tf.float32)
+
+        ladj += tf.reduce_sum(
+            tf.cast(-y_log - y_1mlog, tf.float32),
+            axis=-1)
+
+        # normal standardization transform
+        # --------------------------------
+
+        z_std = tf.divide(tf.subtract(y_logit, mu), sigma)
+
+        ladj += tf.reduce_sum(-tf.math.log(sigma), axis=-1)
+
+        # inverse sinh-asinh transform
+        # ----------------------------
+
+        z_asinh = tf.math.asinh(z_std)
+        z = tf.sinh(z_asinh - alpha)
+
+        ladj += tf.reduce_sum(
+            tf.math.log(tf.math.cosh(alpha - z_asinh)) -
+                0.5 * tf.math.log1p(tf.math.square(z_std)),
+            axis=-1)
+
+        # standand normal log-probability
+        # -------------------------------
+
+        lp = tf.reduce_sum(-np.log(2.0*np.pi) - tf.square(z), axis=-1) / 2.0
+
+        return lp + ladj
+
+
+"""
 Approximated RNA-Seq likelihood.
 """
 class RNASeqApproxLikelihoodDist(tfp.distributions.Distribution):
@@ -238,12 +409,32 @@ def rnaseq_approx_likelihood_log_prob_from_vars(vars, x):
 
 
 def rnaseq_approx_likelihood_from_vars(vars, x):
-    return RNASeqApproxLikelihood(
-        x=x,
-        efflens=vars["efflen"],
-        la_mu=vars["la_mu"],
-        la_sigma=vars["la_sigma"],
-        la_alpha=vars["la_alpha"],
-        left_index=vars["left_index"],
-        right_index=vars["right_index"],
-        leaf_index=vars["leaf_index"])
+    efflens     = vars["efflen"]
+    la_mu       = vars["la_mu"]
+    la_sigma    = vars["la_sigma"]
+    la_alpha    = vars["la_alpha"]
+    left_index  = vars["left_index"]
+    right_index = vars["right_index"]
+    leaf_index  = vars["leaf_index"]
+
+    # using a shared ptt
+    if la_mu.get_shape()[0] == 1:
+        return RNASeqSharedPTTApproxLikelihoodDist(
+            x=x,
+            efflens=efflens,
+            la_mu=la_mu,
+            la_sigma=la_sigma,
+            la_alpha=la_alpha,
+            left_index=left_index,
+            right_index=right_index,
+            leaf_index=leaf_index)
+    else:
+        return RNASeqApproxLikelihoodDist(
+            x=x,
+            efflens=efflens,
+            la_mu=la_mu,
+            la_sigma=la_sigma,
+            la_alpha=la_alpha,
+            left_index=left_index,
+            right_index=right_index,
+            leaf_index=leaf_index)

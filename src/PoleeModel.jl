@@ -92,7 +92,12 @@ function load_transcripts_from_args(
     prep_file_suffix = get(spec, "prep_file_suffix", ".prep.h5")
 
     transcripts_filename = nothing
+    transformation_filename = nothing
     sequences_filename = nothing
+
+    if haskey(spec, "transformation")
+        transformation_filename = spec["transformation"]
+    end
 
     if haskey(spec, "samples") && !isempty(spec["samples"])
         first_sample = spec["samples"][1]
@@ -121,22 +126,27 @@ function load_transcripts_from_args(
         transcripts_filename = parsed_args["annotations"]
     end
 
-    if transcripts_filename === nothing || isempty(transcripts_filename)
-        if haskey(parsed_args, "sequences") && parsed_args["sequences"] !== nothing
-            sequences_filename = parsed_args["sequences"]
-        end
+    if haskey(parsed_args, "transformation") && parsed_args["transformation"] !== nothing
+        transformation_filename = parsed_args["transformation"]
+    end
 
-        if sequences_filename === nothing
-            error("""Either '--sequences' (if transcriptome aligments were used) or
-            '--transcripts' (if genome alignments were used) must be
-            given.""")
-        end
+    if haskey(parsed_args, "sequences") && parsed_args["sequences"] !== nothing
+        sequences_filename = parsed_args["sequences"]
+    end
 
-        return Polee.read_transcripts_from_fasta(
-            sequences_filename, excluded_transcripts, gene_annotations, gene_pattern)
-    else
+    if transcripts_filename !== nothing && !isempty(transcripts_filename)
         return Transcripts(
             transcripts_filename, excluded_transcripts)
+    elseif sequences_filename !== nothing && !isempty(sequences_filename)
+        return Polee.read_transcripts_from_fasta(
+            sequences_filename, excluded_transcripts, gene_annotations, gene_pattern)
+    elseif transformation_filename !== nothing && !isempty(transformation_filename)
+        return Polee.read_transcripts_from_ptt(
+            transformation_filename, gene_annotations, gene_pattern)
+    else
+        error("""Either '--sequences' (if transcriptome aligments were used),
+        '--transcripts' (if genome alignments were used) must be
+        given, or '--transform' must be supplied.""")
     end
 end
 

@@ -214,6 +214,19 @@ function read_transcripts_from_fasta(
     ts = Transcripts(transcripts, true)
     ts_metadata = TranscriptsMetadata()
 
+    populate_ts_metadata!(ts, ts_metadata, gene_annotations, gene_pattern_str)
+
+    @toc("Reading transcript sequences")
+    println("Read ", length(transcripts), " transcripts")
+
+    return ts, ts_metadata
+end
+
+
+"""
+Try to fill in ts_metadata if info is avialable
+"""
+function populate_ts_metadata!(ts, ts_metadata, gene_annotations, gene_pattern_str)
     if gene_annotations !== nothing
         for entry in YAML.load_file(gene_annotations)
             for transcript_id in entry["transcripts"]
@@ -235,9 +248,29 @@ function read_transcripts_from_fasta(
             end
         end
     end
+end
 
-    @toc("Reading transcript sequences")
-    println("Read ", length(transcripts), " transcripts")
+
+"""
+Build a dummy Transcripts set from just a set of transcript names.
+"""
+function read_transcripts_from_ptt(
+        filename, gene_annotations=nothing, gene_pattern_str=nothing)
+    ts = h5open(filename) do input
+        transcript_ids = read(input["transcript_ids"])
+        transcripts = Transcript[]
+        for (i, transcript_id) in enumerate(transcript_ids)
+            push!(transcripts, Transcript(transcript_id, 1, 0, STRAND_POS,
+                TranscriptMetadata(transcript_id, i)))
+        end
+        return Transcripts(transcripts, true)
+    end
+
+    ts_metadata = TranscriptsMetadata()
+
+    populate_ts_metadata!(ts, ts_metadata, gene_annotations, gene_pattern_str)
+
+    println("Read ", length(ts), " transcripts")
 
     return ts, ts_metadata
 end

@@ -155,6 +155,9 @@ module Regression
         "--balanced"
             help = "Instead of factors represented as 0/1 in the design matrix, use -1/1"
             action = :store_true
+        "--transformation"
+            metavar = "polee-transform.h5"
+            default = nothing
         "experiment"
             metavar = "experiment.yml"
             help = "Experiment specification"
@@ -178,7 +181,6 @@ module Regression
         if parsed_args["gene-pattern"] !== nothing && parsed_args["gene-annotations"] !== nothing
             error("At most one of --gene-pattern and --gene-annotations can be given.")
         end
-
 
         ts, ts_metadata = load_transcripts_from_args(
             parsed_args,
@@ -228,7 +230,7 @@ module Regression
             end
         else
             loaded_samples = load_samples_from_specification(
-                spec, ts, ts_metadata)
+                spec, ts, ts_metadata, parsed_args["transformation"])
 
             if parsed_args["pseudocount"] !== nothing
                 error("--pseudocount argument only valid with --point-estimates")

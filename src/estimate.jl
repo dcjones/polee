@@ -222,7 +222,7 @@ Input:
     * ts_metadata: transcript metadata
 """
 function load_samples_from_specification(
-        spec, ts, ts_metadata;
+        spec, ts, ts_metadata, ptt_filename::Union{String,Nothing}=nothing;
         max_num_samples=nothing, batch_size=nothing,
         check_gff_hash::Bool=true,
         using_tensorflow::Bool=true)
@@ -230,13 +230,17 @@ function load_samples_from_specification(
     filenames, sample_names, sample_factors =
         read_specification(spec, max_num_samples=max_num_samples)
 
+    if haskey(spec, "transformation") && ptt_filename === nothing
+        ptt_filename = spec["transformation"]
+    end
+
     num_samples = length(filenames)
 
     batch_size = batch_size === nothing ?
         num_samples : min(batch_size, num_samples)
 
     loaded_samples = load_samples(
-        filenames, ts, ts_metadata, batch_size,
+        filenames, ts, ts_metadata, batch_size, ptt_filename,
         check_gff_hash=check_gff_hash,
         using_tensorflow=using_tensorflow)
     println("Sample data loaded")
@@ -320,18 +324,20 @@ Input:
     * ts_metadata: transcript metadata
 """
 function load_samples(
-        filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
+        filenames, ts, ts_metadata::TranscriptsMetadata, batch_size,
+        ptt_filename::Union{String,Nothing}=nothing;
         check_gff_hash::Bool=true,
         using_tensorflow::Bool=true)
     return load_samples_hdf5(
-        filenames, ts, ts_metadata, batch_size,
+        filenames, ts, ts_metadata, batch_size, ptt_filename,
         check_gff_hash=check_gff_hash,
         using_tensorflow=using_tensorflow)
 end
 
 
 function load_samples_hdf5(
-        filenames, ts, ts_metadata::TranscriptsMetadata, batch_size;
+        filenames, ts, ts_metadata::TranscriptsMetadata, batch_size,
+        ptt_filename::Union{String,Nothing}=nothing;
         check_gff_hash::Bool=true,
         using_tensorflow::Bool=true)
     num_samples = length(filenames)
@@ -345,15 +351,34 @@ function load_samples_hdf5(
     la_sigma_values = Array{Float32}(undef, (num_samples, n-1))
     la_alpha_values = Array{Float32}(undef, (num_samples, n-1))
 
-    left_index_values  = Array{Int32}(undef, (num_samples, 2*n-1))
-    right_index_values = Array{Int32}(undef, (num_samples, 2*n-1))
-    leaf_index_values  = Array{Int32}(undef, (num_samples, 2*n-1))
+    node_parent_idxs = Array{Int32}(undef, 2*n-1)
+    node_js          = Array{Int32}(undef, 2*n-1)
+
+    if ptt_filename === nothing
+        left_index_values  = Array{Int32}(undef, (num_samples, 2*n-1))
+        right_index_values = Array{Int32}(undef, (num_samples, 2*n-1))
+        leaf_index_values  = Array{Int32}(undef, (num_samples, 2*n-1))
+    else
+        left_index_values  = Array{Int32}(undef, (1, 2*n-1))
+        right_index_values = Array{Int32}(undef, (1, 2*n-1))
+        leaf_index_values  = Array{Int32}(undef, (1, 2*n-1))
+
+        h5open(ptt_filename) do input
+            HDF5.readarray(input["node_parent_idxs"], HDF5.hdf5_type_id(Int32), node_parent_idxs)
+            HDF5.readarray(input["node_js"], HDF5.hdf5_type_id(Int32), node_js)
+
+            left_index, right_index, leaf_index =
+                Polee.make_inverse_ptt_params(node_parent_idxs, node_js)
+
+            left_index_values[1, :]  = left_index
+            right_index_values[1, :] = right_index
+            leaf_index_values[1, :]  = leaf_index
+        end
+    end
 
     mu    = Array{Float32}(undef, n-1)
     sigma = Array{Float32}(undef, n-1)
     alpha = Array{Float32}(undef, n-1)
-    node_parent_idxs = Array{Int32}(undef, 2*n-1)
-    node_js          = Array{Int32}(undef, 2*n-1)
     efflen_values_i = Array{Float32}(undef, n)
 
     prog = Progress(length(filenames), 0.25, "Reading sample data ", 60)
@@ -394,17 +419,19 @@ function load_samples_hdf5(
         HDF5.readarray(input["effective_lengths"], HDF5.hdf5_type_id(Float32), efflen_values_i)
         efflen_values[i, :] = efflen_values_i
 
-        HDF5.readarray(input["node_parent_idxs"], HDF5.hdf5_type_id(Int32), node_parent_idxs)
-        HDF5.readarray(input["node_js"], HDF5.hdf5_type_id(Int32), node_js)
+        if ptt_filename === nothing
+            HDF5.readarray(input["node_parent_idxs"], HDF5.hdf5_type_id(Int32), node_parent_idxs)
+            HDF5.readarray(input["node_js"], HDF5.hdf5_type_id(Int32), node_js)
+
+            left_index, right_index, leaf_index =
+                Polee.make_inverse_ptt_params(node_parent_idxs, node_js)
+
+            left_index_values[i, :]  = left_index
+            right_index_values[i, :] = right_index
+            leaf_index_values[i, :]  = leaf_index
+        end
 
         close(input)
-
-        left_index, right_index, leaf_index =
-            Polee.make_inverse_ptt_params(node_parent_idxs, node_js)
-
-        left_index_values[i, :]  = left_index
-        right_index_values[i, :] = right_index
-        leaf_index_values[i, :]  = leaf_index
 
         # find reasonable initial values by estimating the mean
         N = 30
@@ -465,14 +492,14 @@ function load_samples_hdf5(
         filenames)
 
     if using_tensorflow
-        create_tensorflow_variables!(ls, batch_size)
+        create_tensorflow_variables!(ls, batch_size, ptt_filename === nothing)
     end
 
     return ls
 end
 
 
-function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing)
+function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing, ptt_vars=true)
     var_names = [
         "efflen",
         "la_mu",
@@ -516,8 +543,14 @@ function create_tensorflow_variables!(ls::LoadedSamples, batch_size=nothing)
         # if batch_size !== nothing
         #     ls.variables[name] = var_init
         # else
+
+        if !ptt_vars && name ∈ ["left_index", "right_index", "leaf_index"]
+            ls.variables[name] = val
+        else
             var = tf.Variable(val, name=name, trainable=false)
             ls.variables[name] = var
+        end
+
         # end
     end
 end

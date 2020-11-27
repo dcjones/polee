@@ -806,13 +806,173 @@ function approximate_likelihood(approx::BetaPTTApprox,
     #     end
     # end
 
-    return Dict{String, Vector}(
-        "node_parent_idxs" => t.index[4,:],
-        "node_js"          => t.index[1,:],
+    params = Dict{String, Vector}(
         "alpha"            => Float32.(exp.(αs_log)),
         "beta"             => Float32.(exp.(βs_log)))
-        # "alpha"            => Float32.(exp.(αs_log)),
-        # "beta"             => Float32.(exp.(βs_log)))
+    if tree_topology_input_filename === nothing
+        params["node_parent_idxs"] = t.index[4,:]
+        params["node_js"] = t.index[1,:]
+    end
+    return params
+end
+
+
+"""
+Beta approximation using factored likelihood.
+"""
+function approximate_likelihood(
+        approx::BetaPTTApprox, t::PolyaTreeTransform,
+        X::SparseMatrixCSC, ks::Vector, efflens::Vector,
+        output_filename::String; use_efflen_jacobian::Bool=true)
+
+    m, n = size(X)
+    Xt = SparseMatrixCSC(transpose(X))
+    model = Model(m, n)
+
+    αs_log, βs_log = init_beta_params(X, t)
+
+    # ADAM_LEARNING_RATE = 1e-1
+    # opt = Flux.Optimise.ADAM(ADAM_LEARNING_RATE)
+
+    αs = Array{Float64}(undef, n-1)
+    βs = Array{Float64}(undef, n-1)
+
+    eps = 1e-14
+    ys = Array{Float64}(undef, n-1)
+    xs = Array{Float64}(undef, n)
+    y_grad = Array{Float64}(undef, n-1)
+    x_grad = Array{Float64}(undef, n)
+
+    α_grad = Array{Float64}(undef, n-1)
+    β_grad = Array{Float64}(undef, n-1)
+
+    α_log_grad = Array{Float64}(undef, n-1)
+    β_log_grad = Array{Float64}(undef, n-1)
+    entropies = Array{Float64}(undef, n-1)
+
+    # gradient running mean
+    m_α = Array{Float64}(undef, n-1)
+    m_β = Array{Float64}(undef, n-1)
+
+    # gradient running variances
+    v_α = Array{Float64}(undef, n-1)
+    v_β = Array{Float64}(undef, n-1)
+
+    # step size clamp
+    ss_max_α_step = Inf
+    ss_max_β_step = Inf
+
+    # random gammas used to generate a random beta
+    us = Array{Float64}(undef, n-1)
+    vs = Array{Float64}(undef, n-1)
+
+    max_elbo = NaN
+    no_improvement_count = 0
+    prog = Progress(LIKAP_NUM_STEPS, 0.25, "Optimizing ", 60)
+    for step_num in 1:LIKAP_NUM_STEPS
+        # if no_improvement_count > 5
+        #     break
+        # end
+
+        learning_rate = adam_learning_rate(step_num - 1)
+
+        fill!(α_log_grad, 0.0f0)
+        fill!(β_log_grad, 0.0f0)
+        elbo = 0.0
+
+        for _ in 1:LIKAP_NUM_MC_SAMPLES
+            fill!(α_grad, 0.0)
+            fill!(β_grad, 0.0)
+            fill!(x_grad, 0.0)
+            fill!(y_grad, 0.0)
+
+            # @show extrema(αs_log)
+            # @show extrema(βs_log)
+            Threads.@threads for i in 1:n-1
+                α = αs[i] = exp(αs_log[i])
+                β = βs[i] = exp(βs_log[i])
+                us[i] = rand_gamma1(α)
+                vs[i] = rand_gamma1(β)
+                ys[i] = clamp(us[i] / (us[i] + vs[i]), eps, 1-eps)
+
+                entropies[i] = beta_entropy(α, β)
+                ∂α, ∂β = beta_entropy_grad(α, β)
+                α_grad[i] += ∂α
+                β_grad[i] += ∂β
+            end
+            entropy = sum(entropies)
+
+            ptt_ladj = transform!(t, ys, xs, Val(true))
+            xs = clamp!(xs, eps, 1 - eps)
+
+            lp = log_likelihood(
+                model.frag_probs, model.log_frag_probs,
+                X, Xt, xs, x_grad, Val(false))
+
+            # @show lp
+
+            elbo += lp + ptt_ladj + entropy
+
+            # Backprop through ptt
+            transform_gradients!(t, ys, y_grad, x_grad)
+
+            # @show extrema(y_grad)
+
+            # backprop through beta generation
+            Threads.@threads for i in 1:n-1
+                c = (us[i] + vs[i])^2
+                u_grad = (vs[i] / c) * y_grad[i]
+                v_grad = -(us[i] / c) * y_grad[i]
+                α_grad[i] += gamma1_grad(us[i], αs[i]) * u_grad
+                β_grad[i] += gamma1_grad(vs[i], βs[i]) * v_grad
+                α_log_grad[i] += αs[i] * α_grad[i]
+                β_log_grad[i] += βs[i] * β_grad[i]
+            end
+        end
+
+        elbo /= LIKAP_NUM_MC_SAMPLES
+        @assert isfinite(elbo)
+
+        if isnan(max_elbo)
+            max_elbo = elbo
+        end
+
+        # @show elbo
+        # @show elbo - max_elbo
+        if elbo > max_elbo
+            max_elbo = elbo
+            no_improvement_count = 0
+        else
+            no_improvement_count += 1
+        end
+
+        all_finite = true
+        for i in 1:n-1
+            α_log_grad[i] /= LIKAP_NUM_MC_SAMPLES
+            β_log_grad[i] /= LIKAP_NUM_MC_SAMPLES
+            all_finite &= isfinite(α_grad[i]) && isfinite(β_grad[i])
+        end
+        @assert all_finite
+
+        adam_update_mv!(m_α, v_α, α_log_grad, step_num)
+        adam_update_mv!(m_β, v_β, β_log_grad, step_num)
+
+        adam_update_params!(αs_log, m_α, v_α, learning_rate, step_num, ss_max_α_step)
+        adam_update_params!(βs_log, m_β, v_β, learning_rate, step_num, ss_max_β_step)
+
+        next!(prog)
+    end
+
+    params = Dict{String, Vector}(
+        "alpha"            => Float32.(exp.(αs_log)),
+        "beta"             => Float32.(exp.(βs_log)))
+    if tree_topology_input_filename === nothing
+        params["node_parent_idxs"] = t.index[4,:]
+        params["node_js"] = t.index[1,:]
+    end
+
+    write_approximation(
+        output_filename, m, n, efflens, params, typeof(approx), "", "", "", "")
 end
 
 

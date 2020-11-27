@@ -319,6 +319,9 @@ class RNASeqLinearRegression:
             step_num.assign(step_num + 1)
             return loss
 
+        # tf.profiler.experimental.start(
+        #     'tftrace', tf.profiler.experimental.ProfilerOptions(host_tracer_level=2))
+
         trace = tfp.vi.fit_surrogate_posterior(
             target_log_prob_fn=lambda *args: model.log_prob(args),
             surrogate_posterior=variational_model,
@@ -326,6 +329,8 @@ class RNASeqLinearRegression:
             sample_size=1,
             num_steps=niter,
             trace_fn=trace_fn)
+
+        # tf.profiler.experimental.stop()
 
         return (
             self.qx_loc_var.numpy(),

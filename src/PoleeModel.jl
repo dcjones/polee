@@ -44,15 +44,23 @@ const tf = PyNULL()
 function build_tensorflow_ext_if_needed()
     ext_path = joinpath(dirname(pathof(Polee)), "tensorflow_ext")
     ext_lib_filename = joinpath(ext_path, "hsb_ops.so")
-    ext_src_filename = joinpath(ext_path, "hsb_ops.cpp")
     if !isfile(ext_lib_filename)
-        @warn "Attempting to build tensorflow extension automatically."
-        cflags = chomp(String(read(`python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_compile_flags()))'`)))
-        lflags = chomp(String(read(`python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_link_flags()))'`)))
-        cmd = "g++ -std=c++11 -shared -g -O2 $(ext_src_filename) -o $(ext_lib_filename) -fPIC $(cflags) $(lflags)"
-        println(cmd)
-        run(Cmd(Vector{String}(split(cmd))))
+        build_tensorflow_ext()
     end
+end
+
+
+function build_tensorflow_ext()
+    ext_path = joinpath(dirname(pathof(Polee)), "tensorflow_ext")
+    ext_lib_filename = joinpath(ext_path, "hsb_ops.so")
+    ext_src_filename = joinpath(ext_path, "hsb_ops.cpp")
+
+    @warn "Attempting to build tensorflow extension automatically."
+    cflags = chomp(String(read(`python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_compile_flags()))'`)))
+    lflags = chomp(String(read(`python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_link_flags()))'`)))
+    cmd = "g++ -std=c++11 -shared -g -O2 $(ext_src_filename) -o $(ext_lib_filename) -fPIC $(cflags) $(lflags)"
+    println(cmd)
+    run(Cmd(Vector{String}(split(cmd))))
 end
 
 function init_python_modules()

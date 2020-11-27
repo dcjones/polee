@@ -6,6 +6,7 @@ import tensorflow as tf
 from tensorflow.python.framework import ops
 from tensorflow.python import framework
 import tensorflow_probability as tfp
+import numpy as np
 
 
 # Load tensorflow extension for computing stick breaking transformation
@@ -89,52 +90,87 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
         self.sigma       = la_sigma
         self.alpha       = la_alpha
 
-        # I don't actually need these vars after this
-        # left_index  = left_index.numpy()
-        # right_index = right_index.numpy()
-        # leaf_index  = leaf_index.numpy()
-
         parameters = dict(locals())
 
         num_nodes = left_index.shape[-1]
         n = (num_nodes+1)//2
 
-        # construct sparse matrix to compute internal intermediate values from cumsum
+        # Construct two sparse matrices that take cumsum(x) and compute
+        # for each internal node i the intermediate values for its left and
+        # right child, respectively.
 
-        indexes = np.zeros([2*(n-1), 2], np.int)
-        values = np.zeros([2*(n-1)], np.float64)
+        Lindexes = np.zeros([2*(n-1), 2], np.int)
+        Lvalues = np.zeros([2*(n-1)], np.float64)
+
+        Rindexes = np.zeros([2*(n-1), 2], np.int)
+        Rvalues = np.zeros([2*(n-1)], np.float64)
 
         # for each internal node we need to know its min and max leaf child
         min_leaf_index = np.zeros([num_nodes], np.int)
         max_leaf_index = np.zeros([num_nodes], np.int)
 
-        for i in range(n-1, num_nodes):
-            min_leaf_index[i] = i - (n-1)
-            max_leaf_index[i] = i - (n-1)
-
-        for i in range(n-2, -1, -1):
-            min_leaf_index[i] = min_leaf_index[left_index[0, i]]
-            max_leaf_index[i] = max_leaf_index[right_index[0, i]]
+        # set values for leaf nodes
+        k = 0
+        for i in range(num_nodes-1, -1, -1):
+            if leaf_index[0, i] >= 0:
+                min_leaf_index[i] = k
+                max_leaf_index[i] = k
+                k += 1
+            else:
+                min_leaf_index[i] = min_leaf_index[left_index[0, i]]
+                max_leaf_index[i] = max_leaf_index[right_index[0, i]]
+                assert min_leaf_index[i] < max_leaf_index[i]
 
         # build sparse matrix for internal nodes
         for i in range(n-1):
-            indexes[2*i+1, 0] = i
-            indexes[2*i+1, 1] = max_leaf_index[i]
-            values[2*i+1] = 1.0
+            l = left_index[0, i]
+            r = right_index[0, i]
 
-            if min_leaf_index[i] > 0:
-                indexes[2*i, 0] = i
-                indexes[2*i, 1] = min_leaf_index[i]-1
-                values[2*i] = -1.0
+            Lindexes[2*i+1, 0] = i
+            Lindexes[2*i+1, 1] = max_leaf_index[l]
+            Lvalues[2*i+1] = 1.0
+
+            if min_leaf_index[l] > 0:
+                Lindexes[2*i, 0] = i
+                Lindexes[2*i, 1] = min_leaf_index[l]-1
+                Lvalues[2*i] = -1.0
             else:
                 # we don't need this entry, easier to just set it do arbitrary
                 # index and zero than to try to remove it
-                indexes[2*i, 0] = i
-                indexes[2*i, 1] = max_leaf_index[i]
-                values[2*i] = 0.0
+                Lindexes[2*i, 0] = i
+                Lindexes[2*i, 1] = max_leaf_index[l]
+                Lvalues[2*i] = 0.0
 
-        self.cumsum_to_internal_intermediate_mat = tf.sparse.SparseTensor(
-            indexes, values, [n-1, n])
+            Rindexes[2*i+1, 0] = i
+            Rindexes[2*i+1, 1] = max_leaf_index[r]
+            Rvalues[2*i+1] = 1.0
+
+            if min_leaf_index[r] > 0:
+                Rindexes[2*i, 0] = i
+                Rindexes[2*i, 1] = min_leaf_index[r]-1
+                Rvalues[2*i] = -1.0
+            else:
+                # we don't need this entry, easier to just set it do arbitrary
+                # index and zero than to try to remove it
+                Rindexes[2*i, 0] = i
+                Rindexes[2*i, 1] = max_leaf_index[r]
+                Rvalues[2*i] = 0.0
+
+        self.Linternal = tf.sparse.SparseTensor(
+            Lindexes, Lvalues, [n-1, n])
+        self.Rinternal = tf.sparse.SparseTensor(
+            Rindexes, Rvalues, [n-1, n])
+
+        # Construct a permutation vector to reorder `x` into their leaf node
+        # position.
+
+        leaf_permutation = np.zeros(n, np.int)
+        k = 0
+        for i in range(num_nodes):
+            if leaf_index[0, i] >= 0:
+                leaf_permutation[k] = leaf_index[0, i]
+                k += 1
+        self.leaf_permutation = tfp.bijectors.Permute(permutation=leaf_permutation)
 
         super(RNASeqSharedPTTApproxLikelihoodDist, self).__init__(
               dtype=self.x.dtype,
@@ -192,28 +228,23 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
         # Inverse ptt
         # -----------
 
-        # TODO: VERY IMPORTANT! For this to work, we need to use leaf_indxes to
-        # permute the last dimension of x_efflen into the right order.
-
-        C = tf.math.cumsum(tf.cast(x_efflen, tf.float64), axis=-1)
+        # x_leaf = x_efflen[:,self.leaf_permutation]
+        x_leaf = self.leaf_permutation.forward(x_efflen)
+        C = tf.math.cumsum(tf.cast(x_leaf, tf.float64), axis=-1)
 
         # compute internal intermediate values
-        y = tf.sparse.sparse_dense_matmul(
-            self.cumsum_to_internal_intermediate_mat, tf.squeeze(C, axis=0), adjoint_b=True)
+        u_left = tf.sparse.sparse_dense_matmul(
+            self.Linternal, tf.squeeze(C, axis=0), adjoint_b=True)
+        u_right = tf.sparse.sparse_dense_matmul(
+            self.Rinternal, tf.squeeze(C, axis=0), adjoint_b=True)
 
-        y = tf.cast(U, tf.float32) # [n-1, num_samples]
-        y = tf.transpose(U) # [num_samples, n-1]
+        y_logit = tf.transpose(
+            tf.math.log(tf.cast(u_right, tf.float32)) -
+            tf.math.log(tf.cast(u_left, tf.float32)))
 
-        # Logit
-        # -----
-
-        y_log = tf.math.log(y)
-        y_1mlog = tf.math.log1p(-y)
-
-        y_logit = tf.cast(y_log - y_1mlog, tf.float32)
-
+        # ladj for the implicit logit transform we just did
         ladj += tf.reduce_sum(
-            tf.cast(-y_log - y_1mlog, tf.float32),
+            tf.math.log(2*(tf.math.cosh(y_logit) + 1)),
             axis=-1)
 
         # normal standardization transform
@@ -418,7 +449,7 @@ def rnaseq_approx_likelihood_from_vars(vars, x):
     leaf_index  = vars["leaf_index"]
 
     # using a shared ptt
-    if la_mu.get_shape()[0] == 1:
+    if type(left_index) == np.ndarray:
         return RNASeqSharedPTTApproxLikelihoodDist(
             x=x,
             efflens=efflens,

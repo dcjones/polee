@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Polee is a julia program, but options that rely on environment variables. We
 # use this shell script wrapper to extract those options and set the right

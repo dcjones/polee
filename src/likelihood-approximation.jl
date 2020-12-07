@@ -387,11 +387,6 @@ function approximate_likelihood(
     params = Dict{String, Vector}(
         "mu" => mu, "omega" => omega, "alpha" => alpha)
 
-    if tree_topology_input_filename === nothing
-        params["node_parent_idxs"] = t.index[4,:]
-        params["node_js"] = t.index[1,:]
-    end
-
     write_approximation(
         output_filename, m, n, efflens, params, typeof(approx), "", "", "", "")
 end

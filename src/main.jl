@@ -816,10 +816,18 @@ function polee_sample(parsed_args::Dict{String, Any})
 
     n = length(tnames)
 
-    node_parent_idxs = read(input["node_parent_idxs"])
-    node_js          = read(input["node_js"])
-    efflens          = read(input["effective_lengths"])
-    m                = read(input["m"])
+    if transformation_filename !== nothing
+        trans_input = h5open(transformation_filename)
+        node_parent_idxs = read(trans_input["node_parent_idxs"])
+        node_js          = read(trans_input["node_js"])
+        close(trans_input)
+    else
+        node_parent_idxs = read(input["node_parent_idxs"])
+        node_js          = read(input["node_js"])
+    end
+
+    efflens = read(input["effective_lengths"])
+    m       = read(input["m"])
 
     mu    = read(input["mu"])
     sigma = exp.(read(input["omega"]))

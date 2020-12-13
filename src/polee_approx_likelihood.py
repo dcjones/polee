@@ -105,6 +105,9 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
         Rindexes = np.zeros([2*(n-1), 2], np.int)
         Rvalues = np.zeros([2*(n-1)], np.float64)
 
+        Uindexes = np.zeros([2*(n-1), 2], np.int)
+        Uvalues = np.zeros([2*(n-1)], np.float64)
+
         # for each internal node we need to know its min and max leaf child
         min_leaf_index = np.zeros([num_nodes], np.int)
         max_leaf_index = np.zeros([num_nodes], np.int)
@@ -122,50 +125,76 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
                 assert min_leaf_index[i] < max_leaf_index[i]
 
         # build sparse matrix for internal nodes
-        for i in range(n-1):
+        k = 0 # internal node number
+        for i in range(num_nodes):
+            if leaf_index[0, i] >= 0:
+                continue
+
+            Uindexes[2*k+1, 0] = k
+            Uindexes[2*k+1, 1] = max_leaf_index[i]
+            Uvalues[2*k+1] = 1.0
+
+            if min_leaf_index[i] > 0:
+                Uindexes[2*k, 0] = k
+                Uindexes[2*k, 1] = min_leaf_index[i]-1
+                Uvalues[2*k] = -1.0
+            else:
+                # we don't need this entry, easier to just set it do arbitrary
+                # index and zero than to try to remove it
+                Uindexes[2*k, 0] = k
+                if max_leaf_index[i] < n-1:
+                    Uindexes[2*k, 1] = max_leaf_index[i] + 1
+                else:
+                    Uindexes[2*k, 1] = max_leaf_index[i] - 1
+                Uvalues[2*k] = 0.0
+
             l = left_index[0, i]
             r = right_index[0, i]
 
-            Lindexes[2*i+1, 0] = i
-            Lindexes[2*i+1, 1] = max_leaf_index[l]
-            Lvalues[2*i+1] = 1.0
+            Lindexes[2*k+1, 0] = k
+            Lindexes[2*k+1, 1] = max_leaf_index[l]
+            Lvalues[2*k+1] = 1.0
 
             if min_leaf_index[l] > 0:
-                Lindexes[2*i, 0] = i
-                Lindexes[2*i, 1] = min_leaf_index[l]-1
-                Lvalues[2*i] = -1.0
+                Lindexes[2*k, 0] = k
+                Lindexes[2*k, 1] = min_leaf_index[l]-1
+                Lvalues[2*k] = -1.0
             else:
                 # we don't need this entry, easier to just set it do arbitrary
                 # index and zero than to try to remove it
-                Lindexes[2*i, 0] = i
+                Lindexes[2*k, 0] = k
                 if max_leaf_index[l] < n-1:
-                    Lindexes[2*i, 1] = max_leaf_index[l] + 1
+                    Lindexes[2*k, 1] = max_leaf_index[l] + 1
                 else:
-                    Lindexes[2*i, 1] = max_leaf_index[l] - 1
-                Lvalues[2*i] = 0.0
+                    Lindexes[2*k, 1] = max_leaf_index[l] - 1
+                Lvalues[2*k] = 0.0
 
-            Rindexes[2*i+1, 0] = i
-            Rindexes[2*i+1, 1] = max_leaf_index[r]
-            Rvalues[2*i+1] = 1.0
+            Rindexes[2*k+1, 0] = k
+            Rindexes[2*k+1, 1] = max_leaf_index[r]
+            Rvalues[2*k+1] = 1.0
 
             if min_leaf_index[r] > 0:
-                Rindexes[2*i, 0] = i
-                Rindexes[2*i, 1] = min_leaf_index[r]-1
-                Rvalues[2*i] = -1.0
+                Rindexes[2*k, 0] = k
+                Rindexes[2*k, 1] = min_leaf_index[r]-1
+                Rvalues[2*k] = -1.0
             else:
                 # we don't need this entry, easier to just set it do arbitrary
                 # index and zero than to try to remove it
-                Rindexes[2*i, 0] = i
+                Rindexes[2*k, 0] = k
                 if max_leaf_index[r] < n-1:
-                    Rindexes[2*i, 1] = max_leaf_index[r] + 1
+                    Rindexes[2*k, 1] = max_leaf_index[r] + 1
                 else:
-                    Rindexes[2*i, 1] = max_leaf_index[r] - 1
-                Rvalues[2*i] = 0.0
+                    Rindexes[2*k, 1] = max_leaf_index[r] - 1
+                Rvalues[2*k] = 0.0
+
+            k += 1
 
         self.Linternal = tf.sparse.reorder(tf.sparse.SparseTensor(
             Lindexes, Lvalues, [n-1, n]))
         self.Rinternal = tf.sparse.reorder(tf.sparse.SparseTensor(
             Rindexes, Rvalues, [n-1, n]))
+        self.Uinternal = tf.sparse.reorder(tf.sparse.SparseTensor(
+            Uindexes, Uvalues, [n-1, n]))
 
         # Construct a permutation vector to reorder `x` into their leaf node
         # position.
@@ -242,10 +271,19 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
         C = tf.math.cumsum(tf.cast(x_leaf, tf.float64), axis=-1)
 
         # compute internal intermediate values
+        Csqueeze = tf.squeeze(C, axis=0)
+
         u_left = tf.sparse.sparse_dense_matmul(
-            self.Linternal, tf.squeeze(C, axis=0), adjoint_b=True)
+            self.Linternal, Csqueeze, adjoint_b=True)
         u_right = tf.sparse.sparse_dense_matmul(
-            self.Rinternal, tf.squeeze(C, axis=0), adjoint_b=True)
+            self.Rinternal, Csqueeze, adjoint_b=True)
+
+        u = tf.sparse.sparse_dense_matmul(
+            self.Uinternal, Csqueeze, adjoint_b=True)
+
+        # TODO: This jacobian could be much for efficiently computed as
+        # the sum leaf values times the lengths of the paths to the root
+        ladj += -tf.reduce_sum(tf.math.log(tf.cast(u, tf.float32)), axis=0)
 
         y_logit = tf.transpose(
             tf.math.log(tf.cast(u_left, tf.float32)) -

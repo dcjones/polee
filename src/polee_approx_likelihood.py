@@ -138,7 +138,10 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
                 # we don't need this entry, easier to just set it do arbitrary
                 # index and zero than to try to remove it
                 Lindexes[2*i, 0] = i
-                Lindexes[2*i, 1] = max_leaf_index[l]
+                if max_leaf_index[l] < n-1:
+                    Lindexes[2*i, 1] = max_leaf_index[l] + 1
+                else:
+                    Lindexes[2*i, 1] = max_leaf_index[l] - 1
                 Lvalues[2*i] = 0.0
 
             Rindexes[2*i+1, 0] = i
@@ -153,13 +156,16 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
                 # we don't need this entry, easier to just set it do arbitrary
                 # index and zero than to try to remove it
                 Rindexes[2*i, 0] = i
-                Rindexes[2*i, 1] = max_leaf_index[r]
+                if max_leaf_index[r] < n-1:
+                    Rindexes[2*i, 1] = max_leaf_index[r] + 1
+                else:
+                    Rindexes[2*i, 1] = max_leaf_index[r] - 1
                 Rvalues[2*i] = 0.0
 
-        self.Linternal = tf.sparse.SparseTensor(
-            Lindexes, Lvalues, [n-1, n])
-        self.Rinternal = tf.sparse.SparseTensor(
-            Rindexes, Rvalues, [n-1, n])
+        self.Linternal = tf.sparse.reorder(tf.sparse.SparseTensor(
+            Lindexes, Lvalues, [n-1, n]))
+        self.Rinternal = tf.sparse.reorder(tf.sparse.SparseTensor(
+            Rindexes, Rvalues, [n-1, n]))
 
         # Construct a permutation vector to reorder `x` into their leaf node
         # position.
@@ -170,6 +176,10 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
             if leaf_index[0, i] >= 0:
                 leaf_permutation[k] = leaf_index[0, i]
                 k += 1
+
+        # node in the ptt are enumerate from right to left, insanely, so we have
+        # to account for that.
+        leaf_permutation = list(reversed(leaf_permutation))
         self.leaf_permutation = tfp.bijectors.Permute(permutation=leaf_permutation)
 
         super(RNASeqSharedPTTApproxLikelihoodDist, self).__init__(
@@ -228,7 +238,6 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
         # Inverse ptt
         # -----------
 
-        # x_leaf = x_efflen[:,self.leaf_permutation]
         x_leaf = self.leaf_permutation.forward(x_efflen)
         C = tf.math.cumsum(tf.cast(x_leaf, tf.float64), axis=-1)
 
@@ -239,8 +248,8 @@ class RNASeqSharedPTTApproxLikelihoodDist(tfp.distributions.Distribution):
             self.Rinternal, tf.squeeze(C, axis=0), adjoint_b=True)
 
         y_logit = tf.transpose(
-            tf.math.log(tf.cast(u_right, tf.float32)) -
-            tf.math.log(tf.cast(u_left, tf.float32)))
+            tf.math.log(tf.cast(u_left, tf.float32)) -
+            tf.math.log(tf.cast(u_right, tf.float32)))
 
         # ladj for the implicit logit transform we just did
         ladj += tf.reduce_sum(
